@@ -9,8 +9,8 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Reader, XmlVersion};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
@@ -185,12 +185,18 @@ pub fn visit_elements(xml: &str, mut visit: impl FnMut(&BytesStart)) -> Result<(
     }
 }
 
-/// Reads an attribute by its local name (`w:val` -> `"val"`).
+/// Reads an attribute by its local name (`w:val` -> `"val"`), decoding entities like `&amp;`.
 pub fn attr(e: &BytesStart, name: &str) -> Option<String> {
-    e.attributes()
+    let attribute = e
+        .attributes()
         .flatten()
-        .find(|a| a.key.local_name().as_ref() == name)
-        .map(|a| a.value.into_owned())
+        .find(|a| a.key.local_name().as_ref() == name)?;
+    let value = attribute
+        .normalized_value(XmlVersion::Implicit1_0)
+        .map(|v| v.into_owned())
+        // A value with a broken entity is still better kept as written than dropped.
+        .unwrap_or_else(|_| attribute.value.into_owned());
+    Some(value)
 }
 
 #[cfg(test)]
@@ -230,6 +236,30 @@ mod tests {
         let images = image_parts(&relationships, "ppt/slides/slide1.xml");
         assert_eq!(images.len(), 1);
         assert_eq!(images["rId2"], "ppt/media/image1.png");
+    }
+
+    #[test]
+    fn decodes_entities_in_attribute_values() {
+        let mut found = Vec::new();
+        visit_elements(
+            r#"<r><a href="https://example.com/?a=1&amp;b=2" name="R&amp;D &#8212; 2026"/></r>"#,
+            |e| {
+                if e.local_name().as_ref() == "a" {
+                    found.push(attr(e, "href"));
+                    found.push(attr(e, "name"));
+                    found.push(attr(e, "missing"));
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            [
+                Some("https://example.com/?a=1&b=2".to_string()),
+                Some("R&D — 2026".to_string()),
+                None,
+            ]
+        );
     }
 
     #[test]

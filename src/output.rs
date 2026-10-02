@@ -41,7 +41,7 @@ pub fn sheet_output_path(dir: &Path, input: &Path, sheet: &str, format: OutputFo
 }
 
 /// Replaces characters that aren't allowed in file names on common systems.
-fn safe_file_name(name: &str) -> String {
+pub fn safe_file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| match c {

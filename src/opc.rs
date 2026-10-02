@@ -85,6 +85,8 @@ pub struct Relationship {
     /// The last segment of the relationship type URI: `hyperlink`, `slide`, `notesSlide`, ...
     pub kind: String,
     pub target: String,
+    /// True when the target is outside the package, such as a web address.
+    pub external: bool,
 }
 
 /// Relationship ID -> relationship, from a `.rels` part.
@@ -97,7 +99,15 @@ pub fn parse_relationships(xml: &str) -> Result<HashMap<String, Relationship>> {
             let kind = attr(e, "Type")
                 .and_then(|t| t.rsplit('/').next().map(str::to_string))
                 .unwrap_or_default();
-            relationships.insert(id, Relationship { kind, target });
+            let external = attr(e, "TargetMode").as_deref() == Some("External");
+            relationships.insert(
+                id,
+                Relationship {
+                    kind,
+                    target,
+                    external,
+                },
+            );
         }
     })?;
     Ok(relationships)
@@ -111,6 +121,20 @@ pub fn hyperlinks(relationships: &HashMap<String, Relationship>) -> HashMap<Stri
         .iter()
         .filter(|(_, r)| r.kind == "hyperlink")
         .map(|(id, r)| (id.clone(), r.target.clone()))
+        .collect()
+}
+
+/// Images stored in the package: relationship ID -> image part (`ppt/media/image1.png`).
+///
+/// `part` is the part the relationships belong to; targets are resolved against it.
+pub fn image_parts(
+    relationships: &HashMap<String, Relationship>,
+    part: &str,
+) -> HashMap<String, String> {
+    relationships
+        .iter()
+        .filter(|(_, r)| r.kind == "image" && !r.external)
+        .map(|(id, r)| (id.clone(), resolve_target(part, &r.target)))
         .collect()
 }
 
@@ -186,11 +210,26 @@ mod tests {
             links["rId4"],
             Relationship {
                 kind: "hyperlink".into(),
-                target: "https://example.com".into()
+                target: "https://example.com".into(),
+                external: true,
             }
         );
         assert_eq!(links["rId1"].kind, "styles");
         assert_eq!(hyperlinks(&links).len(), 1);
+    }
+
+    #[test]
+    fn finds_embedded_images_only() {
+        let relationships = parse_relationships(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                 <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+                 <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.com/a.png" TargetMode="External"/>
+               </Relationships>"#,
+        )
+        .unwrap();
+        let images = image_parts(&relationships, "ppt/slides/slide1.xml");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images["rId2"], "ppt/media/image1.png");
     }
 
     #[test]

@@ -27,6 +27,7 @@ use crate::document::{
     Block, ListKind, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
 };
 use crate::error::Result;
+use crate::images::{self, ImageExport};
 use crate::opc::{self, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
@@ -47,8 +48,23 @@ pub enum Notes {
     Skip,
 }
 
+/// What a slide's relationship IDs point at.
+#[derive(Debug, Default)]
+pub struct Targets {
+    /// Relationship ID -> web link.
+    pub links: HashMap<String, String>,
+    /// Relationship ID -> image part (`ppt/media/image1.png`).
+    pub images: HashMap<String, String>,
+}
+
 /// Reads the `.pptx` at `path` and returns it as blocks, slide by slide.
-pub fn read_blocks(path: &Path, notes: Notes) -> Result<Vec<Block>> {
+///
+/// With `images`, pictures are saved there and linked; without it, they're left out.
+pub fn read_blocks(
+    path: &Path,
+    notes: Notes,
+    images: Option<&mut ImageExport>,
+) -> Result<Vec<Block>> {
     let mut archive = opc::open(path)?;
     let presentation = opc::read_required_part(&mut archive, PRESENTATION)?;
     let relationships = match opc::read_part(&mut archive, &opc::rels_path(PRESENTATION))? {
@@ -70,8 +86,11 @@ pub fn read_blocks(path: &Path, notes: Notes) -> Result<Vec<Block>> {
             Some(rels) => opc::parse_relationships(&rels)?,
             None => HashMap::new(),
         };
-        let links = opc::hyperlinks(&slide_relationships);
-        let mut slide = parse_slide(&xml, &links)?;
+        let targets = Targets {
+            links: opc::hyperlinks(&slide_relationships),
+            images: opc::image_parts(&slide_relationships, &part),
+        };
+        let mut slide = parse_slide(&xml, &targets)?;
 
         // Speaker notes live in their own part, linked from the slide.
         let notes_part = slide_relationships
@@ -88,7 +107,9 @@ pub fn read_blocks(path: &Path, notes: Notes) -> Result<Vec<Block>> {
         slides.push(slide);
     }
 
-    Ok(slides_to_blocks(slides))
+    let mut blocks = slides_to_blocks(slides);
+    images::link_images(&mut blocks, &mut archive, images)?;
+    Ok(blocks)
 }
 
 /// The relationship IDs of the slides, in presentation order.
@@ -147,9 +168,9 @@ fn slides_to_blocks(slides: Vec<Slide>) -> Vec<Block> {
     blocks
 }
 
-/// Parses one slide part, using `links` to resolve hyperlink IDs.
-pub fn parse_slide(xml: &str, links: &HashMap<String, String>) -> Result<Slide> {
-    let mut parser = SlideParser::new(links, false);
+/// Parses one slide part, using `targets` to resolve link and image IDs.
+pub fn parse_slide(xml: &str, targets: &Targets) -> Result<Slide> {
+    let mut parser = SlideParser::new(targets, false);
     opc::walk(xml, &mut parser)?;
     Ok(Slide {
         title: parser.title,
@@ -161,8 +182,8 @@ pub fn parse_slide(xml: &str, links: &HashMap<String, String>) -> Result<Slide> 
 
 /// Parses a notes part. Only the notes text box counts, not the slide image or slide number.
 pub fn parse_notes(xml: &str) -> Result<Vec<Block>> {
-    let links = HashMap::new();
-    let mut parser = SlideParser::new(&links, true);
+    let targets = Targets::default();
+    let mut parser = SlideParser::new(&targets, true);
     opc::walk(xml, &mut parser)?;
     Ok(parser.blocks)
 }
@@ -197,6 +218,13 @@ impl Shape {
 }
 
 #[derive(Default)]
+struct Picture {
+    alt: Option<String>,
+    part: Option<String>,
+    link: Option<String>,
+}
+
+#[derive(Default)]
 struct Paragraph {
     level: u8,
     bullet: Bullet,
@@ -204,13 +232,15 @@ struct Paragraph {
 }
 
 struct SlideParser<'a> {
-    links: &'a HashMap<String, String>,
+    targets: &'a Targets,
     /// Reading speaker notes: keep only the notes body, and don't bullet it.
     notes: bool,
     title: Vec<Run>,
     hidden: bool,
     blocks: Vec<Block>,
     shape: Option<Shape>,
+    /// The picture (`p:pic`) being read, if any.
+    picture: Option<Picture>,
     paragraph: Option<Paragraph>,
     tables: Vec<TableBuilder>,
     style: RunStyle,
@@ -221,10 +251,11 @@ struct SlideParser<'a> {
 }
 
 impl<'a> SlideParser<'a> {
-    fn new(links: &'a HashMap<String, String>, notes: bool) -> Self {
+    fn new(targets: &'a Targets, notes: bool) -> Self {
         SlideParser {
-            links,
+            targets,
             notes,
+            picture: None,
             title: Vec::new(),
             hidden: false,
             blocks: Vec::new(),
@@ -260,6 +291,20 @@ impl<'a> SlideParser<'a> {
         } else if let Some(shape) = self.shape.as_mut() {
             shape.paragraphs.push(paragraph);
         }
+    }
+
+    /// A picture becomes its own paragraph, where it sits among the slide's shapes.
+    fn finish_picture(&mut self) {
+        let Some(picture) = self.picture.take() else {
+            return;
+        };
+        let Some(part) = picture.part else {
+            return;
+        };
+
+        let mut run = Run::image(part, picture.alt.unwrap_or_default());
+        run.link = picture.link;
+        self.blocks.push(Block::Paragraph(vec![run]));
     }
 
     fn finish_shape(&mut self) {
@@ -322,6 +367,25 @@ impl XmlHandler for SlideParser<'_> {
             "Fallback" if !is_empty => self.skip_depth = 1,
             "sld" => self.hidden = attr(e, "show").as_deref() == Some("0"),
             "sp" if !is_empty => self.shape = Some(Shape::default()),
+            "pic" if !is_empty && !self.notes => self.picture = Some(Picture::default()),
+            "cNvPr" => {
+                if let Some(picture) = self.picture.as_mut() {
+                    picture.alt = attr(e, "descr").or_else(|| attr(e, "title"));
+                }
+            }
+            "blip" => {
+                if let Some(picture) = self.picture.as_mut() {
+                    picture.part =
+                        attr(e, "embed").and_then(|id| self.targets.images.get(&id).cloned());
+                }
+            }
+            // Clicking a picture can open a link.
+            "hlinkClick" if self.picture.is_some() && !self.in_run => {
+                let link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
+                if let Some(picture) = self.picture.as_mut() {
+                    picture.link = link;
+                }
+            }
             "ph" => {
                 if let Some(shape) = self.shape.as_mut() {
                     // A placeholder with no type is a content placeholder.
@@ -354,7 +418,7 @@ impl XmlHandler for SlideParser<'_> {
                 self.style.italic = is_on(attr(e, "i"));
             }
             "hlinkClick" if self.in_run => {
-                self.link = attr(e, "id").and_then(|id| self.links.get(&id).cloned());
+                self.link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
             }
             "t" if !is_empty => self.in_text = true,
             "br" => self.push_text("\n"),
@@ -379,6 +443,7 @@ impl XmlHandler for SlideParser<'_> {
             }
             "p" => self.finish_paragraph(),
             "sp" => self.finish_shape(),
+            "pic" => self.finish_picture(),
             "tc" => {
                 if let Some(table) = self.tables.last_mut() {
                     table.end_cell();
@@ -445,7 +510,7 @@ mod tests {
     }
 
     fn parse(shapes: &str) -> Slide {
-        parse_slide(&slide_xml(shapes), &HashMap::new()).unwrap()
+        parse_slide(&slide_xml(shapes), &Targets::default()).unwrap()
     }
 
     fn runs(text: &str) -> Vec<Run> {
@@ -504,12 +569,15 @@ mod tests {
 
     #[test]
     fn reads_formatting_links_and_breaks() {
-        let links = HashMap::from([("rId2".to_string(), "https://example.com".to_string())]);
+        let targets = Targets {
+            links: HashMap::from([("rId2".to_string(), "https://example.com".to_string())]),
+            ..Targets::default()
+        };
         let xml = slide_xml(&shape(
             None,
             r#"<a:p><a:r><a:rPr b="1"/><a:t>Bold</a:t></a:r><a:r><a:rPr lang="en-US" i="1"/><a:t>Italic</a:t></a:r><a:br/><a:r><a:rPr><a:hlinkClick r:id="rId2"/></a:rPr><a:t>link</a:t></a:r><a:r><a:rPr><a:hlinkClick r:id="" action="ppaction://hlinkshowjump?jump=nextslide"/></a:rPr><a:t> next</a:t></a:r></a:p>"#,
         ));
-        let slide = parse_slide(&xml, &links).unwrap();
+        let slide = parse_slide(&xml, &targets).unwrap();
 
         let bold = RunStyle {
             bold: true,
@@ -557,9 +625,40 @@ mod tests {
     }
 
     #[test]
+    fn reads_pictures_in_slide_order() {
+        let targets = Targets {
+            links: HashMap::from([("rId4".to_string(), "https://example.com".to_string())]),
+            images: HashMap::from([("rId3".to_string(), "ppt/media/image1.png".to_string())]),
+        };
+        let picture = |descr: &str, extra: &str| {
+            format!(
+                r#"<p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3" descr="{descr}">{extra}</p:cNvPr><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic>"#
+            )
+        };
+        let xml = slide_xml(&format!(
+            "{}{}{}",
+            shape(None, &para("Before")),
+            picture("Team photo", r#"<a:hlinkClick r:id="rId4"/>"#),
+            picture("", ""),
+        ));
+
+        let slide = parse_slide(&xml, &targets).unwrap();
+        assert_eq!(
+            slide.body,
+            [
+                Block::Paragraph(runs("Before")),
+                Block::Paragraph(vec![
+                    Run::image("ppt/media/image1.png", "Team photo").linked("https://example.com")
+                ]),
+                Block::Paragraph(vec![Run::image("ppt/media/image1.png", "")]),
+            ]
+        );
+    }
+
+    #[test]
     fn notice_hidden_slides() {
         let xml = r#"<p:sld xmlns:p="p" show="0"><p:cSld><p:spTree/></p:cSld></p:sld>"#;
-        assert!(parse_slide(xml, &HashMap::new()).unwrap().hidden);
+        assert!(parse_slide(xml, &Targets::default()).unwrap().hidden);
     }
 
     #[test]

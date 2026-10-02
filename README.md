@@ -21,7 +21,7 @@ That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` work
 ## Usage
 
 ```text
-officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-notes]
+officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-notes] [--images DIR]
 ```
 
 | Option              | Meaning                                                                  |
@@ -31,6 +31,7 @@ officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-n
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
+| `--images DIR`      | DOCX and PPTX: save images into `DIR` and link them from the Markdown    |
 
 The input type comes from the file extension. DOCX and PPTX files only convert to `md`.
 
@@ -56,6 +57,9 @@ officeconv talk.pptx --to md -o talk.md
 
 # The same deck without speaker notes, for sharing
 officeconv talk.pptx --to md --no-notes -o handout.md
+
+# Keep the pictures: save them in ./notes_images and link them from notes.md
+officeconv notes.docx --to md -o notes.md --images notes_images
 
 # Stdout works with other tools
 officeconv sales.xlsx --to csv | head -5
@@ -92,10 +96,12 @@ Error: cannot convert docx to csv; docx supports: md
 | Tables                               | A Markdown table. The first row is the header              |
 | Line breaks                          | A hard break (two spaces, then a newline)                  |
 
+Images are left out unless you pass `--images DIR`; see [Images](#images).
+
 Text that Markdown would read as formatting (`*`, `_`, `[`, or a line starting with `#`, for
 example) is escaped.
 
-Not converted yet: images, footnotes, comments, headers and footers, and merged table cells
+Not converted yet: footnotes, comments, headers and footers, and merged table cells
 (they become empty cells). Headings that use custom style names aren't detected. Every numbered
 item is written as `1.` because Markdown renumbers lists when it renders them.
 
@@ -127,7 +133,27 @@ Mention the EMEA team.
 - Speaker notes go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
   `(hidden)`.
 
-Not converted yet: images, charts, SmartArt, and text inherited from the slide master or layout.
+Pictures become their own paragraph where they sit on the slide, but only with `--images DIR`.
+
+Not converted yet: charts, SmartArt, and text or pictures inherited from the slide master or
+layout.
+
+### Images
+
+With `--images DIR`, each picture stored in a DOCX or PPTX is saved into `DIR`, which is created
+if needed, and linked from the Markdown:
+
+```markdown
+Our chart: ![Sales by region](notes_images/image1.png)
+```
+
+- The alt text is the description set in Word or PowerPoint (Alt Text). It's empty if none is set.
+- Links are relative to the folder of the `-o` file, or to the current directory when writing to
+  stdout. If `DIR` is somewhere else, the link is its absolute path.
+- An image used more than once is saved once. File names are kept from the document, and a
+  clash gets a number added, such as `image1-2.png`.
+- Images linked from the web or another file, rather than stored in the document, are skipped.
+- Without `--images`, no files are written and images don't appear in the Markdown.
 
 ## Development
 
@@ -150,6 +176,7 @@ src/
   lib.rs             run(): validate, then hand off to a converter
   cli.rs             command-line options (clap)
   error.rs           ConvertError, with one variant per kind of failure
+  images.rs          saves pictures from a .docx or .pptx and works out their links
   input.rs           xlsx, docx, or pptx detection, and which outputs each supports
   opc.rs             zip parts, relationships, and the XmlHandler event loop
   output.rs          stdout, a file, or one file per sheet

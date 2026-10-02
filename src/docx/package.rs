@@ -16,6 +16,8 @@ use crate::opc::{attr, visit_elements};
 pub struct Package {
     /// Relationship ID -> link target.
     pub links: HashMap<String, String>,
+    /// Relationship ID -> image part (`word/media/image1.png`).
+    pub images: HashMap<String, String>,
     pub numbering: Numbering,
     /// Style ID -> style details.
     pub styles: HashMap<String, Style>,

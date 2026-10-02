@@ -473,3 +473,102 @@ fn rejects_no_notes_on_other_inputs() {
         .failure()
         .stderr(contains("--no-notes only applies to .pptx"));
 }
+
+#[test]
+fn saves_docx_images_next_to_the_markdown() {
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+    </Relationships>"#;
+    let picture = r#"<w:r><w:drawing><wp:inline xmlns:wp="wp"><wp:docPr id="1" name="Picture 1" descr="Team photo"/><a:graphic xmlns:a="a"><a:graphicData><pic:pic xmlns:pic="pic"><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let (dir, path) = sample_docx_with_parts(
+        &format!(r#"<w:p><w:r><w:t xml:space="preserve">Us: </w:t></w:r>{picture}</w:p>"#),
+        &[
+            ("word/_rels/document.xml.rels", rels),
+            ("word/media/image1.png", "fake png bytes"),
+        ],
+    );
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "-o"])
+        .arg(out.join("notes.md"))
+        .arg("--images")
+        .arg(out.join("notes_images"))
+        .assert()
+        .success()
+        .stderr(contains("saved 1 images"));
+
+    assert_eq!(
+        std::fs::read_to_string(out.join("notes.md")).unwrap(),
+        "Us: ![Team photo](notes_images/image1.png)\n"
+    );
+    assert_eq!(
+        std::fs::read(out.join("notes_images/image1.png")).unwrap(),
+        b"fake png bytes"
+    );
+}
+
+#[test]
+fn leaves_images_out_without_the_flag() {
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+    </Relationships>"#;
+    let (_dir, path) = sample_docx_with_parts(
+        r#"<w:p><w:r><w:drawing><wp:docPr id="1" name="p" descr="Photo"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p><w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[
+            ("word/_rels/document.xml.rels", rels),
+            ("word/media/image1.png", "fake png bytes"),
+        ],
+    );
+    assert_eq!(convert(&path, "md"), "Text\n");
+}
+
+#[test]
+fn saves_pptx_pictures() {
+    const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let presentation = format!(
+        r#"<p:presentation {NS}><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst></p:presentation>"#
+    );
+    let presentation_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="{REL}/slide" Target="slides/slide1.xml"/></Relationships>"#
+    );
+    let slide = format!(
+        r#"<p:sld {NS}><p:cSld><p:spTree><p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3" descr="Revenue chart"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#
+    );
+    let slide_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId3" Type="{REL}/image" Target="../media/image1.png"/></Relationships>"#
+    );
+    let (dir, path) = sample_package(
+        "talk.pptx",
+        &[
+            ("ppt/presentation.xml", &presentation),
+            ("ppt/_rels/presentation.xml.rels", &presentation_rels),
+            ("ppt/slides/slide1.xml", &slide),
+            ("ppt/slides/_rels/slide1.xml.rels", &slide_rels),
+            ("ppt/media/image1.png", "fake png bytes"),
+        ],
+    );
+
+    officeconv()
+        .current_dir(dir.path())
+        .arg(&path)
+        .args(["--to", "md", "--images", "media"])
+        .assert()
+        .success()
+        .stdout("## Slide 1\n\n![Revenue chart](media/image1.png)\n");
+    assert!(dir.path().join("media/image1.png").is_file());
+}
+
+#[test]
+fn rejects_images_option_for_xlsx() {
+    let (_dir, path) = sample_xlsx();
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--images", "img"])
+        .assert()
+        .failure()
+        .stderr(contains("--images only applies to .docx and .pptx"));
+}

@@ -24,17 +24,24 @@ use crate::document::{
     Block, Cell, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
 };
 use crate::error::Result;
+use crate::images::{self, ImageExport};
 use crate::opc::{self, XmlHandler, attr};
 use package::Package;
 
+const DOCUMENT: &str = "word/document.xml";
+
 /// Reads the `.docx` at `path` and returns its body as blocks.
-pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
+///
+/// With `images`, pictures are saved there and linked; without it, they're left out.
+pub fn read_blocks(path: &Path, images: Option<&mut ImageExport>) -> Result<Vec<Block>> {
     let mut archive = opc::open(path)?;
-    let document = opc::read_required_part(&mut archive, "word/document.xml")?;
+    let document = opc::read_required_part(&mut archive, DOCUMENT)?;
 
     let mut package = Package::default();
-    if let Some(xml) = opc::read_part(&mut archive, "word/_rels/document.xml.rels")? {
-        package.links = opc::hyperlinks(&opc::parse_relationships(&xml)?);
+    if let Some(xml) = opc::read_part(&mut archive, &opc::rels_path(DOCUMENT))? {
+        let relationships = opc::parse_relationships(&xml)?;
+        package.links = opc::hyperlinks(&relationships);
+        package.images = opc::image_parts(&relationships, DOCUMENT);
     }
     if let Some(xml) = opc::read_part(&mut archive, "word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
@@ -43,7 +50,9 @@ pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
         package.styles = package::parse_styles(&xml)?;
     }
 
-    parse_document(&document, &package)
+    let mut blocks = parse_document(&document, &package)?;
+    images::link_images(&mut blocks, &mut archive, images)?;
+    Ok(blocks)
 }
 
 /// Parses the contents of `word/document.xml`, looking up IDs in `package`.
@@ -67,6 +76,8 @@ struct Parser<'p> {
     style: RunStyle,
     /// Target of the hyperlink we're inside, if any.
     link: Option<String>,
+    /// Alt text of the picture being read, from its `wp:docPr` description.
+    image_alt: Option<String>,
     in_run: bool,
     in_text: bool,
     /// While above 0, we're inside an element whose contents we ignore.
@@ -121,6 +132,19 @@ impl XmlHandler for Parser<'_> {
             "b" if self.in_run => self.style.bold = is_on(e),
             "i" if self.in_run => self.style.italic = is_on(e),
             "t" if !is_empty => self.in_text = true,
+            // A picture: `wp:docPr` carries its alt text, then `a:blip` points at the image.
+            "docPr" if self.in_run => {
+                self.image_alt = attr(e, "descr").or_else(|| attr(e, "title"));
+            }
+            "blip" if self.in_run => {
+                let alt = self.image_alt.take().unwrap_or_default();
+                self.push_image(attr(e, "embed"), alt);
+            }
+            // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
+            "imagedata" if self.in_run => {
+                let alt = attr(e, "title").unwrap_or_default();
+                self.push_image(attr(e, "id"), alt);
+            }
             "tab" if self.in_run => self.push_text(" "),
             "br" | "cr" if self.in_run => {
                 // Page and column breaks don't mean anything in Markdown.
@@ -183,6 +207,7 @@ impl<'p> Parser<'p> {
             tables: Vec::new(),
             style: RunStyle::default(),
             link: None,
+            image_alt: None,
             in_run: false,
             in_text: false,
             skip_depth: 0,
@@ -196,6 +221,18 @@ impl<'p> Parser<'p> {
         };
 
         let mut run = Run::new(text, self.style);
+        run.link = self.link.clone();
+        append_run(&mut paragraph.runs, run);
+    }
+
+    /// Adds the image with relationship ID `id`, if it's one stored in the document.
+    fn push_image(&mut self, id: Option<String>, alt: String) {
+        let part = id.and_then(|id| self.package.images.get(&id));
+        let (Some(part), Some(paragraph)) = (part, self.paragraphs.last_mut()) else {
+            return;
+        };
+
+        let mut run = Run::image(part.clone(), alt);
         run.link = self.link.clone();
         append_run(&mut paragraph.runs, run);
     }
@@ -521,6 +558,33 @@ mod tests {
             r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>now bold</w:t></w:r></w:p>"#,
         );
         assert_eq!(blocks, [Block::Paragraph(vec![Run::new("now bold", BOLD)])]);
+    }
+
+    #[test]
+    fn reads_pictures_with_alt_text() {
+        let mut package = Package::default();
+        package
+            .images
+            .insert("rId7".into(), "word/media/image1.png".into());
+        let blocks = parse_with(
+            r#"<w:p><w:r><w:t xml:space="preserve">Chart: </w:t></w:r><w:r><w:drawing><wp:inline>
+                 <wp:docPr id="1" name="Picture 1" descr="Sales by region"/>
+                 <a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+               </wp:inline></w:drawing></w:r></w:p>
+               <w:p><w:r><w:pict><v:shape><v:imagedata r:id="rId7" o:title="Old style"/></v:shape></w:pict></w:r></w:p>
+               <w:p><w:r><w:drawing><wp:docPr id="2" name="x"/><a:blip r:link="rId99"/></w:drawing></w:r></w:p>"#,
+            &package,
+        );
+        assert_eq!(
+            blocks,
+            [
+                Block::Paragraph(vec![
+                    Run::new("Chart: ", PLAIN),
+                    Run::image("word/media/image1.png", "Sales by region"),
+                ]),
+                Block::Paragraph(vec![Run::image("word/media/image1.png", "Old style")]),
+            ]
+        );
     }
 
     #[test]

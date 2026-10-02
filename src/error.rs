@@ -28,6 +28,9 @@ pub enum ConvertError {
     #[error("--no-notes only applies to .pptx input")]
     NotesOptionOnlyForPptx,
 
+    #[error("--images only applies to .docx and .pptx input")]
+    ImagesOptionOnlyForDocuments,
+
     #[error("could not read workbook: {0}")]
     Xlsx(#[from] calamine::XlsxError),
 

@@ -121,6 +121,12 @@ fn render_runs(runs: &[Run]) -> String {
 ///
 /// `**bold **` isn't bold in Markdown, but `**bold** ` is.
 fn render_run(run: &Run) -> String {
+    if let Some(source) = &run.image {
+        // Alt text can't span lines in Markdown.
+        let alt = escape_inline(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
+        return format!("![{alt}]({})", escape_url(source));
+    }
+
     let marker = match (run.style.bold, run.style.italic) {
         (true, true) => "***",
         (true, false) => "**",
@@ -291,6 +297,27 @@ mod tests {
 | ---- | ------------ |
 | A\\|B | Bobby<br>Don |
 "
+        );
+    }
+
+    #[test]
+    fn renders_images_with_alt_text() {
+        let runs = [
+            run("See ", false, false),
+            Run::image("img/chart 1.png", "Sales [Q3]\nchart"),
+        ];
+        assert_eq!(
+            render_runs(&runs),
+            r"See ![Sales \[Q3\] chart](img/chart%201.png)"
+        );
+    }
+
+    #[test]
+    fn renders_linked_images() {
+        let runs = [Run::image("img/logo.png", "Logo").linked("https://example.com")];
+        assert_eq!(
+            render_runs(&runs),
+            "[![Logo](img/logo.png)](https://example.com)"
         );
     }
 

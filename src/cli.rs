@@ -31,6 +31,10 @@ pub struct Cli {
     /// Leave out speaker notes (PPTX only)
     #[arg(long)]
     pub no_notes: bool,
+
+    /// Save images into this directory and link them from the Markdown (DOCX and PPTX only)
+    #[arg(long, value_name = "DIR")]
+    pub images: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

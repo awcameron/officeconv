@@ -2,6 +2,7 @@ pub mod cli;
 pub mod document;
 pub mod docx;
 pub mod error;
+pub mod images;
 pub mod input;
 pub mod opc;
 pub mod output;
@@ -15,6 +16,7 @@ use std::path::Path;
 
 use cli::Cli;
 use error::{ConvertError, Result};
+use images::ImageExport;
 use input::InputKind;
 
 /// Validates the request and runs the matching converter.
@@ -28,6 +30,9 @@ pub fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
     }
+    if kind == InputKind::Xlsx && cli.images.is_some() {
+        return Err(ConvertError::ImagesOptionOnlyForDocuments);
+    }
     if !cli.input.is_file() {
         return Err(ConvertError::InputNotFound(cli.input.clone()));
     }
@@ -35,16 +40,37 @@ pub fn run(cli: &Cli) -> Result<()> {
     match kind {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli),
         InputKind::Xlsx => convert_one_sheet(cli),
-        InputKind::Docx => write_document(cli, &docx::read_blocks(&cli.input)?),
-        InputKind::Pptx => {
-            let notes = if cli.no_notes {
-                pptx::Notes::Skip
-            } else {
-                pptx::Notes::Include
-            };
-            write_document(cli, &pptx::read_blocks(&cli.input, notes)?)
-        }
+        InputKind::Docx | InputKind::Pptx => convert_document(cli, kind),
     }
+}
+
+/// Converts a Word or PowerPoint file to Markdown, saving its images if asked to.
+fn convert_document(cli: &Cli, kind: InputKind) -> Result<()> {
+    let mut images = match &cli.images {
+        Some(dir) => Some(ImageExport::new(dir, cli.output.as_deref())?),
+        None => None,
+    };
+
+    let blocks = if kind == InputKind::Pptx {
+        let notes = if cli.no_notes {
+            pptx::Notes::Skip
+        } else {
+            pptx::Notes::Include
+        };
+        pptx::read_blocks(&cli.input, notes, images.as_mut())?
+    } else {
+        docx::read_blocks(&cli.input, images.as_mut())?
+    };
+    write_document(cli, &blocks)?;
+
+    if let Some(images) = &images {
+        eprintln!(
+            "saved {} images to {}",
+            images.count(),
+            images.dir().display()
+        );
+    }
+    Ok(())
 }
 
 /// Writes a Word or PowerPoint document as Markdown to stdout or the `-o` file.

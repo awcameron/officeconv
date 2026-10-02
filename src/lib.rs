@@ -1,6 +1,8 @@
 pub mod cli;
 pub mod error;
 pub mod input;
+pub mod table;
+pub mod xlsx;
 
 use cli::Cli;
 use error::{ConvertError, Result};
@@ -18,11 +20,18 @@ pub fn run(cli: &Cli) -> Result<()> {
         return Err(ConvertError::InputNotFound(cli.input.clone()));
     }
 
-    // The real converters arrive in milestones 3 (xlsx) and 6 (docx).
-    eprintln!(
-        "would convert {} ({kind}) to {}",
-        cli.input.display(),
-        cli.to
-    );
+    match kind {
+        InputKind::Xlsx => {
+            let sheet = xlsx::read_sheet(&cli.input, cli.sheet.as_deref())?;
+            // Writers arrive in milestone 4; for now, show what we read.
+            eprintln!(
+                "read sheet {:?}: {} columns, {} rows",
+                sheet.name,
+                sheet.table.headers.len(),
+                sheet.table.rows.len()
+            );
+        }
+        InputKind::Docx => eprintln!("docx conversion arrives in milestone 6"),
+    }
     Ok(())
 }

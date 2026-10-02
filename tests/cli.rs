@@ -59,3 +59,15 @@ fn reports_missing_input() {
         .failure()
         .stderr(contains("input file not found"));
 }
+
+#[test]
+fn reports_corrupt_workbook() {
+    // An empty file isn't a valid zip, so calamine can't open it.
+    let (_dir, path) = touch("broken.xlsx");
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv"])
+        .assert()
+        .failure()
+        .stderr(contains("could not read workbook"));
+}

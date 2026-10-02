@@ -24,6 +24,15 @@ pub enum ConvertError {
 
     #[error("--sheet and --all-sheets only apply to .xlsx input")]
     SheetOptionOnDocx,
+
+    #[error("could not read workbook: {0}")]
+    Xlsx(#[from] calamine::XlsxError),
+
+    #[error("sheet {name:?} not found; available sheets: {available}")]
+    SheetNotFound { name: String, available: String },
+
+    #[error("workbook has no sheets")]
+    NoSheets,
 }
 
 /// Shorthand so functions can write `Result<T>` instead of `Result<T, ConvertError>`.

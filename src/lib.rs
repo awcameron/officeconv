@@ -5,6 +5,7 @@ pub mod error;
 pub mod input;
 pub mod opc;
 pub mod output;
+pub mod pptx;
 pub mod table;
 pub mod writers;
 pub mod xlsx;
@@ -21,8 +22,8 @@ pub fn run(cli: &Cli) -> Result<()> {
     let kind = InputKind::from_path(&cli.input)?;
     kind.check_output(cli.to)?;
 
-    if kind == InputKind::Docx && (cli.sheet.is_some() || cli.all_sheets) {
-        return Err(ConvertError::SheetOptionOnDocx);
+    if kind != InputKind::Xlsx && (cli.sheet.is_some() || cli.all_sheets) {
+        return Err(ConvertError::SheetOptionOnlyForXlsx);
     }
     if !cli.input.is_file() {
         return Err(ConvertError::InputNotFound(cli.input.clone()));
@@ -31,15 +32,15 @@ pub fn run(cli: &Cli) -> Result<()> {
     match kind {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli),
         InputKind::Xlsx => convert_one_sheet(cli),
-        InputKind::Docx => convert_docx(cli),
+        InputKind::Docx => write_document(cli, &docx::read_blocks(&cli.input)?),
+        InputKind::Pptx => write_document(cli, &pptx::read_blocks(&cli.input)?),
     }
 }
 
-/// Converts a Word document to Markdown on stdout or the `-o` file.
-fn convert_docx(cli: &Cli) -> Result<()> {
-    let blocks = docx::read_blocks(&cli.input)?;
+/// Writes a Word or PowerPoint document as Markdown to stdout or the `-o` file.
+fn write_document(cli: &Cli, blocks: &[document::Block]) -> Result<()> {
     let mut out = output::open_output(cli.output.as_deref())?;
-    out.write_all(document::markdown::render(&blocks).as_bytes())?;
+    out.write_all(document::markdown::render(blocks).as_bytes())?;
     out.flush()?;
     Ok(())
 }

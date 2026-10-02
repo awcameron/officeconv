@@ -12,7 +12,7 @@ pub enum ConvertError {
     #[error("input file not found: {}", .0.display())]
     InputNotFound(PathBuf),
 
-    #[error("unsupported input file {} (expected .xlsx or .docx)", .0.display())]
+    #[error("unsupported input file {} (expected .xlsx, .docx, or .pptx)", .0.display())]
     UnsupportedInput(PathBuf),
 
     #[error("cannot convert {input} to {to}; {input} supports: {supported}")]
@@ -23,7 +23,7 @@ pub enum ConvertError {
     },
 
     #[error("--sheet and --all-sheets only apply to .xlsx input")]
-    SheetOptionOnDocx,
+    SheetOptionOnlyForXlsx,
 
     #[error("could not read workbook: {0}")]
     Xlsx(#[from] calamine::XlsxError),

@@ -79,17 +79,39 @@ pub fn resolve_target(part: &str, target: &str) -> String {
     segments.join("/")
 }
 
-/// Relationship ID -> target, from a `.rels` part.
-pub fn parse_relationships(xml: &str) -> Result<HashMap<String, String>> {
-    let mut links = HashMap::new();
+/// One entry in a `.rels` part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relationship {
+    /// The last segment of the relationship type URI: `hyperlink`, `slide`, `notesSlide`, ...
+    pub kind: String,
+    pub target: String,
+}
+
+/// Relationship ID -> relationship, from a `.rels` part.
+pub fn parse_relationships(xml: &str) -> Result<HashMap<String, Relationship>> {
+    let mut relationships = HashMap::new();
     visit_elements(xml, |e| {
         if e.local_name().as_ref() == "Relationship"
             && let (Some(id), Some(target)) = (attr(e, "Id"), attr(e, "Target"))
         {
-            links.insert(id, target);
+            let kind = attr(e, "Type")
+                .and_then(|t| t.rsplit('/').next().map(str::to_string))
+                .unwrap_or_default();
+            relationships.insert(id, Relationship { kind, target });
         }
     })?;
-    Ok(links)
+    Ok(relationships)
+}
+
+/// Just the external links: relationship ID -> URL.
+///
+/// Other relationships (images, a link that jumps to another slide) aren't web links.
+pub fn hyperlinks(relationships: &HashMap<String, Relationship>) -> HashMap<String, String> {
+    relationships
+        .iter()
+        .filter(|(_, r)| r.kind == "hyperlink")
+        .map(|(id, r)| (id.clone(), r.target.clone()))
+        .collect()
 }
 
 /// Something that reacts to XML as it streams past. See [`walk`].
@@ -155,13 +177,20 @@ mod tests {
     fn reads_relationship_targets() {
         let links = parse_relationships(
             r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-                 <Relationship Id="rId4" Type=".../hyperlink" Target="https://example.com" TargetMode="External"/>
-                 <Relationship Id="rId1" Type=".../styles" Target="styles.xml"/>
+                 <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/>
+                 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
                </Relationships>"#,
         )
         .unwrap();
-        assert_eq!(links["rId4"], "https://example.com");
-        assert_eq!(links.len(), 2);
+        assert_eq!(
+            links["rId4"],
+            Relationship {
+                kind: "hyperlink".into(),
+                target: "https://example.com".into()
+            }
+        );
+        assert_eq!(links["rId1"].kind, "styles");
+        assert_eq!(hyperlinks(&links).len(), 1);
     }
 
     #[test]

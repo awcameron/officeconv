@@ -2,11 +2,11 @@
 name = "officeconv"
 version = "0.1.0"
 edition = "2024"
-description = "Convert XLSX spreadsheets to CSV, TSV, JSON, or Markdown, and DOCX documents to Markdown"
+description = "Convert XLSX spreadsheets to CSV, TSV, JSON, or Markdown, and DOCX and PPTX files to Markdown"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/awcameron/officeconv"
-keywords = ["xlsx", "docx", "csv", "markdown", "converter"]
+keywords = ["xlsx", "docx", "pptx", "markdown", "converter"]
 categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]

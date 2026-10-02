@@ -53,6 +53,22 @@ fn sample_docx_with_parts(body_xml: &str, parts: &[(&str, &str)]) -> (TempDir, P
     (dir, path)
 }
 
+/// Writes a `.zip`-based Office file named `name` containing `parts` into a fresh temp dir.
+fn sample_package(name: &str, parts: &[(&str, &str)]) -> (TempDir, PathBuf) {
+    use std::io::Write;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join(name);
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    for (part, contents) in parts {
+        zip.start_file(*part, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(contents.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    (dir, path)
+}
+
 /// Runs the converter on `path` and returns its stdout.
 fn convert(path: &std::path::Path, to: &str) -> String {
     let output = officeconv().arg(path).args(["--to", to]).output().unwrap();
@@ -74,7 +90,7 @@ fn touch(name: &str) -> (TempDir, PathBuf) {
 
 #[test]
 fn rejects_unknown_extension() {
-    let (_dir, path) = touch("slides.pptx");
+    let (_dir, path) = touch("report.pdf");
     officeconv()
         .arg(&path)
         .args(["--to", "csv"])
@@ -332,4 +348,90 @@ Learn [Rust](https://www.rust-lang.org)
 | zip   | unpack .docx |
 "
     );
+}
+
+#[test]
+fn converts_pptx_to_markdown() {
+    const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    let title = |text: &str| {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"#
+        )
+    };
+    let body = |paragraphs: &str| {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody>{paragraphs}</p:txBody></p:sp>"#
+        )
+    };
+    let slide = |shapes: String| {
+        format!(r#"<p:sld {NS}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"#)
+    };
+
+    // The presentation lists slide2.xml first, so it must come out first.
+    let presentation = format!(
+        r#"<p:presentation {NS}><p:sldIdLst><p:sldId id="256" r:id="rId3"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst></p:presentation>"#
+    );
+    let presentation_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="{REL}/slide" Target="slides/slide1.xml"/><Relationship Id="rId3" Type="{REL}/slide" Target="slides/slide2.xml"/></Relationships>"#
+    );
+    let first = slide(format!(
+        "{}{}",
+        title("Agenda"),
+        body(
+            r#"<a:p><a:r><a:t xml:space="preserve">Read </a:t></a:r><a:r><a:rPr><a:hlinkClick r:id="rId5"/></a:rPr><a:t>the book</a:t></a:r></a:p>"#
+        )
+    ));
+    let first_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="{REL}/hyperlink" Target="https://doc.rust-lang.org/book/" TargetMode="External"/><Relationship Id="rId6" Type="{REL}/notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>"#
+    );
+    let notes = slide(body("<a:p><a:r><a:t>Keep it short.</a:t></a:r></a:p>"));
+    let second = slide(title("Thanks"));
+
+    let (_dir, path) = sample_package(
+        "talk.pptx",
+        &[
+            ("ppt/presentation.xml", &presentation),
+            ("ppt/_rels/presentation.xml.rels", &presentation_rels),
+            ("ppt/slides/slide1.xml", &second),
+            ("ppt/slides/slide2.xml", &first),
+            ("ppt/slides/_rels/slide2.xml.rels", &first_rels),
+            ("ppt/notesSlides/notesSlide1.xml", &notes),
+        ],
+    );
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+## Slide 1: Agenda
+
+- Read [the book](https://doc.rust-lang.org/book/)
+
+### Notes
+
+Keep it short.
+
+---
+
+## Slide 2: Thanks
+"
+    );
+}
+
+#[test]
+fn rejects_pptx_to_csv_and_sheet_options() {
+    let (_dir, path) = touch("talk.pptx");
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot convert pptx to csv; pptx supports: md"));
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--all-sheets"])
+        .assert()
+        .failure()
+        .stderr(contains("only apply to .xlsx"));
 }

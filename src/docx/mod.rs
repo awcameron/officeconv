@@ -16,12 +16,13 @@
 
 pub mod package;
 
-use std::mem;
 use std::path::Path;
 
 use quick_xml::events::BytesStart;
 
-use crate::document::{Block, Cell, Run, RunStyle, append_paragraph, append_run, is_blank};
+use crate::document::{
+    Block, Cell, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
+};
 use crate::error::Result;
 use crate::opc::{self, XmlHandler, attr};
 use package::Package;
@@ -33,7 +34,7 @@ pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
 
     let mut package = Package::default();
     if let Some(xml) = opc::read_part(&mut archive, "word/_rels/document.xml.rels")? {
-        package.links = opc::parse_relationships(&xml)?;
+        package.links = opc::hyperlinks(&opc::parse_relationships(&xml)?);
     }
     if let Some(xml) = opc::read_part(&mut archive, "word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
@@ -78,13 +79,6 @@ struct ParagraphBuilder {
     num_id: Option<String>,
     list_level: u8,
     runs: Vec<Run>,
-}
-
-#[derive(Default)]
-struct TableBuilder {
-    rows: Vec<Vec<Cell>>,
-    row: Vec<Cell>,
-    cell: Cell,
 }
 
 impl XmlHandler for Parser<'_> {
@@ -156,14 +150,12 @@ impl XmlHandler for Parser<'_> {
             }
             "tc" => {
                 if let Some(table) = self.tables.last_mut() {
-                    let cell = mem::take(&mut table.cell);
-                    table.row.push(cell);
+                    table.end_cell();
                 }
             }
             "tr" => {
                 if let Some(table) = self.tables.last_mut() {
-                    let row = mem::take(&mut table.row);
-                    table.rows.push(row);
+                    table.end_row();
                 }
             }
             "tbl" => {

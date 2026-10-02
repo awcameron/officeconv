@@ -3,6 +3,8 @@
 
 pub mod markdown;
 
+use std::mem;
+
 /// One top-level piece of a document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
@@ -98,4 +100,27 @@ pub fn append_paragraph(cell: &mut Cell, runs: Vec<Run>) {
 /// True if the runs contain nothing but whitespace.
 pub fn is_blank(runs: &[Run]) -> bool {
     runs.iter().all(|r| r.text.trim().is_empty())
+}
+
+/// Collects a table's cells as a reader walks through its rows.
+#[derive(Debug, Default)]
+pub struct TableBuilder {
+    pub rows: Vec<Vec<Cell>>,
+    row: Vec<Cell>,
+    /// The cell being filled in; add paragraphs to it with [`append_paragraph`].
+    pub cell: Cell,
+}
+
+impl TableBuilder {
+    /// Moves the finished cell into the current row.
+    pub fn end_cell(&mut self) {
+        let cell = mem::take(&mut self.cell);
+        self.row.push(cell);
+    }
+
+    /// Moves the finished row into the table.
+    pub fn end_row(&mut self) {
+        let row = mem::take(&mut self.row);
+        self.rows.push(row);
+    }
 }

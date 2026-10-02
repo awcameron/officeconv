@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
-/// Convert Office files (XLSX, DOCX) to plain-text formats.
+/// Convert Office files (XLSX, DOCX, PPTX) to plain-text formats.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
-    /// Input file (.xlsx or .docx)
+    /// Input file (.xlsx, .docx, or .pptx)
     pub input: PathBuf,
 
     /// Output format

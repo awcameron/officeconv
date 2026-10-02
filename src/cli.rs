@@ -27,6 +27,10 @@ pub struct Cli {
     /// Convert every sheet to its own file, named like sales-Q1.csv (XLSX only)
     #[arg(long)]
     pub all_sheets: bool,
+
+    /// Leave out speaker notes (PPTX only)
+    #[arg(long)]
+    pub no_notes: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -68,6 +72,15 @@ mod tests {
     fn parses_markdown_alias() {
         let cli = Cli::try_parse_from(["officeconv", "a.docx", "--to", "markdown"]).unwrap();
         assert_eq!(cli.to, OutputFormat::Markdown);
+    }
+
+    #[test]
+    fn notes_are_included_unless_turned_off() {
+        let cli = Cli::try_parse_from(["officeconv", "a.pptx", "--to", "md"]).unwrap();
+        assert!(!cli.no_notes);
+        let cli =
+            Cli::try_parse_from(["officeconv", "a.pptx", "--to", "md", "--no-notes"]).unwrap();
+        assert!(cli.no_notes);
     }
 
     #[test]

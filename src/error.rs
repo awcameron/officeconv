@@ -25,6 +25,9 @@ pub enum ConvertError {
     #[error("--sheet and --all-sheets only apply to .xlsx input")]
     SheetOptionOnlyForXlsx,
 
+    #[error("--no-notes only applies to .pptx input")]
+    NotesOptionOnlyForPptx,
+
     #[error("could not read workbook: {0}")]
     Xlsx(#[from] calamine::XlsxError),
 

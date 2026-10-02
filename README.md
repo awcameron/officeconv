@@ -21,7 +21,7 @@ That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` work
 ## Usage
 
 ```text
-officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets]
+officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-notes]
 ```
 
 | Option              | Meaning                                                                  |
@@ -30,6 +30,7 @@ officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets]
 | `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory      |
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
+| `--no-notes`        | PPTX only: leave out speaker notes                                       |
 
 The input type comes from the file extension. DOCX and PPTX files only convert to `md`.
 
@@ -52,6 +53,9 @@ officeconv notes.docx --to md -o notes.md
 
 # A slide deck as Markdown, one section per slide
 officeconv talk.pptx --to md -o talk.md
+
+# The same deck without speaker notes, for sharing
+officeconv talk.pptx --to md --no-notes -o handout.md
 
 # Stdout works with other tools
 officeconv sales.xlsx --to csv | head -5
@@ -120,7 +124,8 @@ Mention the EMEA team.
 - Content placeholders become bullet lists, keeping their indent levels. Text boxes and subtitles
   become paragraphs. Bullets and numbering set on a paragraph override those defaults.
 - Bold, italic, links, line breaks, and tables convert the same way as in DOCX.
-- Speaker notes go under `### Notes`. Hidden slides are marked `(hidden)`.
+- Speaker notes go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
+  `(hidden)`.
 
 Not converted yet: images, charts, SmartArt, and text inherited from the slide master or layout.
 

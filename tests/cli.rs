@@ -350,8 +350,10 @@ Learn [Rust](https://www.rust-lang.org)
     );
 }
 
-#[test]
-fn converts_pptx_to_markdown() {
+/// A two-slide deck: "Agenda" with a link and speaker notes, then "Thanks".
+///
+/// The presentation lists slide2.xml first, so it must come out first.
+fn sample_pptx() -> (TempDir, PathBuf) {
     const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
     const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
@@ -369,7 +371,6 @@ fn converts_pptx_to_markdown() {
         format!(r#"<p:sld {NS}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"#)
     };
 
-    // The presentation lists slide2.xml first, so it must come out first.
     let presentation = format!(
         r#"<p:presentation {NS}><p:sldIdLst><p:sldId id="256" r:id="rId3"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst></p:presentation>"#
     );
@@ -389,7 +390,7 @@ fn converts_pptx_to_markdown() {
     let notes = slide(body("<a:p><a:r><a:t>Keep it short.</a:t></a:r></a:p>"));
     let second = slide(title("Thanks"));
 
-    let (_dir, path) = sample_package(
+    sample_package(
         "talk.pptx",
         &[
             ("ppt/presentation.xml", &presentation),
@@ -399,7 +400,12 @@ fn converts_pptx_to_markdown() {
             ("ppt/slides/_rels/slide2.xml.rels", &first_rels),
             ("ppt/notesSlides/notesSlide1.xml", &notes),
         ],
-    );
+    )
+}
+
+#[test]
+fn converts_pptx_to_markdown() {
+    let (_dir, path) = sample_pptx();
 
     assert_eq!(
         convert(&path, "md"),
@@ -434,4 +440,36 @@ fn rejects_pptx_to_csv_and_sheet_options() {
         .assert()
         .failure()
         .stderr(contains("only apply to .xlsx"));
+}
+
+#[test]
+fn leaves_out_notes_with_no_notes() {
+    let (_dir, path) = sample_pptx();
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--no-notes"])
+        .assert()
+        .success()
+        .stdout(
+            "\
+## Slide 1: Agenda
+
+- Read [the book](https://doc.rust-lang.org/book/)
+
+---
+
+## Slide 2: Thanks
+",
+        );
+}
+
+#[test]
+fn rejects_no_notes_on_other_inputs() {
+    let (_dir, path) = touch("notes.docx");
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--no-notes"])
+        .assert()
+        .failure()
+        .stderr(contains("--no-notes only applies to .pptx"));
 }

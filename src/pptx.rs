@@ -40,8 +40,15 @@ pub struct Slide {
     pub notes: Vec<Block>,
 }
 
+/// Whether to include each slide's speaker notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notes {
+    Include,
+    Skip,
+}
+
 /// Reads the `.pptx` at `path` and returns it as blocks, slide by slide.
-pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
+pub fn read_blocks(path: &Path, notes: Notes) -> Result<Vec<Block>> {
     let mut archive = opc::open(path)?;
     let presentation = opc::read_required_part(&mut archive, PRESENTATION)?;
     let relationships = match opc::read_part(&mut archive, &opc::rels_path(PRESENTATION))? {
@@ -71,7 +78,8 @@ pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
             .values()
             .find(|r| r.kind == "notesSlide")
             .map(|r| opc::resolve_target(&part, &r.target));
-        if let Some(notes_part) = notes_part
+        if notes == Notes::Include
+            && let Some(notes_part) = notes_part
             && let Some(notes_xml) = opc::read_part(&mut archive, &notes_part)?
         {
             slide.notes = parse_notes(&notes_xml)?;

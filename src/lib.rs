@@ -25,6 +25,9 @@ pub fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Xlsx && (cli.sheet.is_some() || cli.all_sheets) {
         return Err(ConvertError::SheetOptionOnlyForXlsx);
     }
+    if kind != InputKind::Pptx && cli.no_notes {
+        return Err(ConvertError::NotesOptionOnlyForPptx);
+    }
     if !cli.input.is_file() {
         return Err(ConvertError::InputNotFound(cli.input.clone()));
     }
@@ -33,7 +36,14 @@ pub fn run(cli: &Cli) -> Result<()> {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli),
         InputKind::Xlsx => convert_one_sheet(cli),
         InputKind::Docx => write_document(cli, &docx::read_blocks(&cli.input)?),
-        InputKind::Pptx => write_document(cli, &pptx::read_blocks(&cli.input)?),
+        InputKind::Pptx => {
+            let notes = if cli.no_notes {
+                pptx::Notes::Skip
+            } else {
+                pptx::Notes::Include
+            };
+            write_document(cli, &pptx::read_blocks(&cli.input, notes)?)
+        }
     }
 }
 

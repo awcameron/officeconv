@@ -16,7 +16,7 @@ pub struct Cli {
     #[arg(short, long, value_enum)]
     pub to: OutputFormat,
 
-    /// Write to this file instead of stdout
+    /// Write to this file instead of stdout (with --all-sheets: a directory)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
@@ -24,7 +24,7 @@ pub struct Cli {
     #[arg(long, conflicts_with = "all_sheets")]
     pub sheet: Option<String>,
 
-    /// Convert every sheet to its own file (XLSX only)
+    /// Convert every sheet to its own <stem>-<sheet>.<ext> file (XLSX only)
     #[arg(long)]
     pub all_sheets: bool,
 }
@@ -36,6 +36,18 @@ pub enum OutputFormat {
     Json,
     #[value(name = "md", alias = "markdown")]
     Markdown,
+}
+
+impl OutputFormat {
+    /// File extension for this format, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            OutputFormat::Csv => "csv",
+            OutputFormat::Tsv => "tsv",
+            OutputFormat::Json => "json",
+            OutputFormat::Markdown => "md",
+        }
+    }
 }
 
 impl fmt::Display for OutputFormat {

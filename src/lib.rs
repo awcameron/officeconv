@@ -1,12 +1,12 @@
 pub mod cli;
 pub mod error;
 pub mod input;
+pub mod output;
 pub mod table;
 pub mod writers;
 pub mod xlsx;
 
-use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 
 use cli::Cli;
@@ -26,28 +26,36 @@ pub fn run(cli: &Cli) -> Result<()> {
     }
 
     match kind {
-        InputKind::Xlsx => {
-            let sheet = xlsx::read_sheet(&cli.input, cli.sheet.as_deref())?;
-            let mut out = open_output(cli.output.as_deref())?;
-            writers::write_table(&sheet.table, cli.to, &mut out)?;
-            // BufWriter flushes on drop but ignores errors there, so flush explicitly.
-            out.flush()?;
+        InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli),
+        InputKind::Xlsx => convert_one_sheet(cli),
+        InputKind::Docx => {
+            eprintln!("docx conversion arrives in milestone 6");
+            Ok(())
         }
-        InputKind::Docx => eprintln!("docx conversion arrives in milestone 6"),
     }
+}
+
+/// Converts one sheet to stdout or the `-o` file.
+fn convert_one_sheet(cli: &Cli) -> Result<()> {
+    let sheet = xlsx::read_sheet(&cli.input, cli.sheet.as_deref())?;
+    let mut out = output::open_output(cli.output.as_deref())?;
+    writers::write_table(&sheet.table, cli.to, &mut out)?;
+    // BufWriter flushes on drop but ignores errors there, so flush explicitly.
+    out.flush()?;
     Ok(())
 }
 
-/// Opens the file at `path`, or stdout when there's no path. Either way, output is buffered.
-fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {
-    match path {
-        Some(path) => {
-            let file = File::create(path).map_err(|source| ConvertError::CreateOutput {
-                path: path.to_path_buf(),
-                source,
-            })?;
-            Ok(Box::new(BufWriter::new(file)))
-        }
-        None => Ok(Box::new(BufWriter::new(io::stdout().lock()))),
+/// Writes every sheet to its own file, in the `-o` directory or the current one.
+fn convert_all_sheets(cli: &Cli) -> Result<()> {
+    let dir = cli.output.as_deref().unwrap_or(Path::new("."));
+    output::ensure_dir(dir)?;
+
+    for sheet in xlsx::read_all_sheets(&cli.input)? {
+        let path = output::sheet_output_path(dir, &cli.input, &sheet.name, cli.to);
+        let mut out = output::open_output(Some(&path))?;
+        writers::write_table(&sheet.table, cli.to, &mut out)?;
+        out.flush()?;
+        eprintln!("wrote {}", path.display());
     }
+    Ok(())
 }

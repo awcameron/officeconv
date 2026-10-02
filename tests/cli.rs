@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -160,4 +161,69 @@ fn reports_unwritable_output() {
         .assert()
         .failure()
         .stderr(contains("could not create"));
+}
+
+#[test]
+fn writes_each_sheet_to_its_own_file() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("report.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Q1")
+        .unwrap()
+        .write(0, 0, "a")
+        .unwrap();
+    workbook
+        .add_worksheet()
+        .set_name("Q2 (draft)")
+        .unwrap()
+        .write(0, 0, "b")
+        .unwrap();
+    workbook.save(&input).unwrap();
+    let out_dir = dir.path().join("out");
+
+    officeconv()
+        .arg(&input)
+        .args(["--to", "csv", "--all-sheets", "-o"])
+        .arg(&out_dir)
+        .assert()
+        .success()
+        .stderr(contains("report-Q1.csv").and(contains("report-Q2 (draft).csv")));
+
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join("report-Q1.csv")).unwrap(),
+        "a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join("report-Q2 (draft).csv")).unwrap(),
+        "b\n"
+    );
+}
+
+#[test]
+fn all_sheets_defaults_to_current_directory() {
+    let (dir, path) = sample_xlsx();
+
+    officeconv()
+        .current_dir(dir.path())
+        .arg(&path)
+        .args(["--to", "md", "--all-sheets"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join("sales-Sheet1.md").is_file());
+}
+
+#[test]
+fn reports_unknown_sheet() {
+    let (_dir, path) = sample_xlsx();
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv", "--sheet", "Nope"])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "sheet \"Nope\" not found; available sheets: Sheet1",
+        ));
 }

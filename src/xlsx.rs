@@ -1,5 +1,6 @@
 //! Reading XLSX workbooks into [`Table`]s.
 
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use calamine::{Data, ExcelDateTime, Reader, Xlsx, open_workbook};
@@ -33,6 +34,25 @@ pub fn read_sheet(path: &Path, sheet: Option<&str>) -> Result<Sheet> {
         None => names.first().ok_or(ConvertError::NoSheets)?.clone(),
     };
 
+    load_sheet(&mut workbook, name)
+}
+
+/// Reads every sheet in the workbook at `path`, in workbook order.
+pub fn read_all_sheets(path: &Path) -> Result<Vec<Sheet>> {
+    let mut workbook: Xlsx<_> = open_workbook(path)?;
+    let names = workbook.sheet_names();
+    if names.is_empty() {
+        return Err(ConvertError::NoSheets);
+    }
+
+    names
+        .into_iter()
+        .map(|name| load_sheet(&mut workbook, name))
+        .collect()
+}
+
+/// Loads the cells of the sheet called `name` from an already-open workbook.
+fn load_sheet<R: Read + Seek>(workbook: &mut Xlsx<R>, name: String) -> Result<Sheet> {
     let range = workbook.worksheet_range(&name)?;
     let rows = range
         .rows()
@@ -165,6 +185,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sheet = read_sheet(&sample_workbook(dir.path()), Some("Notes")).unwrap();
         assert_eq!(sheet.table.headers, ["Note"]);
+    }
+
+    #[test]
+    fn reads_all_sheets_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let sheets = read_all_sheets(&sample_workbook(dir.path())).unwrap();
+        let names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Sales", "Notes"]);
+        assert_eq!(sheets[1].table.headers, ["Note"]);
     }
 
     #[test]

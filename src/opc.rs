@@ -5,9 +5,7 @@
 //! so on that `word/document.xml` refers to by ID (`rId5`).
 
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{Read, Seek};
-use std::path::Path;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
@@ -16,10 +14,9 @@ use zip::result::ZipError;
 
 use crate::error::Result;
 
-/// Opens the package at `path`.
-pub fn open(path: &Path) -> Result<ZipArchive<File>> {
-    let file = File::open(path).map_err(ZipError::from)?;
-    Ok(ZipArchive::new(file)?)
+/// Opens a package from anything readable and seekable, such as a file or bytes in memory.
+pub fn open<R: Read + Seek>(reader: R) -> Result<ZipArchive<R>> {
+    Ok(ZipArchive::new(reader)?)
 }
 
 /// Reads one part from the archive, or `None` if the package doesn't have it.

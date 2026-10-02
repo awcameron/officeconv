@@ -38,13 +38,8 @@ pub fn ensure_dir(dir: &Path) -> Result<()> {
     })
 }
 
-/// Builds `<dir>/<input stem>-<sheet>.<ext>`, e.g. `out/sales-Q1.csv`.
-pub fn sheet_output_path(dir: &Path, input: &Path, sheet: &str, format: OutputFormat) -> PathBuf {
-    let stem = input
-        .file_stem()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_else(|| "output".into());
-
+/// Builds `<dir>/<stem>-<sheet>.<ext>`, e.g. `out/sales-Q1.csv`.
+pub fn sheet_output_path(dir: &Path, stem: &str, sheet: &str, format: OutputFormat) -> PathBuf {
     let file_name = format!("{}-{}.{}", stem, safe_file_name(sheet), format.extension());
     dir.join(file_name)
 }
@@ -75,12 +70,7 @@ mod tests {
 
     #[test]
     fn builds_sheet_paths() {
-        let path = sheet_output_path(
-            Path::new("out"),
-            Path::new("data/sales.xlsx"),
-            "Q1 2026",
-            OutputFormat::Markdown,
-        );
+        let path = sheet_output_path(Path::new("out"), "sales", "Q1 2026", OutputFormat::Markdown);
         assert_eq!(path, Path::new("out/sales-Q1 2026.md"));
     }
 

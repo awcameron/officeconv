@@ -5,12 +5,18 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
+use crate::input::InputKind;
+
 /// Convert Office files (XLSX, DOCX, PPTX) to plain-text formats.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
-    /// Input file (.xlsx, .docx, or .pptx)
+    /// Input file (.xlsx, .docx, or .pptx), or - to read from stdin
     pub input: PathBuf,
+
+    /// Input type, instead of working it out from the extension (or, for stdin, the contents)
+    #[arg(long, value_enum, value_name = "TYPE")]
+    pub from: Option<InputKind>,
 
     /// Output format
     #[arg(short, long, value_enum, value_name = "FORMAT")]

@@ -3,9 +3,8 @@
 pub mod pictures;
 
 use std::io::{Read, Seek};
-use std::path::Path;
 
-use calamine::{Data, ExcelDateTime, Reader, Xlsx, open_workbook};
+use calamine::{Data, ExcelDateTime, Reader, Xlsx};
 
 use crate::error::{ConvertError, Result};
 use crate::table::{Cell, Table};
@@ -17,11 +16,11 @@ pub struct Sheet {
     pub table: Table,
 }
 
-/// Reads one sheet from the workbook at `path`.
+/// Reads one sheet from a workbook.
 ///
 /// With `sheet: None`, reads the first sheet in the workbook.
-pub fn read_sheet(path: &Path, sheet: Option<&str>) -> Result<Sheet> {
-    let mut workbook: Xlsx<_> = open_workbook(path)?;
+pub fn read_sheet<R: Read + Seek>(reader: R, sheet: Option<&str>) -> Result<Sheet> {
+    let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
 
     let name = match sheet {
@@ -39,9 +38,9 @@ pub fn read_sheet(path: &Path, sheet: Option<&str>) -> Result<Sheet> {
     load_sheet(&mut workbook, name)
 }
 
-/// Reads every sheet in the workbook at `path`, in workbook order.
-pub fn read_all_sheets(path: &Path) -> Result<Vec<Sheet>> {
-    let mut workbook: Xlsx<_> = open_workbook(path)?;
+/// Reads every sheet in a workbook, in workbook order.
+pub fn read_all_sheets<R: Read + Seek>(reader: R) -> Result<Vec<Sheet>> {
+    let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
     if names.is_empty() {
         return Err(ConvertError::NoSheets);
@@ -115,6 +114,7 @@ fn format_datetime(dt: &ExcelDateTime) -> String {
 mod tests {
     use super::*;
     use calamine::{CellErrorType, ExcelDateTimeType};
+    use std::path::Path;
 
     fn datetime(serial: f64) -> Data {
         Data::DateTime(ExcelDateTime::new(
@@ -162,6 +162,11 @@ mod tests {
         assert_eq!(cell_to_string(&Data::DateTime(duration)), "36:00:00");
     }
 
+    /// Writes the sample workbook into `dir` and opens it.
+    fn sample_file(dir: &Path) -> std::fs::File {
+        std::fs::File::open(sample_workbook(dir)).unwrap()
+    }
+
     /// Writes a small workbook with two sheets into `dir` and returns its path.
     fn sample_workbook(dir: &Path) -> std::path::PathBuf {
         use rust_xlsxwriter::{Format, Workbook};
@@ -193,7 +198,7 @@ mod tests {
     #[test]
     fn reads_first_sheet_by_default() {
         let dir = tempfile::tempdir().unwrap();
-        let sheet = read_sheet(&sample_workbook(dir.path()), None).unwrap();
+        let sheet = read_sheet(sample_file(dir.path()), None).unwrap();
 
         assert_eq!(sheet.name, "Sales");
         assert_eq!(sheet.table.headers, ["Region", "Units", "Shipped"]);
@@ -213,14 +218,14 @@ mod tests {
     #[test]
     fn reads_named_sheet() {
         let dir = tempfile::tempdir().unwrap();
-        let sheet = read_sheet(&sample_workbook(dir.path()), Some("Notes")).unwrap();
+        let sheet = read_sheet(sample_file(dir.path()), Some("Notes")).unwrap();
         assert_eq!(sheet.table.headers, ["Note"]);
     }
 
     #[test]
     fn reads_all_sheets_in_order() {
         let dir = tempfile::tempdir().unwrap();
-        let sheets = read_all_sheets(&sample_workbook(dir.path())).unwrap();
+        let sheets = read_all_sheets(sample_file(dir.path())).unwrap();
         let names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["Sales", "Notes"]);
         assert_eq!(sheets[1].table.headers, ["Note"]);
@@ -229,7 +234,7 @@ mod tests {
     #[test]
     fn unknown_sheet_lists_available_ones() {
         let dir = tempfile::tempdir().unwrap();
-        let err = read_sheet(&sample_workbook(dir.path()), Some("Nope")).unwrap_err();
+        let err = read_sheet(sample_file(dir.path()), Some("Nope")).unwrap_err();
         assert_eq!(
             err.to_string(),
             "sheet \"Nope\" not found; available sheets: Sales, Notes"

@@ -1,7 +1,8 @@
 use clap::Parser;
 use officeconv::cli::Cli;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    println!("{cli:#?}");
+    officeconv::run(&cli)?;
+    Ok(())
 }

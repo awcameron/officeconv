@@ -1,5 +1,6 @@
 //! Command-line interface definition.
 
+use std::fmt;
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
@@ -35,6 +36,16 @@ pub enum OutputFormat {
     Json,
     #[value(name = "md", alias = "markdown")]
     Markdown,
+}
+
+impl fmt::Display for OutputFormat {
+    /// Prints the name the user types on the command line (`csv`, `md`, ...).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self
+            .to_possible_value()
+            .expect("every variant has a CLI name");
+        f.write_str(value.get_name())
+    }
 }
 
 #[cfg(test)]

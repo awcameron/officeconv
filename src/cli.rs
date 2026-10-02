@@ -13,18 +13,18 @@ pub struct Cli {
     pub input: PathBuf,
 
     /// Output format
-    #[arg(short, long, value_enum)]
+    #[arg(short, long, value_enum, value_name = "FORMAT")]
     pub to: OutputFormat,
 
     /// Write to this file instead of stdout (with --all-sheets: a directory)
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "PATH")]
     pub output: Option<PathBuf>,
 
     /// Sheet to convert (XLSX only; defaults to the first sheet)
-    #[arg(long, conflicts_with = "all_sheets")]
+    #[arg(long, value_name = "NAME", conflicts_with = "all_sheets")]
     pub sheet: Option<String>,
 
-    /// Convert every sheet to its own <stem>-<sheet>.<ext> file (XLSX only)
+    /// Convert every sheet to its own file, named like sales-Q1.csv (XLSX only)
     #[arg(long)]
     pub all_sheets: bool,
 }

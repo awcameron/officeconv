@@ -1,5 +1,7 @@
 //! Reading XLSX workbooks into [`Table`]s.
 
+pub mod pictures;
+
 use std::io::{Read, Seek};
 use std::path::Path;
 

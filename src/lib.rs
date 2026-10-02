@@ -11,13 +11,15 @@ pub mod table;
 pub mod writers;
 pub mod xlsx;
 
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use cli::Cli;
+use cli::{Cli, OutputFormat};
 use error::{ConvertError, Result};
 use images::ImageExport;
 use input::InputKind;
+use zip::ZipArchive;
 
 /// Validates the request and runs the matching converter.
 pub fn run(cli: &Cli) -> Result<()> {
@@ -29,9 +31,6 @@ pub fn run(cli: &Cli) -> Result<()> {
     }
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
-    }
-    if kind == InputKind::Xlsx && cli.images.is_some() {
-        return Err(ConvertError::ImagesOptionOnlyForDocuments);
     }
     if !cli.input.is_file() {
         return Err(ConvertError::InputNotFound(cli.input.clone()));
@@ -47,7 +46,10 @@ pub fn run(cli: &Cli) -> Result<()> {
 /// Converts a Word or PowerPoint file to Markdown, saving its images if asked to.
 fn convert_document(cli: &Cli, kind: InputKind) -> Result<()> {
     let mut images = match &cli.images {
-        Some(dir) => Some(ImageExport::new(dir, cli.output.as_deref())?),
+        Some(dir) => Some(ImageExport::new(
+            dir,
+            output::markdown_dir(cli.output.as_deref()),
+        )?),
         None => None,
     };
 
@@ -84,10 +86,16 @@ fn write_document(cli: &Cli, blocks: &[document::Block]) -> Result<()> {
 /// Converts one sheet to stdout or the `-o` file.
 fn convert_one_sheet(cli: &Cli) -> Result<()> {
     let sheet = xlsx::read_sheet(&cli.input, cli.sheet.as_deref())?;
+    let mut images = SheetImages::open(cli, output::markdown_dir(cli.output.as_deref()))?;
+
     let mut out = output::open_output(cli.output.as_deref())?;
-    writers::write_table(&sheet.table, cli.to, &mut out)?;
+    write_sheet(&sheet, cli.to, images.as_mut(), &mut out)?;
     // BufWriter flushes on drop but ignores errors there, so flush explicitly.
     out.flush()?;
+
+    if let Some(images) = &images {
+        images.report();
+    }
     Ok(())
 }
 
@@ -95,13 +103,75 @@ fn convert_one_sheet(cli: &Cli) -> Result<()> {
 fn convert_all_sheets(cli: &Cli) -> Result<()> {
     let dir = cli.output.as_deref().unwrap_or(Path::new("."));
     output::ensure_dir(dir)?;
+    let mut images = SheetImages::open(cli, dir)?;
 
     for sheet in xlsx::read_all_sheets(&cli.input)? {
         let path = output::sheet_output_path(dir, &cli.input, &sheet.name, cli.to);
         let mut out = output::open_output(Some(&path))?;
-        writers::write_table(&sheet.table, cli.to, &mut out)?;
+        write_sheet(&sheet, cli.to, images.as_mut(), &mut out)?;
         out.flush()?;
         eprintln!("wrote {}", path.display());
     }
+
+    if let Some(images) = &images {
+        images.report();
+    }
     Ok(())
+}
+
+/// Writes a sheet's table, then saves its pictures if asked to.
+///
+/// Markdown lists the pictures after the table. CSV, TSV and JSON have no way to point at an
+/// image, so for those the files are saved and the data is left as it is.
+fn write_sheet(
+    sheet: &xlsx::Sheet,
+    format: OutputFormat,
+    images: Option<&mut SheetImages>,
+    out: &mut impl Write,
+) -> Result<()> {
+    writers::write_table(&sheet.table, format, &mut *out)?;
+
+    let Some(images) = images else {
+        return Ok(());
+    };
+    let pictures = xlsx::pictures::export_sheet_pictures(
+        &mut images.archive,
+        &sheet.name,
+        &mut images.export,
+    )?;
+    if format == OutputFormat::Markdown && !pictures.is_empty() {
+        if !sheet.table.is_empty() {
+            writeln!(out)?;
+        }
+        out.write_all(document::markdown::render(&pictures).as_bytes())?;
+    }
+    Ok(())
+}
+
+/// The open workbook (to read pictures from) and where to save them.
+struct SheetImages {
+    archive: ZipArchive<File>,
+    export: ImageExport,
+}
+
+impl SheetImages {
+    /// `None` unless `--images` was given.
+    fn open(cli: &Cli, markdown_dir: &Path) -> Result<Option<Self>> {
+        let Some(dir) = &cli.images else {
+            return Ok(None);
+        };
+        Ok(Some(SheetImages {
+            archive: opc::open(&cli.input)?,
+            export: ImageExport::new(dir, markdown_dir)?,
+        }))
+    }
+
+    fn report(&self) {
+        let export = &self.export;
+        eprintln!(
+            "saved {} images to {}",
+            export.count(),
+            export.dir().display()
+        );
+    }
 }

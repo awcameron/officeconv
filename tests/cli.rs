@@ -562,13 +562,153 @@ fn saves_pptx_pictures() {
     assert!(dir.path().join("media/image1.png").is_file());
 }
 
+/// Valid 2x2 PNGs in red, blue and green. `rust_xlsxwriter` reads each image's header, so fake
+/// bytes won't do, and it stores identical images once, so each picture needs its own.
+const RED_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 252, 207, 0, 2, 76, 96,
+    146, 1, 0, 13, 29, 1, 3, 130, 201, 113, 255, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+const BLUE_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 18, 73, 68, 65, 84, 120, 156, 99, 100, 96, 248, 207, 192,
+    192, 192, 196, 0, 6, 0, 11, 31, 1, 3, 20, 227, 11, 0, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+    130,
+];
+const GREEN_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 19, 73, 68, 65, 84, 120, 156, 99, 100, 104, 96, 96, 96, 96,
+    96, 2, 17, 12, 12, 0, 6, 42, 0, 132, 216, 239, 242, 82, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66,
+    96, 130,
+];
+
+/// A workbook with pictures: "Sales" has a logo at D5 (inserted first) and a chart at D2;
+/// "R&D" has one picture at B2.
+fn xlsx_with_pictures() -> (TempDir, PathBuf) {
+    use rust_xlsxwriter::{Image, Workbook};
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("book.xlsx");
+    let picture = |png: &[u8], alt: &str| Image::new_from_buffer(png).unwrap().set_alt_text(alt);
+
+    let mut workbook = Workbook::new();
+    let sales = workbook.add_worksheet().set_name("Sales").unwrap();
+    sales.write_row(0, 0, ["Region", "Units"]).unwrap();
+    sales.write_row(1, 0, ["North", "12"]).unwrap();
+    sales
+        .insert_image(4, 3, &picture(RED_PNG, "Company logo"))
+        .unwrap();
+    sales
+        .insert_image(1, 3, &picture(BLUE_PNG, "Sales chart"))
+        .unwrap();
+    let research = workbook.add_worksheet().set_name("R&D").unwrap();
+    research.write(0, 0, "Note").unwrap();
+    research
+        .insert_image(1, 1, &picture(GREEN_PNG, "Prototype"))
+        .unwrap();
+    workbook.save(&path).unwrap();
+    (dir, path)
+}
+
 #[test]
-fn rejects_images_option_for_xlsx() {
-    let (_dir, path) = sample_xlsx();
+fn lists_xlsx_pictures_after_the_markdown_table() {
+    let (dir, path) = xlsx_with_pictures();
+    let markdown = dir.path().join("book.md");
+
     officeconv()
         .arg(&path)
-        .args(["--to", "md", "--images", "img"])
+        .args(["--to", "md", "-o"])
+        .arg(&markdown)
+        .arg("--images")
+        .arg(dir.path().join("img"))
         .assert()
-        .failure()
-        .stderr(contains("--images only applies to .docx and .pptx"));
+        .success()
+        .stderr(contains("saved 2 images"));
+
+    let text = std::fs::read_to_string(&markdown).unwrap();
+    // The chart at D2 comes before the logo at D5, whatever order they were inserted in.
+    assert!(
+        has_table_then_chart_then_logo(&text),
+        "unexpected Markdown:\n{text}"
+    );
+    let saved = std::fs::read_dir(dir.path().join("img")).unwrap().count();
+    assert_eq!(saved, 2);
+}
+
+/// Checks the Markdown has the table, then the chart, then the logo, each linking into `img/`.
+fn has_table_then_chart_then_logo(text: &str) -> bool {
+    let table = "| Region | Units |\n| ------ | ----- |\n| North  | 12    |\n\n";
+    let Some(rest) = text.strip_prefix(table) else {
+        return false;
+    };
+    let lines: Vec<&str> = rest.lines().filter(|l| !l.is_empty()).collect();
+    lines.len() == 2
+        && lines[0].starts_with("![Sales chart](img/")
+        && lines[1].starts_with("![Company logo](img/")
+}
+
+#[test]
+fn keeps_csv_data_unchanged_while_saving_pictures() {
+    let (dir, path) = xlsx_with_pictures();
+    let plain = convert(&path, "csv");
+
+    officeconv()
+        .current_dir(dir.path())
+        .arg(&path)
+        .args(["--to", "csv", "--images", "img"])
+        .assert()
+        .success()
+        .stdout(plain);
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("img")).unwrap().count(),
+        2
+    );
+}
+
+#[test]
+fn saves_pictures_for_the_chosen_sheet_only() {
+    let (dir, path) = xlsx_with_pictures();
+
+    officeconv()
+        .current_dir(dir.path())
+        .arg(&path)
+        .args(["--to", "md", "--sheet", "R&D", "--images", "img"])
+        .assert()
+        .success()
+        .stdout(predicates::str::starts_with(
+            "| Note |\n| ---- |\n\n![Prototype](img/",
+        ))
+        .stderr(contains("saved 1 images"));
+}
+
+#[test]
+fn links_pictures_from_each_sheet_file_with_all_sheets() {
+    let (dir, path) = xlsx_with_pictures();
+    let out = dir.path().join("out");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--all-sheets", "-o"])
+        .arg(&out)
+        .arg("--images")
+        .arg(out.join("img"))
+        .assert()
+        .success()
+        .stderr(contains("saved 3 images"));
+
+    let sales = std::fs::read_to_string(out.join("book-Sales.md")).unwrap();
+    let research = std::fs::read_to_string(out.join("book-R&D.md")).unwrap();
+    assert_eq!(sales.matches("](img/").count(), 2, "{sales}");
+    assert_eq!(research.matches("](img/").count(), 1, "{research}");
+    assert!(research.contains("![Prototype](img/"), "{research}");
+}
+
+#[test]
+fn xlsx_output_is_unchanged_without_images_flag() {
+    let (dir, path) = xlsx_with_pictures();
+    assert_eq!(
+        convert(&path, "md"),
+        "| Region | Units |\n| ------ | ----- |\n| North  | 12    |\n"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }

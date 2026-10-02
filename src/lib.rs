@@ -19,6 +19,7 @@ use cli::{Cli, OutputFormat};
 use error::{ConvertError, Result};
 use images::ImageExport;
 use input::InputKind;
+use writers::JsonValues;
 use zip::ZipArchive;
 
 /// Validates the request and runs the matching converter.
@@ -28,6 +29,9 @@ pub fn run(cli: &Cli) -> Result<()> {
 
     if kind != InputKind::Xlsx && (cli.sheet.is_some() || cli.all_sheets) {
         return Err(ConvertError::SheetOptionOnlyForXlsx);
+    }
+    if cli.typed && cli.to != OutputFormat::Json {
+        return Err(ConvertError::TypedOnlyForJson);
     }
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
@@ -89,7 +93,7 @@ fn convert_one_sheet(cli: &Cli) -> Result<()> {
     let mut images = SheetImages::open(cli, output::markdown_dir(cli.output.as_deref()))?;
 
     let mut out = output::open_output(cli.output.as_deref())?;
-    write_sheet(&sheet, cli.to, images.as_mut(), &mut out)?;
+    write_sheet(&sheet, cli, images.as_mut(), &mut out)?;
     // BufWriter flushes on drop but ignores errors there, so flush explicitly.
     out.flush()?;
 
@@ -108,7 +112,7 @@ fn convert_all_sheets(cli: &Cli) -> Result<()> {
     for sheet in xlsx::read_all_sheets(&cli.input)? {
         let path = output::sheet_output_path(dir, &cli.input, &sheet.name, cli.to);
         let mut out = output::open_output(Some(&path))?;
-        write_sheet(&sheet, cli.to, images.as_mut(), &mut out)?;
+        write_sheet(&sheet, cli, images.as_mut(), &mut out)?;
         out.flush()?;
         eprintln!("wrote {}", path.display());
     }
@@ -125,11 +129,17 @@ fn convert_all_sheets(cli: &Cli) -> Result<()> {
 /// image, so for those the files are saved and the data is left as it is.
 fn write_sheet(
     sheet: &xlsx::Sheet,
-    format: OutputFormat,
+    cli: &Cli,
     images: Option<&mut SheetImages>,
     out: &mut impl Write,
 ) -> Result<()> {
-    writers::write_table(&sheet.table, format, &mut *out)?;
+    let format = cli.to;
+    let json = if cli.typed {
+        JsonValues::Typed
+    } else {
+        JsonValues::Text
+    };
+    writers::write_table(&sheet.table, format, json, &mut *out)?;
 
     let Some(images) = images else {
         return Ok(());

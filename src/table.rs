@@ -1,34 +1,80 @@
-//! A plain grid of text: the shared model every writer works from.
+//! A grid of cells: the shared model every writer works from.
 
-/// A table where every cell is already text.
+use std::fmt;
+
+/// One cell's value, keeping the type the spreadsheet stored.
 ///
-/// The first row of a sheet becomes `headers`; the rest become `rows`.
+/// Dates, durations and error cells are already formatted as [`Cell::Text`]:
+/// JSON has no types for them, so there's nothing more to keep.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Cell {
+    #[default]
+    Empty,
+    Text(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+impl fmt::Display for Cell {
+    /// The text written to CSV, TSV, Markdown and untyped JSON.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cell::Empty => Ok(()),
+            Cell::Text(text) => f.write_str(text),
+            Cell::Int(i) => write!(f, "{i}"),
+            // Rust prints whole floats without a fraction: 3.0 -> "3", 2.5 -> "2.5".
+            Cell::Float(x) => write!(f, "{x}"),
+            Cell::Bool(b) => write!(f, "{b}"),
+        }
+    }
+}
+
+impl From<String> for Cell {
+    fn from(text: String) -> Self {
+        Cell::Text(text)
+    }
+}
+
+/// A table of cells.
+///
+/// The first row of a sheet becomes `headers`, as text; the rest become `rows`.
 /// Every row has the same number of cells as `headers`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Table {
     pub headers: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<Cell>>,
 }
 
 impl Table {
     /// Builds a table from rows of cells, treating the first row as headers.
     ///
-    /// Short rows are padded with empty strings so the table is rectangular.
-    pub fn from_rows(rows: Vec<Vec<String>>) -> Self {
+    /// Short rows are padded with empty cells so the table is rectangular.
+    pub fn from_cells(rows: Vec<Vec<Cell>>) -> Self {
         let mut rows = rows.into_iter();
         let Some(headers) = rows.next() else {
             return Table::default();
         };
 
+        let headers: Vec<String> = headers.iter().map(Cell::to_string).collect();
         let width = headers.len();
         let rows = rows
             .map(|mut row| {
-                row.resize(width, String::new());
+                row.resize(width, Cell::Empty);
                 row
             })
             .collect();
 
         Table { headers, rows }
+    }
+
+    /// Like [`Table::from_cells`], for rows that are all text.
+    pub fn from_rows(rows: Vec<Vec<String>>) -> Self {
+        Table::from_cells(
+            rows.into_iter()
+                .map(|row| row.into_iter().map(Cell::from).collect())
+                .collect(),
+        )
     }
 
     pub fn is_empty(&self) -> bool {
@@ -48,13 +94,41 @@ mod tests {
     fn first_row_becomes_headers() {
         let table = Table::from_rows(vec![strings(&["a", "b"]), strings(&["1", "2"])]);
         assert_eq!(table.headers, strings(&["a", "b"]));
-        assert_eq!(table.rows, vec![strings(&["1", "2"])]);
+        assert_eq!(
+            table.rows,
+            vec![vec![Cell::Text("1".into()), Cell::Text("2".into())]]
+        );
     }
 
     #[test]
     fn pads_short_rows() {
         let table = Table::from_rows(vec![strings(&["a", "b", "c"]), strings(&["1"])]);
-        assert_eq!(table.rows, vec![strings(&["1", "", ""])]);
+        assert_eq!(
+            table.rows,
+            vec![vec![Cell::Text("1".into()), Cell::Empty, Cell::Empty]]
+        );
+    }
+
+    #[test]
+    fn typed_header_cells_become_text() {
+        let table = Table::from_cells(vec![vec![Cell::Int(2026), Cell::Bool(true), Cell::Empty]]);
+        assert_eq!(table.headers, ["2026", "true", ""]);
+    }
+
+    #[test]
+    fn cells_print_as_before() {
+        let printed: Vec<String> = [
+            Cell::Empty,
+            Cell::Text("hi".into()),
+            Cell::Int(42),
+            Cell::Float(3.0),
+            Cell::Float(2.5),
+            Cell::Bool(false),
+        ]
+        .iter()
+        .map(Cell::to_string)
+        .collect();
+        assert_eq!(printed, ["", "hi", "42", "3", "2.5", "false"]);
     }
 
     #[test]

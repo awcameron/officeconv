@@ -8,7 +8,7 @@ use std::path::Path;
 use calamine::{Data, ExcelDateTime, Reader, Xlsx, open_workbook};
 
 use crate::error::{ConvertError, Result};
-use crate::table::Table;
+use crate::table::{Cell, Table};
 
 /// One worksheet, converted to text.
 #[derive(Debug)]
@@ -58,27 +58,32 @@ fn load_sheet<R: Read + Seek>(workbook: &mut Xlsx<R>, name: String) -> Result<Sh
     let range = workbook.worksheet_range(&name)?;
     let rows = range
         .rows()
-        .map(|row| row.iter().map(cell_to_string).collect())
+        .map(|row| row.iter().map(cell_value).collect())
         .collect();
 
     Ok(Sheet {
         name,
-        table: Table::from_rows(rows),
+        table: Table::from_cells(rows),
     })
 }
 
-/// Turns one spreadsheet cell into the text we write out.
-fn cell_to_string(cell: &Data) -> String {
+/// Turns one spreadsheet cell into a [`Cell`], keeping numbers and booleans typed.
+fn cell_value(cell: &Data) -> Cell {
     match cell {
-        Data::Empty => String::new(),
-        Data::String(s) | Data::DateTimeIso(s) | Data::DurationIso(s) => s.clone(),
-        Data::Int(i) => i.to_string(),
-        // Rust prints whole floats without a fraction: 3.0 -> "3", 2.5 -> "2.5".
-        Data::Float(f) => f.to_string(),
-        Data::Bool(b) => b.to_string(),
-        Data::DateTime(dt) => format_datetime(dt),
-        Data::Error(e) => e.to_string(),
+        Data::Empty => Cell::Empty,
+        Data::String(s) | Data::DateTimeIso(s) | Data::DurationIso(s) => Cell::Text(s.clone()),
+        Data::Int(i) => Cell::Int(*i),
+        Data::Float(f) => Cell::Float(*f),
+        Data::Bool(b) => Cell::Bool(*b),
+        Data::DateTime(dt) => Cell::Text(format_datetime(dt)),
+        Data::Error(e) => Cell::Text(e.to_string()),
     }
+}
+
+/// The text a cell is written as (in CSV, Markdown and untyped JSON).
+#[cfg(test)]
+fn cell_to_string(cell: &Data) -> String {
+    cell_value(cell).to_string()
 }
 
 /// Formats an Excel date/time as ISO 8601, dropping the parts that aren't used.
@@ -131,6 +136,22 @@ mod tests {
     }
 
     #[test]
+    fn keeps_numbers_and_booleans_typed() {
+        assert_eq!(cell_value(&Data::Int(42)), Cell::Int(42));
+        assert_eq!(cell_value(&Data::Float(2.5)), Cell::Float(2.5));
+        assert_eq!(cell_value(&Data::Bool(true)), Cell::Bool(true));
+        assert_eq!(cell_value(&Data::Empty), Cell::Empty);
+        assert_eq!(
+            cell_value(&datetime(45943.0)),
+            Cell::Text("2025-10-13".into())
+        );
+        assert_eq!(
+            cell_value(&Data::Error(CellErrorType::Div0)),
+            Cell::Text("#DIV/0!".into())
+        );
+    }
+
+    #[test]
     fn formats_dates_times_and_durations() {
         // 45943 is 2025-10-13 in Excel's 1900 date system.
         assert_eq!(cell_to_string(&datetime(45943.0)), "2025-10-13");
@@ -178,7 +199,14 @@ mod tests {
         assert_eq!(sheet.table.headers, ["Region", "Units", "Shipped"]);
         assert_eq!(
             sheet.table.rows,
-            [["North", "12", "2025-10-13"], ["South", "7.5", ""]]
+            [
+                vec![
+                    Cell::Text("North".into()),
+                    Cell::Float(12.0),
+                    Cell::Text("2025-10-13".into())
+                ],
+                vec![Cell::Text("South".into()), Cell::Float(7.5), Cell::Empty],
+            ]
         );
     }
 

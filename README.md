@@ -124,3 +124,7 @@ src/
     markdown.rs      Blocks to Markdown (Word tables reuse the Markdown table writer)
 tests/cli.rs         end-to-end tests that run the real binary
 ```
+
+## License
+
+[MIT](LICENSE)

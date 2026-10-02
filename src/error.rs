@@ -33,6 +33,15 @@ pub enum ConvertError {
 
     #[error("workbook has no sheets")]
     NoSheets,
+
+    #[error("could not create {}: {source}", path.display())]
+    CreateOutput {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("could not write output: {0}")]
+    Write(#[from] std::io::Error),
 }
 
 /// Shorthand so functions can write `Result<T>` instead of `Result<T, ConvertError>`.

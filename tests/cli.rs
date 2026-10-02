@@ -10,6 +10,31 @@ fn officeconv() -> Command {
     Command::cargo_bin("officeconv").unwrap()
 }
 
+/// Writes a small one-sheet workbook into a fresh temp dir.
+fn sample_xlsx() -> (TempDir, PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("sales.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_row(0, 0, ["Region", "Units"]).unwrap();
+    sheet.write_row(1, 0, ["North, East", "12"]).unwrap();
+    sheet.write(2, 0, "South").unwrap();
+    sheet.write(2, 1, 7.5).unwrap();
+    workbook.save(&path).unwrap();
+    (dir, path)
+}
+
+/// Runs the converter on `path` and returns its stdout.
+fn convert(path: &std::path::Path, to: &str) -> String {
+    let output = officeconv().arg(path).args(["--to", to]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
 /// Creates an empty file with the given name inside a fresh temp dir.
 fn touch(name: &str) -> (TempDir, PathBuf) {
     let dir = TempDir::new().unwrap();
@@ -70,4 +95,69 @@ fn reports_corrupt_workbook() {
         .assert()
         .failure()
         .stderr(contains("could not read workbook"));
+}
+
+#[test]
+fn converts_xlsx_to_every_format() {
+    let (_dir, path) = sample_xlsx();
+
+    assert_eq!(
+        convert(&path, "csv"),
+        "Region,Units\n\"North, East\",12\nSouth,7.5\n"
+    );
+    assert_eq!(
+        convert(&path, "tsv"),
+        "Region\tUnits\nNorth, East\t12\nSouth\t7.5\n"
+    );
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+| Region      | Units |
+| ----------- | ----- |
+| North, East | 12    |
+| South       | 7.5   |
+"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&convert(&path, "json")).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "Region": "North, East", "Units": "12" },
+            { "Region": "South", "Units": "7.5" },
+        ])
+    );
+}
+
+#[test]
+fn writes_to_output_file() {
+    let (dir, path) = sample_xlsx();
+    let out = dir.path().join("sales.csv");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv", "-o"])
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout("");
+
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "Region,Units\n\"North, East\",12\nSouth,7.5\n"
+    );
+}
+
+#[test]
+fn reports_unwritable_output() {
+    let (dir, path) = sample_xlsx();
+    let out = dir.path().join("no-such-dir").join("sales.csv");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv", "-o"])
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(contains("could not create"));
 }

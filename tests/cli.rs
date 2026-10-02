@@ -25,6 +25,27 @@ fn sample_xlsx() -> (TempDir, PathBuf) {
     (dir, path)
 }
 
+/// Writes a minimal `.docx` whose body is `body_xml` into a fresh temp dir.
+fn sample_docx(body_xml: &str) -> (TempDir, PathBuf) {
+    use std::io::Write;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("notes.docx");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    zip.start_file(
+        "word/document.xml",
+        zip::write::SimpleFileOptions::default(),
+    )
+    .unwrap();
+    write!(
+        zip,
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body_xml}</w:body></w:document>"#
+    )
+    .unwrap();
+    zip.finish().unwrap();
+    (dir, path)
+}
+
 /// Runs the converter on `path` and returns its stdout.
 fn convert(path: &std::path::Path, to: &str) -> String {
     let output = officeconv().arg(path).args(["--to", to]).output().unwrap();
@@ -226,4 +247,35 @@ fn reports_unknown_sheet() {
         .stderr(contains(
             "sheet \"Nope\" not found; available sheets: Sheet1",
         ));
+}
+
+#[test]
+fn converts_docx_to_markdown() {
+    let (_dir, path) = sample_docx(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Meeting notes</w:t></w:r></w:p>
+           <w:p><w:r><w:t xml:space="preserve">Ship the </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>beta</w:t></w:r><w:r><w:t xml:space="preserve"> on </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>Friday</w:t></w:r><w:r><w:t>.</w:t></w:r></w:p>"#,
+    );
+
+    assert_eq!(
+        convert(&path, "md"),
+        "# Meeting notes\n\nShip the **beta** on *Friday*.\n"
+    );
+}
+
+#[test]
+fn reports_docx_without_document_xml() {
+    // A valid zip that isn't a Word document.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("fake.docx");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    zip.start_file("hello.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.finish().unwrap();
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md"])
+        .assert()
+        .failure()
+        .stderr(contains("could not read document"));
 }

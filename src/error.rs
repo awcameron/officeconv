@@ -34,6 +34,12 @@ pub enum ConvertError {
     #[error("workbook has no sheets")]
     NoSheets,
 
+    #[error("could not read document: {0}")]
+    Docx(#[from] zip::result::ZipError),
+
+    #[error("could not parse document: {0}")]
+    DocxXml(#[from] quick_xml::Error),
+
     #[error("could not create {}: {source}", path.display())]
     CreateOutput {
         path: PathBuf,

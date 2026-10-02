@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod docx;
 pub mod error;
 pub mod input;
 pub mod output;
@@ -28,11 +29,17 @@ pub fn run(cli: &Cli) -> Result<()> {
     match kind {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli),
         InputKind::Xlsx => convert_one_sheet(cli),
-        InputKind::Docx => {
-            eprintln!("docx conversion arrives in milestone 6");
-            Ok(())
-        }
+        InputKind::Docx => convert_docx(cli),
     }
+}
+
+/// Converts a Word document to Markdown on stdout or the `-o` file.
+fn convert_docx(cli: &Cli) -> Result<()> {
+    let blocks = docx::read_blocks(&cli.input)?;
+    let mut out = output::open_output(cli.output.as_deref())?;
+    out.write_all(docx::markdown::render(&blocks).as_bytes())?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Converts one sheet to stdout or the `-o` file.

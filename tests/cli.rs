@@ -27,21 +27,28 @@ fn sample_xlsx() -> (TempDir, PathBuf) {
 
 /// Writes a minimal `.docx` whose body is `body_xml` into a fresh temp dir.
 fn sample_docx(body_xml: &str) -> (TempDir, PathBuf) {
+    sample_docx_with_parts(body_xml, &[])
+}
+
+/// Like [`sample_docx`], plus extra parts such as `word/numbering.xml`.
+fn sample_docx_with_parts(body_xml: &str, parts: &[(&str, &str)]) -> (TempDir, PathBuf) {
     use std::io::Write;
 
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("notes.docx");
     let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
-    zip.start_file(
-        "word/document.xml",
-        zip::write::SimpleFileOptions::default(),
-    )
-    .unwrap();
+    let options = zip::write::SimpleFileOptions::default();
+
+    zip.start_file("word/document.xml", options).unwrap();
     write!(
         zip,
-        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body_xml}</w:body></w:document>"#
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>{body_xml}</w:body></w:document>"#
     )
     .unwrap();
+    for (name, contents) in parts {
+        zip.start_file(*name, options).unwrap();
+        zip.write_all(contents.as_bytes()).unwrap();
+    }
     zip.finish().unwrap();
     (dir, path)
 }
@@ -278,4 +285,51 @@ fn reports_docx_without_document_xml() {
         .assert()
         .failure()
         .stderr(contains("could not read document"));
+}
+
+#[test]
+fn converts_docx_lists_links_and_tables() {
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://www.rust-lang.org" TargetMode="External"/>
+    </Relationships>"#;
+    let numbering = r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let item = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Learn </w:t></w:r><w:hyperlink r:id="rId9"><w:r><w:t>Rust</w:t></w:r></w:hyperlink></w:p>{}{}<w:tbl><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>"#,
+        item("Read the book"),
+        item("Build a CLI"),
+        cell("Crate"),
+        cell("Use"),
+        cell("zip"),
+        cell("unpack .docx"),
+    );
+    let (_dir, path) = sample_docx_with_parts(
+        &body,
+        &[
+            ("word/_rels/document.xml.rels", rels),
+            ("word/numbering.xml", numbering),
+        ],
+    );
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+Learn [Rust](https://www.rust-lang.org)
+
+1. Read the book
+1. Build a CLI
+
+| Crate | Use          |
+| ----- | ------------ |
+| zip   | unpack .docx |
+"
+    );
 }

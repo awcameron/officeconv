@@ -1,14 +1,27 @@
 //! Rendering [`Block`]s as Markdown.
 
-use super::model::{Block, Run, RunStyle};
+use super::append_run;
+use super::model::{Block, Cell, ListKind, Run, RunStyle};
+use crate::table::Table;
+use crate::writers::write_markdown;
 
 /// Renders blocks as Markdown, separated by blank lines.
+///
+/// Neighboring list items get a single newline so they form one list.
 pub fn render(blocks: &[Block]) -> String {
-    let mut out = blocks
-        .iter()
-        .map(render_block)
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let mut out = String::new();
+    let mut previous: Option<&Block> = None;
+
+    for block in blocks {
+        if let Some(previous) = previous {
+            let both_list_items = matches!(previous, Block::ListItem { .. })
+                && matches!(block, Block::ListItem { .. });
+            out.push_str(if both_list_items { "\n" } else { "\n\n" });
+        }
+        out.push_str(&render_block(block));
+        previous = Some(block);
+    }
+
     if !out.is_empty() {
         out.push('\n');
     }
@@ -23,27 +36,83 @@ fn render_block(block: &Block) -> String {
             format!("{} {}", "#".repeat(usize::from(*level)), text)
         }
         Block::Paragraph(runs) => escape_block_start(&render_runs(runs)),
+        Block::ListItem { kind, level, runs } => render_list_item(*kind, *level, runs),
+        Block::Table(rows) => render_table(rows),
     }
+}
+
+/// Renders `- item` or `1. item`, indented four spaces per nesting level.
+///
+/// Every numbered item is written as `1.`: Markdown renumbers lists when it renders them.
+fn render_list_item(kind: ListKind, level: u8, runs: &[Run]) -> String {
+    let indent = " ".repeat(4 * usize::from(level));
+    let marker = match kind {
+        ListKind::Bullet => "-",
+        ListKind::Numbered => "1.",
+    };
+
+    // Lines after a line break must line up with the item's text to stay in the item.
+    let continuation = format!("\n{indent}{}", " ".repeat(marker.len() + 1));
+    let text = render_runs(runs).replace('\n', &continuation);
+    format!("{indent}{marker} {text}")
+}
+
+/// Renders a table with the same Markdown writer the XLSX converter uses.
+fn render_table(rows: &[Vec<Cell>]) -> String {
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                // The table writer turns each "\n" into "<br>".
+                .map(|cell| render_runs(cell).replace("  \n", "\n"))
+                .collect()
+        })
+        .collect();
+
+    let mut buffer = Vec::new();
+    write_markdown(&Table::from_rows(rows), &mut buffer).expect("writing to a Vec can't fail");
+    String::from_utf8(buffer)
+        .expect("the table writer only writes the UTF-8 it was given")
+        .trim_end()
+        .to_string()
 }
 
 /// Clears bold on every run, then joins neighbors whose formatting now matches.
 fn without_bold(runs: &[Run]) -> Vec<Run> {
-    let mut merged: Vec<Run> = Vec::new();
+    let mut merged = Vec::new();
     for run in runs {
         let style = RunStyle {
             bold: false,
             ..run.style
         };
-        match merged.last_mut() {
-            Some(last) if last.style == style => last.text.push_str(&run.text),
-            _ => merged.push(Run::new(run.text.clone(), style)),
-        }
+        append_run(
+            &mut merged,
+            Run {
+                style,
+                ..run.clone()
+            },
+        );
     }
     merged
 }
 
+/// Renders runs as one line of Markdown, wrapping each stretch of linked runs in `[...](url)`.
 fn render_runs(runs: &[Run]) -> String {
-    let text: String = runs.iter().map(render_run).collect();
+    let mut text = String::new();
+    for group in runs.chunk_by(|a, b| a.link == b.link) {
+        let inner: String = group.iter().map(render_run).collect();
+        match &group[0].link {
+            Some(url) => {
+                let (leading, inner, trailing) = split_edges(&inner);
+                text.push_str(&format!(
+                    "{leading}[{inner}]({}){trailing}",
+                    escape_url(url)
+                ));
+            }
+            None => text.push_str(&inner),
+        }
+    }
+
     // A line break inside a paragraph is two spaces then a newline in Markdown.
     text.trim().replace('\n', "  \n")
 }
@@ -59,17 +128,28 @@ fn render_run(run: &Run) -> String {
         (false, false) => "",
     };
 
-    let inner = run.text.trim();
+    let (leading, inner, trailing) = split_edges(&run.text);
     if marker.is_empty() || inner.is_empty() {
         return escape_inline(&run.text);
     }
-
-    let leading = &run.text[..run.text.len() - run.text.trim_start().len()];
-    let trailing = &run.text[run.text.trim_end().len()..];
     format!(
         "{leading}{marker}{}{marker}{trailing}",
         escape_inline(inner)
     )
+}
+
+/// Splits `text` into (leading whitespace, the rest, trailing whitespace).
+fn split_edges(text: &str) -> (&str, &str, &str) {
+    let inner = text.trim();
+    let start = text.len() - text.trim_start().len();
+    (&text[..start], inner, &text[start + inner.len()..])
+}
+
+/// Spaces and parentheses would end a Markdown link target early.
+fn escape_url(url: &str) -> String {
+    url.replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
 }
 
 /// Escapes characters that Markdown would treat as formatting.
@@ -155,6 +235,63 @@ mod tests {
             run("both", true, true),
         ];
         assert_eq!(render_runs(&runs), "Say **hello** *there* and ***both***");
+    }
+
+    #[test]
+    fn renders_links_with_spaces_outside() {
+        let runs = [
+            run("See ", false, false),
+            run("the ", false, false).linked("https://example.com/a b"),
+            run("docs ", true, false).linked("https://example.com/a b"),
+            run("now.", false, false),
+        ];
+        assert_eq!(
+            render_runs(&runs),
+            "See [the **docs**](https://example.com/a%20b) now."
+        );
+    }
+
+    #[test]
+    fn renders_nested_lists_tightly() {
+        let item = |kind, level, text: &str| Block::ListItem {
+            kind,
+            level,
+            runs: vec![run(text, false, false)],
+        };
+        let blocks = [
+            Block::Paragraph(vec![run("Steps:", false, false)]),
+            item(ListKind::Numbered, 0, "Unzip"),
+            item(ListKind::Bullet, 1, "word/document.xml"),
+            item(ListKind::Numbered, 0, "Parse"),
+            Block::Paragraph(vec![run("Done.", false, false)]),
+        ];
+        assert_eq!(
+            render(&blocks),
+            "Steps:\n\n1. Unzip\n    - word/document.xml\n1. Parse\n\nDone.\n"
+        );
+    }
+
+    #[test]
+    fn continues_list_items_across_line_breaks() {
+        let text = render_list_item(ListKind::Bullet, 1, &[run("one\ntwo", false, false)]);
+        assert_eq!(text, "    - one  \n      two");
+    }
+
+    #[test]
+    fn renders_tables_with_line_breaks_and_pipes() {
+        let cell = |text: &str| vec![run(text, false, false)];
+        let blocks = [Block::Table(vec![
+            vec![cell("Team"), cell("Members")],
+            vec![cell("A|B"), cell("Bobby\nDon")],
+        ])];
+        assert_eq!(
+            render(&blocks),
+            "\
+| Team | Members      |
+| ---- | ------------ |
+| A\\|B | Bobby<br>Don |
+"
+        );
     }
 
     #[test]

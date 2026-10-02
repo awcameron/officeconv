@@ -5,6 +5,7 @@ edition = "2024"
 description = "Convert XLSX spreadsheets to CSV, TSV, JSON, or Markdown, and DOCX documents to Markdown"
 readme = "README.md"
 license = "MIT"
+repository = "https://github.com/awcameron/officeconv"
 keywords = ["xlsx", "docx", "csv", "markdown", "converter"]
 categories = ["command-line-utilities", "text-processing"]
 

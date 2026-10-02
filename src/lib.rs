@@ -1,7 +1,9 @@
 pub mod cli;
+pub mod document;
 pub mod docx;
 pub mod error;
 pub mod input;
+pub mod opc;
 pub mod output;
 pub mod table;
 pub mod writers;
@@ -37,7 +39,7 @@ pub fn run(cli: &Cli) -> Result<()> {
 fn convert_docx(cli: &Cli) -> Result<()> {
     let blocks = docx::read_blocks(&cli.input)?;
     let mut out = output::open_output(cli.output.as_deref())?;
-    out.write_all(docx::markdown::render(&blocks).as_bytes())?;
+    out.write_all(document::markdown::render(&blocks).as_bytes())?;
     out.flush()?;
     Ok(())
 }

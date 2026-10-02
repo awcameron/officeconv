@@ -1,7 +1,6 @@
 //! Rendering [`Block`]s as Markdown.
 
-use super::append_run;
-use super::model::{Block, Cell, ListKind, Run, RunStyle};
+use super::{Block, Cell, ListKind, Run, RunStyle, append_run};
 use crate::table::Table;
 use crate::writers::write_markdown;
 
@@ -38,6 +37,7 @@ fn render_block(block: &Block) -> String {
         Block::Paragraph(runs) => escape_block_start(&render_runs(runs)),
         Block::ListItem { kind, level, runs } => render_list_item(*kind, *level, runs),
         Block::Table(rows) => render_table(rows),
+        Block::Rule => "---".to_string(),
     }
 }
 

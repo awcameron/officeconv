@@ -1,17 +1,15 @@
 //! The supporting parts of a `.docx` that `document.xml` refers to by ID.
 //!
-//! - `word/_rels/document.xml.rels`: relationship IDs (`rId5`) to link targets.
+//! - `word/_rels/document.xml.rels`: relationship IDs (`rId5`) to link targets
+//!   (parsed by [`crate::opc::parse_relationships`]).
 //! - `word/numbering.xml`: numbering IDs to bullet or numbered list formats.
 //! - `word/styles.xml`: style IDs to style names, and any list numbering a style applies.
 
 use std::collections::HashMap;
 
-use quick_xml::Reader;
-use quick_xml::events::{BytesStart, Event};
-
-use super::attr;
-use super::model::ListKind;
+use crate::document::ListKind;
 use crate::error::Result;
+use crate::opc::{attr, visit_elements};
 
 /// Lookup tables built from a document's supporting parts.
 #[derive(Debug, Default)]
@@ -57,30 +55,6 @@ impl Numbering {
         // A list we can't look up is still a list; bullets are the safe guess.
         Some(kind.unwrap_or(ListKind::Bullet))
     }
-}
-
-/// Calls `visit` for every opening or self-closing element in `xml`.
-fn visit_elements(xml: &str, mut visit: impl FnMut(&BytesStart)) -> Result<()> {
-    let mut reader = Reader::from_str(xml);
-    loop {
-        match reader.read_event()? {
-            Event::Start(e) | Event::Empty(e) => visit(&e),
-            Event::Eof => return Ok(()),
-            _ => {}
-        }
-    }
-}
-
-pub fn parse_relationships(xml: &str) -> Result<HashMap<String, String>> {
-    let mut links = HashMap::new();
-    visit_elements(xml, |e| {
-        if e.local_name().as_ref() == "Relationship"
-            && let (Some(id), Some(target)) = (attr(e, "Id"), attr(e, "Target"))
-        {
-            links.insert(id, target);
-        }
-    })?;
-    Ok(links)
 }
 
 pub fn parse_numbering(xml: &str) -> Result<Numbering> {
@@ -146,19 +120,6 @@ pub fn parse_styles(xml: &str) -> Result<HashMap<String, Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_relationship_targets() {
-        let links = parse_relationships(
-            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-                 <Relationship Id="rId4" Type=".../hyperlink" Target="https://example.com" TargetMode="External"/>
-                 <Relationship Id="rId1" Type=".../styles" Target="styles.xml"/>
-               </Relationships>"#,
-        )
-        .unwrap();
-        assert_eq!(links["rId4"], "https://example.com");
-        assert_eq!(links.len(), 2);
-    }
 
     #[test]
     fn resolves_list_kinds_through_abstract_numbering() {

@@ -14,84 +14,41 @@
 //!
 //! We stream through that XML one event at a time and build [`Block`]s.
 
-pub mod markdown;
-pub mod model;
 pub mod package;
 
-use std::fs::File;
-use std::io::{Read, Seek};
 use std::mem;
 use std::path::Path;
 
-use quick_xml::Reader;
-use quick_xml::events::{BytesStart, Event};
-use zip::ZipArchive;
-use zip::result::ZipError;
+use quick_xml::events::BytesStart;
 
+use crate::document::{Block, Cell, Run, RunStyle, append_paragraph, append_run, is_blank};
 use crate::error::Result;
-use model::{Block, Cell, Run, RunStyle};
+use crate::opc::{self, XmlHandler, attr};
 use package::Package;
 
 /// Reads the `.docx` at `path` and returns its body as blocks.
 pub fn read_blocks(path: &Path) -> Result<Vec<Block>> {
-    let file = File::open(path).map_err(ZipError::from)?;
-    let mut archive = ZipArchive::new(file)?;
-
-    let document = read_part(&mut archive, "word/document.xml")?.ok_or(ZipError::FileNotFound)?;
+    let mut archive = opc::open(path)?;
+    let document = opc::read_required_part(&mut archive, "word/document.xml")?;
 
     let mut package = Package::default();
-    if let Some(xml) = read_part(&mut archive, "word/_rels/document.xml.rels")? {
-        package.links = package::parse_relationships(&xml)?;
+    if let Some(xml) = opc::read_part(&mut archive, "word/_rels/document.xml.rels")? {
+        package.links = opc::parse_relationships(&xml)?;
     }
-    if let Some(xml) = read_part(&mut archive, "word/numbering.xml")? {
+    if let Some(xml) = opc::read_part(&mut archive, "word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
     }
-    if let Some(xml) = read_part(&mut archive, "word/styles.xml")? {
+    if let Some(xml) = opc::read_part(&mut archive, "word/styles.xml")? {
         package.styles = package::parse_styles(&xml)?;
     }
 
     parse_document(&document, &package)
 }
 
-/// Reads one file from the archive, or `None` if the document doesn't have it.
-fn read_part<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<Option<String>> {
-    let mut entry = match archive.by_name(name) {
-        Ok(entry) => entry,
-        Err(ZipError::FileNotFound) => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
-    let mut xml = String::new();
-    entry.read_to_string(&mut xml).map_err(ZipError::from)?;
-    Ok(Some(xml))
-}
-
 /// Parses the contents of `word/document.xml`, looking up IDs in `package`.
 pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block>> {
-    let mut reader = Reader::from_str(xml);
     let mut parser = Parser::new(package);
-
-    loop {
-        match reader.read_event()? {
-            Event::Eof => break,
-            Event::Start(e) => parser.start(&e, false),
-            Event::Empty(e) => parser.start(&e, true),
-            Event::End(e) => parser.end(e.local_name().as_ref()),
-            Event::Text(t) => parser.text(&t),
-            Event::GeneralRef(r) => {
-                // `&amp;` and `&#233;` arrive as their own events.
-                let resolved = match r.resolve_char_ref()? {
-                    Some(c) => c.to_string(),
-                    None => quick_xml::escape::resolve_predefined_entity(&r)
-                        .unwrap_or_default()
-                        .to_string(),
-                };
-                parser.text(&resolved);
-            }
-            _ => {}
-        }
-    }
-
+    opc::walk(xml, &mut parser)?;
     Ok(parser.blocks)
 }
 
@@ -130,21 +87,7 @@ struct TableBuilder {
     cell: Cell,
 }
 
-impl<'p> Parser<'p> {
-    fn new(package: &'p Package) -> Self {
-        Parser {
-            package,
-            blocks: Vec::new(),
-            paragraphs: Vec::new(),
-            tables: Vec::new(),
-            style: RunStyle::default(),
-            link: None,
-            in_run: false,
-            in_text: false,
-            skip_depth: 0,
-        }
-    }
-
+impl XmlHandler for Parser<'_> {
     fn start(&mut self, e: &BytesStart, is_empty: bool) {
         if self.skip_depth > 0 {
             if !is_empty {
@@ -237,11 +180,24 @@ impl<'p> Parser<'p> {
             self.push_text(text);
         }
     }
+}
+
+impl<'p> Parser<'p> {
+    fn new(package: &'p Package) -> Self {
+        Parser {
+            package,
+            blocks: Vec::new(),
+            paragraphs: Vec::new(),
+            tables: Vec::new(),
+            style: RunStyle::default(),
+            link: None,
+            in_run: false,
+            in_text: false,
+            skip_depth: 0,
+        }
+    }
 
     /// Adds text to the current paragraph, extending the last run if the formatting matches.
-    ///
-    /// Word often splits one word across several runs (spell-check, edits), so merging here
-    /// keeps the Markdown clean: `**Hello**`, not `**Hel****lo**`.
     fn push_text(&mut self, text: &str) {
         let Some(paragraph) = self.paragraphs.last_mut() else {
             return;
@@ -253,7 +209,7 @@ impl<'p> Parser<'p> {
     }
 
     fn finish_paragraph(&mut self, paragraph: ParagraphBuilder) {
-        if paragraph.runs.iter().all(|r| r.text.trim().is_empty()) {
+        if is_blank(&paragraph.runs) {
             return;
         }
 
@@ -320,35 +276,6 @@ impl<'p> Parser<'p> {
     }
 }
 
-/// Adds `run` to `runs`, merging it into the last run when the formatting matches.
-fn append_run(runs: &mut Vec<Run>, run: Run) {
-    match runs.last_mut() {
-        Some(last) if last.same_format(&run) => last.text.push_str(&run.text),
-        _ => runs.push(run),
-    }
-}
-
-/// Adds a paragraph's runs to a table cell, on a new line if the cell already has text.
-fn append_paragraph(cell: &mut Cell, runs: Vec<Run>) {
-    if runs.iter().all(|r| r.text.trim().is_empty()) {
-        return;
-    }
-    if !cell.is_empty() {
-        append_run(cell, Run::new("\n", RunStyle::default()));
-    }
-    for run in runs {
-        append_run(cell, run);
-    }
-}
-
-/// Reads an attribute by its local name (`w:val` -> `"val"`).
-fn attr(e: &BytesStart, name: &str) -> Option<String> {
-    e.attributes()
-        .flatten()
-        .find(|a| a.key.local_name().as_ref() == name)
-        .map(|a| a.value.into_owned())
-}
-
 /// `<w:b/>` turns bold on, and so does `<w:b w:val="1"/>`, but `<w:b w:val="0"/>` turns it off.
 fn is_on(e: &BytesStart) -> bool {
     !matches!(attr(e, "val").as_deref(), Some("0" | "false" | "off"))
@@ -368,7 +295,7 @@ fn heading_level(style: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model::ListKind;
+    use crate::document::ListKind;
 
     const BOLD: RunStyle = RunStyle {
         bold: true,

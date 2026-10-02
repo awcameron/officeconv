@@ -25,6 +25,9 @@ pub enum ConvertError {
     #[error("--sheet and --all-sheets only apply to .xlsx input")]
     SheetOptionOnlyForXlsx,
 
+    #[error("--typed only applies to --to json")]
+    TypedOnlyForJson,
+
     #[error("--no-notes only applies to .pptx input")]
     NotesOptionOnlyForPptx,
 

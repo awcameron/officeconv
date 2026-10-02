@@ -21,7 +21,7 @@ That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` work
 ## Usage
 
 ```text
-officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-notes] [--images DIR]
+officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--typed] [--no-notes] [--images DIR]
 ```
 
 | Option              | Meaning                                                                  |
@@ -30,6 +30,7 @@ officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-n
 | `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory      |
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
+| `--typed`           | JSON only: write numbers, booleans and empty cells as JSON values        |
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
 | `--images DIR`      | Save images into `DIR` and link them from the Markdown                   |
 
@@ -43,6 +44,9 @@ officeconv sales.xlsx --to csv
 
 # A named sheet as a Markdown table, saved to a file
 officeconv sales.xlsx --to md --sheet "Q1 2026" -o q1.md
+
+# JSON with real numbers, booleans and nulls instead of strings
+officeconv sales.xlsx --to json --typed
 
 # Every sheet as JSON, one file per sheet, into ./out
 officeconv sales.xlsx --to json --all-sheets -o out
@@ -84,8 +88,22 @@ Error: cannot convert docx to csv; docx supports: md
   times become `HH:MM:SS`, and durations become `H:MM:SS`.
 - Error cells keep their Excel text, such as `#DIV/0!`.
 - CSV and TSV quote fields when needed.
-- JSON is an array of objects keyed by header, in column order. Every value is a string. Blank
-  headers become `column_N`, and repeated headers become `name_2`, `name_3`, and so on.
+- JSON is an array of objects keyed by header, in column order. Blank headers become `column_N`,
+  and repeated headers become `name_2`, `name_3`, and so on. By default every value is a string.
+  With `--typed`, each value keeps the type Excel stored:
+
+  | Cell                 | Default           | `--typed`      |
+  | -------------------- | ----------------- | -------------- |
+  | Number               | `"12"`, `"7.5"`   | `12`, `7.5`    |
+  | Boolean              | `"true"`          | `true`         |
+  | Empty                | `""`              | `null`         |
+  | Text, even `"00123"` | `"00123"`         | `"00123"`      |
+  | Date, time, duration | `"2026-10-01"`    | `"2026-10-01"` |
+  | Error                | `"#DIV/0!"`       | `"#DIV/0!"`    |
+
+  Excel stores `12` as `12.0`, so whole numbers are written as integers. Numbers of 2^53 or more
+  stay floats, since JavaScript can't hold larger integers exactly. A formula is written as the
+  result Excel last calculated. If the file has none saved, the cell is empty.
 - In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
 - With `--images DIR`, pictures placed on the sheet are saved. Markdown lists them after the table,
   top to bottom and then left to right. CSV, TSV and JSON can't refer to images, so their data is
@@ -191,7 +209,7 @@ src/
   input.rs           xlsx, docx, or pptx detection, and which outputs each supports
   opc.rs             zip parts, relationships, and the XmlHandler event loop
   output.rs          stdout, a file, or one file per sheet
-  table.rs           Table: the text grid every writer works from
+  table.rs           Table and Cell: the grid every writer works from
   xlsx/
     mod.rs           XLSX sheets to Table (calamine)
     pictures.rs      finds the pictures on a sheet through its drawing part

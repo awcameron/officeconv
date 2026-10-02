@@ -28,6 +28,10 @@ pub struct Cli {
     #[arg(long)]
     pub all_sheets: bool,
 
+    /// Write numbers, booleans and empty cells as JSON values instead of strings (JSON only)
+    #[arg(long)]
+    pub typed: bool,
+
     /// Leave out speaker notes (PPTX only)
     #[arg(long)]
     pub no_notes: bool,

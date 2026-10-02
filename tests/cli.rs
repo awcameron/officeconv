@@ -712,3 +712,95 @@ fn xlsx_output_is_unchanged_without_images_flag() {
     );
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+/// One sheet with a column of each kind of cell.
+fn xlsx_with_types() -> (TempDir, PathBuf) {
+    use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("orders.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .write_row(0, 0, ["id", "zip", "price", "paid", "shipped", "note"])
+        .unwrap();
+    sheet.write(1, 0, 1).unwrap();
+    sheet.write(1, 1, "00123").unwrap();
+    sheet.write(1, 2, 19.99).unwrap();
+    sheet.write(1, 3, true).unwrap();
+    let date = ExcelDateTime::from_ymd(2026, 10, 1).unwrap();
+    let date_format = Format::new().set_num_format("yyyy-mm-dd");
+    sheet.write_with_format(1, 4, &date, &date_format).unwrap();
+    // Column F ("note") is left empty.
+    workbook.save(&path).unwrap();
+    (dir, path)
+}
+
+#[test]
+fn typed_json_keeps_numbers_booleans_and_empty_cells() {
+    let (_dir, path) = xlsx_with_types();
+    let output = officeconv()
+        .arg(&path)
+        .args(["--to", "json", "--typed"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{
+            "id": 1, "zip": "00123", "price": 19.99, "paid": true,
+            "shipped": "2026-10-01", "note": null
+        }])
+    );
+}
+
+#[test]
+fn json_stays_text_without_typed() {
+    let (_dir, path) = xlsx_with_types();
+    let json: serde_json::Value = serde_json::from_str(&convert(&path, "json")).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{
+            "id": "1", "zip": "00123", "price": "19.99", "paid": "true",
+            "shipped": "2026-10-01", "note": ""
+        }])
+    );
+}
+
+#[test]
+fn typed_works_with_all_sheets() {
+    let (dir, path) = sample_xlsx();
+    let out = dir.path().join("out");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "json", "--typed", "--all-sheets", "-o"])
+        .arg(&out)
+        .assert()
+        .success();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("sales-Sheet1.json")).unwrap())
+            .unwrap();
+    // "12" was written as text, so it stays a string; 7.5 was a number.
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "Region": "North, East", "Units": "12" },
+            { "Region": "South", "Units": 7.5 },
+        ])
+    );
+}
+
+#[test]
+fn rejects_typed_without_json() {
+    let (_dir, path) = sample_xlsx();
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv", "--typed"])
+        .assert()
+        .failure()
+        .stderr(contains("--typed only applies to --to json"));
+}

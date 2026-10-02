@@ -31,7 +31,7 @@ officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--no-n
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
-| `--images DIR`      | DOCX and PPTX: save images into `DIR` and link them from the Markdown    |
+| `--images DIR`      | Save images into `DIR` and link them from the Markdown                   |
 
 The input type comes from the file extension. DOCX and PPTX files only convert to `md`.
 
@@ -61,6 +61,9 @@ officeconv talk.pptx --to md --no-notes -o handout.md
 # Keep the pictures: save them in ./notes_images and link them from notes.md
 officeconv notes.docx --to md -o notes.md --images notes_images
 
+# A sheet's pictures, listed under its Markdown table
+officeconv sales.xlsx --to md -o sales.md --images sales_images
+
 # Stdout works with other tools
 officeconv sales.xlsx --to csv | head -5
 ```
@@ -84,6 +87,9 @@ Error: cannot convert docx to csv; docx supports: md
 - JSON is an array of objects keyed by header, in column order. Every value is a string. Blank
   headers become `column_N`, and repeated headers become `name_2`, `name_3`, and so on.
 - In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
+- With `--images DIR`, pictures placed on the sheet are saved. Markdown lists them after the table,
+  top to bottom and then left to right. CSV, TSV and JSON can't refer to images, so their data is
+  unchanged and the files are only saved. See [Images](#images).
 
 ### DOCX
 
@@ -140,20 +146,25 @@ layout.
 
 ### Images
 
-With `--images DIR`, each picture stored in a DOCX or PPTX is saved into `DIR`, which is created
-if needed, and linked from the Markdown:
+With `--images DIR`, each picture stored in a DOCX, PPTX or XLSX is saved into `DIR`, which is
+created if needed, and linked from the Markdown:
 
 ```markdown
 Our chart: ![Sales by region](notes_images/image1.png)
 ```
 
-- The alt text is the description set in Word or PowerPoint (Alt Text). It's empty if none is set.
+- The alt text is the description set in Word, PowerPoint or Excel (Alt Text). It's empty if none
+  is set.
 - Links are relative to the folder of the `-o` file, or to the current directory when writing to
   stdout. If `DIR` is somewhere else, the link is its absolute path.
 - An image used more than once is saved once. File names are kept from the document, and a
   clash gets a number added, such as `image1-2.png`.
 - Images linked from the web or another file, rather than stored in the document, are skipped.
-- Without `--images`, no files are written and images don't appear in the Markdown.
+- With `--all-sheets`, all sheets share `DIR`, and each sheet's Markdown links only its own
+  pictures.
+- Without `--images`, no files are written and images don't appear in the output.
+- Not saved: charts, shapes, and Excel's in-cell pictures ("Place in Cell" or `IMAGE()`), which
+  are stored differently.
 
 ## Development
 
@@ -176,12 +187,14 @@ src/
   lib.rs             run(): validate, then hand off to a converter
   cli.rs             command-line options (clap)
   error.rs           ConvertError, with one variant per kind of failure
-  images.rs          saves pictures from a .docx or .pptx and works out their links
+  images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
   input.rs           xlsx, docx, or pptx detection, and which outputs each supports
   opc.rs             zip parts, relationships, and the XmlHandler event loop
   output.rs          stdout, a file, or one file per sheet
   table.rs           Table: the text grid every writer works from
-  xlsx.rs            XLSX sheets to Table (calamine)
+  xlsx/
+    mod.rs           XLSX sheets to Table (calamine)
+    pictures.rs      finds the pictures on a sheet through its drawing part
   writers.rs         Table to CSV, TSV, JSON, or Markdown
   document/
     mod.rs           Block, Run, ListKind: the model DOCX and PPTX both produce

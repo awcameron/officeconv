@@ -32,7 +32,7 @@ pub struct Cli {
     #[arg(long)]
     pub no_notes: bool,
 
-    /// Save images into this directory and link them from the Markdown (DOCX and PPTX only)
+    /// Save images into this directory and link them from the Markdown
     #[arg(long, value_name = "DIR")]
     pub images: Option<PathBuf>,
 }

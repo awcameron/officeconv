@@ -21,6 +21,15 @@ pub fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {
     }
 }
 
+/// The folder a Markdown file written to `output` lives in: its parent, or the current
+/// directory when writing to stdout.
+pub fn markdown_dir(output: Option<&Path>) -> &Path {
+    output
+        .and_then(Path::parent)
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
 /// Creates `dir` (and any missing parents) if it doesn't exist yet.
 pub fn ensure_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).map_err(|source| ConvertError::CreateOutput {
@@ -73,6 +82,16 @@ mod tests {
             OutputFormat::Markdown,
         );
         assert_eq!(path, Path::new("out/sales-Q1 2026.md"));
+    }
+
+    #[test]
+    fn finds_the_markdown_folder() {
+        assert_eq!(markdown_dir(None), Path::new("."));
+        assert_eq!(markdown_dir(Some(Path::new("notes.md"))), Path::new("."));
+        assert_eq!(
+            markdown_dir(Some(Path::new("out/notes.md"))),
+            Path::new("out")
+        );
     }
 
     #[test]

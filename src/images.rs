@@ -25,13 +25,13 @@ pub struct ImageExport {
 }
 
 impl ImageExport {
-    /// Prepares to save images into `dir` (created if needed), linked from a Markdown file
-    /// at `markdown_file`, or from the current directory when writing to stdout.
-    pub fn new(dir: &Path, markdown_file: Option<&Path>) -> Result<Self> {
+    /// Prepares to save images into `dir` (created if needed), linked from Markdown files
+    /// in `markdown_dir`.
+    pub fn new(dir: &Path, markdown_dir: &Path) -> Result<Self> {
         ensure_dir(dir)?;
         Ok(ImageExport {
             dir: dir.to_path_buf(),
-            link_prefix: link_prefix(dir, markdown_file),
+            link_prefix: link_prefix(dir, markdown_dir),
             links: HashMap::new(),
             taken: HashSet::new(),
         })
@@ -107,17 +107,12 @@ pub fn link_images<R: Read + Seek>(
     }
 }
 
-/// The path from the Markdown file's folder to `images_dir`, with `/` separators and a
-/// trailing `/` (or empty when they're the same folder).
+/// The path from `markdown_dir` to `images_dir`, with `/` separators and a trailing `/`
+/// (or empty when they're the same folder).
 ///
-/// If `images_dir` isn't inside the Markdown file's folder, the link is its absolute path.
-fn link_prefix(images_dir: &Path, markdown_file: Option<&Path>) -> String {
-    let base = markdown_file
-        .and_then(Path::parent)
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-
-    let relative = match (fs::canonicalize(images_dir), fs::canonicalize(base)) {
+/// If `images_dir` isn't inside `markdown_dir`, the link is its absolute path.
+fn link_prefix(images_dir: &Path, markdown_dir: &Path) -> String {
+    let relative = match (fs::canonicalize(images_dir), fs::canonicalize(markdown_dir)) {
         (Ok(dir), Ok(base)) => match dir.strip_prefix(&base) {
             Ok(inside) => inside.to_path_buf(),
             Err(_) => dir,
@@ -163,8 +158,7 @@ mod tests {
             ("word/media/image1.png", b"one"),
             ("word/embeddings/Image1.PNG", b"two"),
         ]);
-        let markdown = dir.path().join("notes.md");
-        let mut export = ImageExport::new(&images, Some(&markdown)).unwrap();
+        let mut export = ImageExport::new(&images, dir.path()).unwrap();
 
         let first = export.export(&mut zip, "word/media/image1.png").unwrap();
         let again = export.export(&mut zip, "word/media/image1.png").unwrap();
@@ -187,7 +181,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let images = dir.path().join("img");
         let mut zip = archive(&[("../../evil.png", b"x")]);
-        let mut export = ImageExport::new(&images, None).unwrap();
+        let mut export = ImageExport::new(&images, dir.path()).unwrap();
 
         export.export(&mut zip, "../../evil.png").unwrap();
 
@@ -196,19 +190,19 @@ mod tests {
     }
 
     #[test]
-    fn links_relative_to_the_markdown_file() {
+    fn links_relative_to_the_markdown_folder() {
         let dir = TempDir::new().unwrap();
         let out = dir.path().join("out");
         let images = out.join("media");
         fs::create_dir_all(&images).unwrap();
 
-        assert_eq!(link_prefix(&images, Some(&out.join("notes.md"))), "media/");
-        assert_eq!(link_prefix(&out, Some(&out.join("notes.md"))), "");
+        assert_eq!(link_prefix(&images, &out), "media/");
+        assert_eq!(link_prefix(&out, &out), "");
 
         // Not inside the Markdown file's folder: use the absolute path.
         let elsewhere = dir.path().join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
-        let prefix = link_prefix(&elsewhere, Some(&out.join("notes.md")));
+        let prefix = link_prefix(&elsewhere, &out);
         assert!(prefix.ends_with("/elsewhere/"), "{prefix}");
         assert!(!prefix.starts_with("//?/"), "{prefix}");
     }

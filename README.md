@@ -21,12 +21,13 @@ That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` work
 ## Usage
 
 ```text
-officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--typed] [--no-notes] [--images DIR]
+officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --all-sheets] [--typed] [--no-notes] [--images DIR]
 ```
 
 | Option              | Meaning                                                                  |
 | ------------------- | ------------------------------------------------------------------------ |
 | `-t, --to <FORMAT>` | `csv`, `tsv`, `json`, or `md` (`markdown` also works)                    |
+| `--from <TYPE>`     | `xlsx`, `docx`, or `pptx`: the input type, instead of detecting it       |
 | `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory      |
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
@@ -34,7 +35,37 @@ officeconv <INPUT> --to <FORMAT> [-o PATH] [--sheet NAME | --all-sheets] [--type
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
 | `--images DIR`      | Save images into `DIR` and link them from the Markdown                   |
 
-The input type comes from the file extension. DOCX and PPTX files only convert to `md`.
+The input type comes from the file extension. If the extension isn't one of these three (for
+example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file instead. DOCX and PPTX
+files only convert to `md`.
+
+### Reading from stdin
+
+Use `-` as the input to read from stdin:
+
+```sh
+cat report.xlsx | officeconv - --to csv
+curl -s https://example.com/deck.pptx | officeconv - --to md
+```
+
+- Stdin has no file name, so its type is worked out from its contents. All three formats are zip
+  files, so `officeconv` looks for `xl/workbook.xml`, `word/document.xml`, or
+  `ppt/presentation.xml` inside.
+- Every option works with stdin. With `--all-sheets`, files are named `stdin-<sheet>.<ext>`.
+- Stdin is read into memory first, because zip files need random access. Files given by path are
+  read from disk.
+- If nothing is piped in, `officeconv -` stops with an error instead of waiting for input.
+- To read a file that's actually named `-`, write it as `./-`.
+
+`--from` sets the type and skips detection. This is useful when a file's extension is misleading,
+such as a workbook saved as `report.docx`:
+
+```sh
+officeconv report.docx --to csv --from xlsx
+```
+
+If `--from` doesn't match what's inside, you get an error that says what the file looks like
+instead, for example `the input isn't a .docx file (it looks like a .xlsx)`.
 
 ### Examples
 
@@ -204,9 +235,10 @@ src/
   main.rs            entry point: parse arguments, run, print errors
   lib.rs             run(): validate, then hand off to a converter
   cli.rs             command-line options (clap)
+  format.rs          OutputFormat: csv, tsv, json, md
   error.rs           ConvertError, with one variant per kind of failure
   images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
-  input.rs           xlsx, docx, or pptx detection, and which outputs each supports
+  input.rs           the input (a file or stdin), its type, and which outputs each supports
   opc.rs             zip parts, relationships, and the XmlHandler event loop
   output.rs          stdout, a file, or one file per sheet
   table.rs           Table and Cell: the grid every writer works from

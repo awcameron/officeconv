@@ -16,7 +16,7 @@
 
 pub mod package;
 
-use std::path::Path;
+use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
@@ -30,11 +30,14 @@ use package::Package;
 
 const DOCUMENT: &str = "word/document.xml";
 
-/// Reads the `.docx` at `path` and returns its body as blocks.
+/// Reads a `.docx` and returns its body as blocks.
 ///
 /// With `images`, pictures are saved there and linked; without it, they're left out.
-pub fn read_blocks(path: &Path, images: Option<&mut ImageExport>) -> Result<Vec<Block>> {
-    let mut archive = opc::open(path)?;
+pub fn read_blocks<R: Read + Seek>(
+    reader: R,
+    images: Option<&mut ImageExport>,
+) -> Result<Vec<Block>> {
+    let mut archive = opc::open(reader)?;
     let document = opc::read_required_part(&mut archive, DOCUMENT)?;
 
     let mut package = Package::default();

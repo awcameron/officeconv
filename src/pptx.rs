@@ -19,7 +19,7 @@
 //! under `### Notes` and a horizontal rule between slides.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
@@ -57,15 +57,15 @@ pub struct Targets {
     pub images: HashMap<String, String>,
 }
 
-/// Reads the `.pptx` at `path` and returns it as blocks, slide by slide.
+/// Reads a `.pptx` and returns it as blocks, slide by slide.
 ///
 /// With `images`, pictures are saved there and linked; without it, they're left out.
-pub fn read_blocks(
-    path: &Path,
+pub fn read_blocks<R: Read + Seek>(
+    reader: R,
     notes: Notes,
     images: Option<&mut ImageExport>,
 ) -> Result<Vec<Block>> {
-    let mut archive = opc::open(path)?;
+    let mut archive = opc::open(reader)?;
     let presentation = opc::read_required_part(&mut archive, PRESENTATION)?;
     let relationships = match opc::read_part(&mut archive, &opc::rels_path(PRESENTATION))? {
         Some(xml) => opc::parse_relationships(&xml)?,

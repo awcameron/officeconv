@@ -66,6 +66,46 @@ fn converts_docx_to_pdf() {
 }
 
 #[test]
+fn numbers_lists_and_draws_tables() {
+    let numbering = format!(
+        r#"<w:numbering xmlns:w="{WORD_NS}">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#
+    );
+    let item = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let cell = |text: &str| format!("<w:tc>{}</w:tc>", para(text));
+    let body = format!(
+        "{}{}<w:tbl><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>",
+        item("Read the book"),
+        item("Build a CLI"),
+        cell("Crate"),
+        cell("Use"),
+        cell("zip"),
+        cell("unpack .docx"),
+    );
+    let (_dir, path) = sample_docx_with_parts(&body, &[part("word/numbering.xml", numbering)]);
+    let pages = page_texts(&convert_to_pdf(&path, &[]).0);
+
+    for expected in [
+        "1. Read the book",
+        "2. Build a CLI",
+        "Crate Use",
+        "zip unpack .docx",
+    ] {
+        assert!(
+            pages[0].contains(expected),
+            "{expected:?} not in {:?}",
+            pages[0]
+        );
+    }
+}
+
+#[test]
 fn wraps_long_paragraphs_onto_more_pages() {
     let sentence = "The quick brown fox jumps over the lazy dog. ".repeat(30);
     let body: String = (1..=12)

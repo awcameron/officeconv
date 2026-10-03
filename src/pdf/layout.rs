@@ -1,5 +1,5 @@
-//! Laying out [`Block`]s on pages: wrapping text into lines and starting a new page when one
-//! is full.
+//! Laying out [`Block`]s on pages: wrapping text into lines, numbering lists, sizing tables,
+//! and starting a new page when one is full.
 //!
 //! The result is a list of [`Page`]s holding positioned [`Item`]s, which `pdf::render` then
 //! paints. Keeping the two apart means the layout can be tested without reading a PDF back.
@@ -12,7 +12,7 @@ use krilla::text::KrillaGlyph;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
-use crate::document::{Block, Run, RunStyle};
+use crate::document::{Block, Cell, ListKind, Run, RunStyle};
 
 /// Page size, margins, and text size for one kind of document.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,12 +72,19 @@ pub struct Page {
 #[derive(Debug, Clone)]
 pub enum Item {
     Text(TextItem),
-    /// A thin line, for rules.
+    /// A thin line, for table borders and rules.
     Line {
         x1: f32,
         y1: f32,
         x2: f32,
         y2: f32,
+    },
+    /// A light grey rectangle, behind a table's header row.
+    Shade {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
     },
 }
 
@@ -100,6 +107,10 @@ impl Item {
                 text.x += dx;
                 text.baseline += dy;
             }
+            Item::Shade { x, y, .. } => {
+                *x += dx;
+                *y += dy;
+            }
             Item::Line { x1, y1, x2, y2 } => {
                 *x1 += dx;
                 *x2 += dx;
@@ -114,6 +125,7 @@ impl Item {
 /// One line of text, laid out from (0, 0) until it's placed.
 #[derive(Debug, Default)]
 struct LineBox {
+    width: f32,
     height: f32,
     items: Vec<Item>,
 }
@@ -141,17 +153,19 @@ impl<'a> Layout<'a> {
     }
 
     /// Lays out every block and returns the pages.
-    ///
-    /// Lists and tables aren't laid out as such yet: each list item and each table cell
-    /// becomes a paragraph.
     pub fn run(mut self, blocks: &[Block]) -> Vec<Page> {
         let body = self.setup.body_size;
-        let width = self.setup.content_width();
+        // How many numbered items came before at each list level, for "1.", "2.", ...
+        let mut numbers: Vec<u32> = Vec::new();
         let mut previous: Option<&Block> = None;
 
         for (i, block) in blocks.iter().enumerate() {
-            let gap = match block {
-                Block::Heading { level, .. } => body * heading_scale(*level) * 0.8,
+            if !matches!(block, Block::ListItem { .. }) {
+                numbers.clear();
+            }
+            let gap = match (previous, block) {
+                (_, Block::Heading { level, .. }) => body * heading_scale(*level) * 0.8,
+                (Some(Block::ListItem { .. }), Block::ListItem { .. }) => body * 0.25,
                 _ => body * 0.7,
             };
             if previous.is_some() {
@@ -162,7 +176,7 @@ impl<'a> Layout<'a> {
                 Block::Heading { level, runs } => {
                     let size = body * heading_scale(*level);
                     let runs = all_bold(runs);
-                    let lines = self.layout_runs(&runs, size, width);
+                    let lines = self.layout_runs(&runs, size, self.setup.content_width());
                     // Keep a heading on the same page as the first lines after it.
                     let height: f32 = lines.iter().map(|l| l.height).sum();
                     let follows = blocks.get(i + 1).is_some_and(|b| !matches!(b, Block::Rule));
@@ -174,16 +188,15 @@ impl<'a> Layout<'a> {
                     self.ensure_space(height + keep);
                     self.place_lines(lines, self.setup.margin);
                 }
-                Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
-                    let lines = self.layout_runs(runs, body, width);
+                Block::Paragraph(runs) => {
+                    let lines = self.layout_runs(runs, body, self.setup.content_width());
                     self.place_lines(lines, self.setup.margin);
                 }
-                Block::Table(rows) => {
-                    for cell in rows.iter().flatten() {
-                        let lines = self.layout_runs(cell, body, width);
-                        self.place_lines(lines, self.setup.margin);
-                    }
+                Block::ListItem { kind, level, runs } => {
+                    let marker = list_marker(&mut numbers, *kind, *level);
+                    self.place_list_item(&marker, *level, runs);
                 }
+                Block::Table(rows) => self.place_table(rows),
                 Block::Rule => match self.setup.rule {
                     RuleStyle::PageBreak => self.new_page(),
                     RuleStyle::Line => {
@@ -250,6 +263,168 @@ impl<'a> Layout<'a> {
         page.items
             .extend(line.items.into_iter().map(|item| item.moved(x, y)));
         self.y = y + line.height;
+    }
+
+    /// A list item: the marker hangs to the left of the text, indented by level.
+    fn place_list_item(&mut self, marker: &str, level: u8, runs: &[Run]) {
+        let body = self.setup.body_size;
+        let indent = self.setup.margin + f32::from(level) * body * 1.5;
+        let hang = body * 1.5;
+        let width = (self.setup.content_width() - (indent - self.setup.margin) - hang).max(hang);
+
+        let mut lines = self.layout_runs(runs, body, width);
+        if lines.is_empty() {
+            lines.push(LineBox {
+                height: self.line_height(body),
+                ..LineBox::default()
+            });
+        }
+        let marker_runs = [Run::new(marker, RunStyle::default())];
+        let marker_line = self.layout_runs(&marker_runs, body, f32::INFINITY);
+
+        let first = lines.remove(0);
+        self.ensure_space(first.height);
+        let y = self.y;
+        for marker in marker_line {
+            self.emit(marker, indent, y);
+        }
+        self.emit(first, indent + hang, y);
+        self.place_lines(lines, indent + hang);
+    }
+
+    /// A table with a border around every cell. Columns get their natural width when the table
+    /// fits, and otherwise share the page so that words aren't broken unless they have to be
+    /// (the way browsers size tables). The header row is bold, shaded, and repeated on each
+    /// page the table continues onto.
+    fn place_table(&mut self, rows: &[Vec<Cell>]) {
+        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if columns == 0 {
+            return;
+        }
+        let body = self.setup.body_size;
+        let padding = body * 0.4;
+
+        // Each column's narrowest width (its longest word) and natural width (its widest
+        // line, unwrapped).
+        let mut narrowest = vec![2.0 * padding; columns];
+        let mut natural = vec![2.0 * padding; columns];
+        for (r, row) in rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                let runs = cell_runs(cell, r == 0);
+                let word = self.longest_word(&runs, body);
+                narrowest[c] = narrowest[c].max(word + 2.0 * padding);
+                let lines = self.layout_runs(&runs, body, f32::INFINITY);
+                let widest = lines.iter().map(|l| l.width).fold(0.0, f32::max);
+                natural[c] = natural[c].max(widest + 2.0 * padding);
+            }
+        }
+        let widths = column_widths(&narrowest, &natural, self.setup.content_width());
+
+        let laid_out: Vec<(f32, Vec<LineBox>)> = rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| self.layout_row(row, r == 0, &widths, padding))
+            .collect();
+
+        let mut header: Option<(f32, Vec<Vec<Item>>)> = None;
+        for (r, (height, cells)) in laid_out.into_iter().enumerate() {
+            self.ensure_space(height);
+            if r > 0
+                && self.at_page_top()
+                && let Some((header_height, items)) = &header
+            {
+                self.place_row(*header_height, items.clone(), &widths, true);
+            }
+            let items: Vec<_> = cells.into_iter().map(|c| c.items).collect();
+            if r == 0 {
+                header = Some((height, items.clone()));
+            }
+            self.place_row(height, items, &widths, r == 0);
+        }
+    }
+
+    /// Lays out one row's cells; returns the row's height and each cell's content, positioned
+    /// inside its cell.
+    fn layout_row(
+        &mut self,
+        row: &[Cell],
+        header: bool,
+        widths: &[f32],
+        padding: f32,
+    ) -> (f32, Vec<LineBox>) {
+        let min_height = self.line_height(self.setup.body_size) + 2.0 * padding;
+        let mut height = min_height;
+        let mut cells = Vec::with_capacity(widths.len());
+        for (c, width) in widths.iter().enumerate() {
+            let lines = match row.get(c) {
+                Some(cell) => self.layout_cell(cell, header, width - 2.0 * padding),
+                None => Vec::new(),
+            };
+            let mut cell = LineBox::default();
+            let mut y = padding;
+            for line in lines {
+                cell.items
+                    .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
+                y += line.height;
+            }
+            height = height.max(y + padding);
+            cells.push(cell);
+        }
+        (height, cells)
+    }
+
+    /// Adds a row at the current position: its shading (for the header), borders, and cells.
+    fn place_row(&mut self, height: f32, cells: Vec<Vec<Item>>, widths: &[f32], header: bool) {
+        let left = self.setup.margin;
+        let top = self.y;
+        let right = left + widths.iter().sum::<f32>();
+        let bottom = top + height;
+        let page = self.pages.last_mut().expect("there is always a page");
+
+        if header {
+            page.items.push(Item::Shade {
+                x: left,
+                y: top,
+                width: right - left,
+                height,
+            });
+        }
+        let mut x = left;
+        for (c, items) in cells.into_iter().enumerate() {
+            page.items
+                .extend(items.into_iter().map(|i| i.moved(x, top)));
+            x += widths[c];
+        }
+
+        for y in [top, bottom] {
+            page.items.push(Item::Line {
+                x1: left,
+                y1: y,
+                x2: right,
+                y2: y,
+            });
+        }
+        let mut x = left;
+        for edge in std::iter::once(0.0).chain(widths.iter().copied()) {
+            x += edge;
+            page.items.push(Item::Line {
+                x1: x,
+                y1: top,
+                x2: x,
+                y2: bottom,
+            });
+        }
+        self.y = bottom;
+    }
+
+    fn layout_cell(&mut self, cell: &Cell, header: bool, width: f32) -> Vec<LineBox> {
+        let runs = cell_runs(cell, header);
+        self.layout_runs(&runs, self.setup.body_size, width)
+    }
+
+    /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
+    fn longest_word(&self, runs: &[Run], size: f32) -> f32 {
+        Paragraph::shape(self.fonts, runs).longest_word() * size
     }
 
     /// Wraps runs into lines no wider than `width`, breaking where Unicode allows (after
@@ -357,6 +532,18 @@ impl Paragraph {
         self.advance_before[span.end] - self.advance_before[span.start]
     }
 
+    /// The width of the widest word, without trailing spaces, in ems.
+    fn longest_word(&self) -> f32 {
+        let mut start = 0;
+        let mut widest = 0.0_f32;
+        for (end, _) in linebreaks(&self.text) {
+            let content = start + self.text[start..end].trim_end().len();
+            widest = widest.max(self.width(start..content));
+            start = end;
+        }
+        widest
+    }
+
     /// The furthest point in `range` that fits in `width` ems: always past at least one
     /// character, so a line can't be empty.
     fn longest_fit(&self, range: Range<usize>, width: f32) -> usize {
@@ -420,8 +607,35 @@ impl Paragraph {
             }));
             x += advance;
         }
+        line.width = x;
         line
     }
+}
+
+/// Column widths that fit `available`: the natural widths if they fit, else each column's
+/// narrowest width plus a share of the space left in proportion to how much more it would
+/// like, else (when even the narrowest widths don't fit) the narrowest widths scaled down.
+fn column_widths(narrowest: &[f32], natural: &[f32], available: f32) -> Vec<f32> {
+    let total_natural: f32 = natural.iter().sum();
+    let total_narrowest: f32 = narrowest.iter().sum();
+    if total_natural <= available {
+        return natural.to_vec();
+    }
+    if total_narrowest >= available {
+        let scale = available / total_narrowest;
+        return narrowest.iter().map(|w| w * scale).collect();
+    }
+    let share = (available - total_narrowest) / (total_natural - total_narrowest);
+    narrowest
+        .iter()
+        .zip(natural)
+        .map(|(min, max)| min + (max - min) * share)
+        .collect()
+}
+
+/// A cell's runs, made bold in the header row.
+fn cell_runs(cell: &Cell, header: bool) -> Vec<Run> {
+    if header { all_bold(cell) } else { cell.clone() }
 }
 
 fn heading_scale(level: u8) -> f32 {
@@ -439,6 +653,20 @@ fn all_bold(runs: &[Run]) -> Vec<Run> {
             ..run.clone()
         })
         .collect()
+}
+
+/// The marker for a list item: a bullet, or the item's number at its level. `numbers` holds
+/// the count so far at each level; going back out to a level forgets the deeper counts.
+fn list_marker(numbers: &mut Vec<u32>, kind: ListKind, level: u8) -> String {
+    let level = usize::from(level);
+    numbers.resize(level + 1, 0);
+    match kind {
+        ListKind::Bullet => if level % 2 == 0 { "•" } else { "–" }.to_string(),
+        ListKind::Numbered => {
+            numbers[level] += 1;
+            format!("{}.", numbers[level])
+        }
+    }
 }
 
 #[cfg(test)]
@@ -551,5 +779,71 @@ mod tests {
         let all: Vec<String> = pages.iter().flat_map(page_lines).collect();
         assert_eq!(all.len(), 200);
         assert_eq!(all[199], "Paragraph 199");
+    }
+
+    #[test]
+    fn numbers_lists_per_level() {
+        let item = |kind, level, label: &str| Block::ListItem {
+            kind,
+            level,
+            runs: text(label),
+        };
+        let blocks = [
+            item(ListKind::Numbered, 0, "a"),
+            item(ListKind::Numbered, 1, "a.a"),
+            item(ListKind::Numbered, 1, "a.b"),
+            item(ListKind::Numbered, 0, "b"),
+            item(ListKind::Numbered, 1, "b.a"),
+            item(ListKind::Bullet, 2, "deep"),
+            Block::Paragraph(text("between")),
+            item(ListKind::Numbered, 0, "new list"),
+        ];
+        let pages = lay_out(&blocks, PageSetup::DOCUMENT);
+        assert_eq!(
+            page_lines(&pages[0]),
+            [
+                "1.a",
+                "1.a.a",
+                "2.a.b",
+                "2.b",
+                "1.b.a",
+                "•deep",
+                "between",
+                "1.new list"
+            ]
+        );
+    }
+
+    #[test]
+    fn repeats_the_table_header_on_each_page() {
+        let cell = |t: &str| text(t);
+        let mut rows = vec![vec![cell("Name"), cell("Value")]];
+        rows.extend((0..80).map(|i| vec![cell(&format!("row {i}")), cell("x")]));
+        let pages = lay_out(&[Block::Table(rows)], PageSetup::DOCUMENT);
+
+        assert!(pages.len() > 1);
+        for page in &pages {
+            assert_eq!(page_lines(page)[0], "NameValue");
+            assert!(page.items.iter().any(|i| matches!(i, Item::Shade { .. })));
+        }
+    }
+
+    #[test]
+    fn sizes_columns_like_a_browser() {
+        // Everything fits: natural widths.
+        assert_eq!(
+            column_widths(&[10.0, 10.0], &[30.0, 50.0], 100.0),
+            [30.0, 50.0]
+        );
+        // Too wide: each column keeps its narrowest width and shares what's left.
+        assert_eq!(
+            column_widths(&[20.0, 20.0], &[20.0, 220.0], 100.0),
+            [20.0, 80.0]
+        );
+        // Even the narrowest widths don't fit: scale them down.
+        assert_eq!(
+            column_widths(&[100.0, 100.0], &[200.0, 200.0], 100.0),
+            [50.0, 50.0]
+        );
     }
 }

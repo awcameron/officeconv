@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "text-processing"]
 calamine = "0.36.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 fontdb = "0.24.0"
 krilla = "0.8.2"
 quick-xml = "0.42.0"
@@ -28,3 +29,13 @@ pdf-extract = "0.12.1"
 predicates = "3.1.4"
 rust_xlsxwriter = "0.99.1"
 tempfile = "3.27.0"
+
+[build-dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+
+# Smaller release binaries: no debug symbols, and whole-program optimization. This makes
+# release builds slower, but not debug builds or `cargo test`.
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1

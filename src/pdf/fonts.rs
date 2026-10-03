@@ -6,20 +6,24 @@
 //! are loaded.
 
 use std::collections::{BTreeSet, HashMap};
+use std::io::Read;
 use std::ops::Range;
+use std::sync::OnceLock;
 
+use flate2::read::DeflateDecoder;
 use fontdb::{Database, Style, Weight};
 use krilla::text::{Font, GlyphId, KrillaGlyph};
 use rustybuzz::{Direction, UnicodeBuffer};
 
 use crate::document::RunStyle;
 
-/// Noto Sans in the four styles a run can have, indexed by [`style_index`].
-const NOTO_SANS: [&[u8]; 4] = [
-    include_bytes!("../../assets/fonts/NotoSans-Regular.ttf"),
-    include_bytes!("../../assets/fonts/NotoSans-Bold.ttf"),
-    include_bytes!("../../assets/fonts/NotoSans-Italic.ttf"),
-    include_bytes!("../../assets/fonts/NotoSans-BoldItalic.ttf"),
+/// Noto Sans in the four styles a run can have, indexed by [`style_index`], as compressed by
+/// `build.rs`. [`noto_sans`] decompresses them.
+const NOTO_SANS_DEFLATED: [&[u8]; 4] = [
+    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSans-Regular.ttf.deflate")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSans-Bold.ttf.deflate")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSans-Italic.ttf.deflate")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSans-BoldItalic.ttf.deflate")),
 ];
 
 /// Installed fonts to try first for characters Noto Sans doesn't have, in order: the CJK
@@ -83,7 +87,7 @@ pub struct Fonts {
 
 impl Fonts {
     pub fn new() -> Self {
-        let loaded = NOTO_SANS
+        let loaded = noto_sans()
             .iter()
             .map(|data| LoadedFont::new(data, 0).expect("the built-in fonts are valid"))
             .collect();
@@ -178,10 +182,11 @@ impl Fonts {
         if let Some(&found) = self.fallbacks.get(&c) {
             return found;
         }
-        let found = match (NOTO_SANS.len()..self.loaded.len()).find(|&i| self.loaded[i].has(c)) {
-            Some(i) => Some(FontId(i)),
-            None => self.load_fallback(c),
-        };
+        let found =
+            match (NOTO_SANS_DEFLATED.len()..self.loaded.len()).find(|&i| self.loaded[i].has(c)) {
+                Some(i) => Some(FontId(i)),
+                None => self.load_fallback(c),
+            };
         self.fallbacks.insert(c, found);
         found
     }
@@ -224,6 +229,20 @@ impl Default for Fonts {
     fn default() -> Self {
         Fonts::new()
     }
+}
+
+/// The built-in Noto Sans fonts, decompressed the first time they're needed.
+fn noto_sans() -> &'static [Vec<u8>; 4] {
+    static FONTS: OnceLock<[Vec<u8>; 4]> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        NOTO_SANS_DEFLATED.map(|deflated| {
+            let mut font = Vec::new();
+            DeflateDecoder::new(deflated)
+                .read_to_end(&mut font)
+                .expect("the built-in fonts are valid");
+            font
+        })
+    })
 }
 
 /// Which of the four Noto Sans styles to use.

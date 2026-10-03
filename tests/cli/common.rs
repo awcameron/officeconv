@@ -63,6 +63,13 @@ pub fn sample_xlsx() -> (TempDir, PathBuf) {
     (dir, path)
 }
 
+/// A valid 2x2 red PNG.
+pub const RED_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 252, 207, 0, 2, 76, 96,
+    146, 1, 0, 13, 29, 1, 3, 130, 201, 113, 255, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 /// One file inside a package: its part name and contents.
 pub fn part(name: &str, contents: impl Into<Vec<u8>>) -> (String, Vec<u8>) {
     (name.to_string(), contents.into())

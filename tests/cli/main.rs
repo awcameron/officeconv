@@ -8,5 +8,6 @@ mod docx;
 mod errors;
 mod images;
 mod input;
+mod pdf;
 mod pptx;
 mod xlsx;

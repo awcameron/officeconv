@@ -7,18 +7,19 @@ pub mod images;
 pub mod input;
 pub mod opc;
 pub mod output;
+pub mod pdf;
 pub mod pptx;
 pub mod table;
 pub mod writers;
 pub mod xlsx;
 
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use cli::Cli;
 use error::{ConvertError, Result};
 use format::OutputFormat;
-use images::ImageExport;
+use images::{EmbeddedImages, ImageExport, Images};
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
 use zip::ZipArchive;
@@ -41,6 +42,14 @@ pub fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
     }
+    if cli.to == OutputFormat::Pdf {
+        if cli.images.is_some() {
+            return Err(ConvertError::ImagesWithPdf);
+        }
+        if cli.output.is_none() && io::stdout().is_terminal() {
+            return Err(ConvertError::PdfToTerminal);
+        }
+    }
 
     match kind {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli, &source),
@@ -49,14 +58,20 @@ pub fn run(cli: &Cli) -> Result<()> {
     }
 }
 
-/// Converts a Word or PowerPoint file to Markdown, saving its images if asked to.
+/// Converts a Word or PowerPoint file to Markdown (saving its images if asked to) or to PDF.
 fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
-    let mut images = match &cli.images {
+    let mut export = match &cli.images {
         Some(dir) => Some(ImageExport::new(
             dir,
             output::markdown_dir(cli.output.as_deref()),
         )?),
         None => None,
+    };
+    let mut embedded = EmbeddedImages::default();
+    let images = match (cli.to, export.as_mut()) {
+        (OutputFormat::Pdf, _) => Images::Embed(&mut embedded),
+        (_, Some(export)) => Images::Save(export),
+        (_, None) => Images::Skip,
     };
 
     let reader = source.reader()?;
@@ -66,28 +81,66 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         } else {
             pptx::Notes::Include
         };
-        pptx::read_blocks(reader, notes, images.as_mut())?
+        pptx::read_blocks(reader, notes, images)?
     } else {
-        docx::read_blocks(reader, images.as_mut())?
+        docx::read_blocks(reader, images)?
     };
-    write_document(cli, &blocks)?;
 
-    if let Some(images) = &images {
+    if cli.to == OutputFormat::Pdf {
+        let setup = match kind {
+            InputKind::Pptx => pdf::layout::PageSetup::SLIDES,
+            _ => pdf::layout::PageSetup::DOCUMENT,
+        };
+        let rendered = pdf::render(&blocks, &embedded, setup)?;
+        write_output(cli, &rendered.pdf)?;
+        report_pdf_gaps(&rendered);
+        return Ok(());
+    }
+
+    write_output(cli, document::markdown::render(&blocks).as_bytes())?;
+    if let Some(export) = &export {
         eprintln!(
             "saved {} images to {}",
-            images.count(),
-            images.dir().display()
+            export.count(),
+            export.dir().display()
         );
     }
     Ok(())
 }
 
-/// Writes a Word or PowerPoint document as Markdown to stdout or the `-o` file.
-fn write_document(cli: &Cli, blocks: &[document::Block]) -> Result<()> {
+/// Writes the converted document to stdout or the `-o` file.
+fn write_output(cli: &Cli, bytes: &[u8]) -> Result<()> {
     let mut out = output::open_output(cli.output.as_deref())?;
-    out.write_all(document::markdown::render(blocks).as_bytes())?;
+    out.write_all(bytes)?;
     out.flush()?;
     Ok(())
+}
+
+/// Warns about what couldn't go into the PDF: characters no font has, and images in formats
+/// a PDF can't hold.
+fn report_pdf_gaps(rendered: &pdf::Rendered) {
+    const SHOWN: usize = 10;
+    let missing = &rendered.missing_chars;
+    if !missing.is_empty() {
+        let mut listed: Vec<String> = missing
+            .iter()
+            .take(SHOWN)
+            .map(|c| format!("{c} (U+{:04X})", u32::from(*c)))
+            .collect();
+        if missing.len() > SHOWN {
+            listed.push(format!("and {} more", missing.len() - SHOWN));
+        }
+        eprintln!(
+            "warning: no installed font has these characters, so they show as boxes: {}",
+            listed.join(", ")
+        );
+    }
+    if rendered.skipped_images > 0 {
+        eprintln!(
+            "warning: left out {} images in formats a PDF can't hold (such as EMF or TIFF)",
+            rendered.skipped_images
+        );
+    }
 }
 
 /// Converts one sheet to stdout or the `-o` file.

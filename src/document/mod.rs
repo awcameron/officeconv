@@ -1,5 +1,5 @@
 //! A small document model shared by the DOCX and PPTX readers: just enough structure
-//! to write Markdown.
+//! to write Markdown or a simple PDF.
 
 pub mod markdown;
 
@@ -46,7 +46,8 @@ pub struct Run {
     pub style: RunStyle,
     pub link: Option<String>,
     /// While reading: the image's part inside the package (`word/media/image1.png`).
-    /// After [`resolve_images`]: the link written into the Markdown.
+    /// After [`resolve_images`]: the link written into the Markdown, or for a PDF, the key of
+    /// its bytes in [`EmbeddedImages`](crate::images::EmbeddedImages).
     pub image: Option<String>,
 }
 

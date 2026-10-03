@@ -20,7 +20,7 @@ use zip::ZipArchive;
 
 use crate::document::{Block, Run};
 use crate::error::Result;
-use crate::images::{self, ImageExport};
+use crate::images::{self, ImageExport, Images};
 use crate::opc::{self, XmlHandler, attr};
 
 const WORKBOOK: &str = "xl/workbook.xml";
@@ -48,7 +48,7 @@ pub fn export_sheet_pictures<R: Read + Seek>(
         .into_iter()
         .map(|picture| Block::Paragraph(vec![Run::image(picture.part, picture.alt)]))
         .collect();
-    images::link_images(&mut blocks, archive, Some(export))?;
+    images::link_images(&mut blocks, archive, Images::Save(export))?;
     Ok(blocks)
 }
 

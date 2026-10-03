@@ -112,7 +112,9 @@ fn rejects_pptx_to_csv_and_sheet_options() {
         .args(["--to", "csv"])
         .assert()
         .failure()
-        .stderr(contains("cannot convert pptx to csv; pptx supports: md"));
+        .stderr(contains(
+            "cannot convert pptx to csv; pptx supports: md, pdf",
+        ));
     officeconv()
         .arg(&path)
         .args(["--to", "md", "--all-sheets"])

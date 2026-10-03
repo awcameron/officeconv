@@ -7,7 +7,7 @@ use clap::Parser;
 use crate::format::OutputFormat;
 use crate::input::InputKind;
 
-/// Convert Office files (XLSX, DOCX, PPTX) to plain-text formats.
+/// Convert Office files (XLSX, DOCX, PPTX) to plain-text formats or PDF.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
@@ -42,7 +42,8 @@ pub struct Cli {
     #[arg(long)]
     pub no_notes: bool,
 
-    /// Save images into this directory and link them from the Markdown
+    /// Save images into this directory and link them from the Markdown (not with --to pdf,
+    /// which holds its images itself)
     #[arg(long, value_name = "DIR")]
     pub images: Option<PathBuf>,
 }

@@ -20,7 +20,7 @@ use std::path::Path;
 use cli::Cli;
 use error::{ConvertError, Result};
 use format::OutputFormat;
-use images::{ImageExport, Images};
+use images::{EmbeddedImages, ImageExport, Images};
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
 use zip::ZipArchive;
@@ -71,9 +71,11 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         )?),
         None => None,
     };
-    let images = match export.as_mut() {
-        Some(export) => Images::Save(export),
-        None => Images::Skip,
+    let mut embedded = EmbeddedImages::default();
+    let images = match (cli.to, export.as_mut()) {
+        (OutputFormat::Pdf, _) => Images::Embed(&mut embedded),
+        (_, Some(export)) => Images::Save(export),
+        (_, None) => Images::Skip,
     };
 
     let reader = source.reader()?;
@@ -89,7 +91,7 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
     };
 
     if cli.to == OutputFormat::Pdf {
-        return write_pdf(cli, kind, &blocks);
+        return write_pdf(cli, kind, &blocks, &embedded);
     }
 
     write_output(cli, document::markdown::render(&blocks).as_bytes())?;
@@ -103,19 +105,37 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
     Ok(())
 }
 
-/// Writes a Word document as A4 pages, or a deck as one landscape page per slide.
+/// Writes a Word document as A4 pages, or a deck as one landscape page per slide. Image runs
+/// hold keys into `images`.
 #[cfg(feature = "pdf")]
-fn write_pdf(cli: &Cli, kind: InputKind, blocks: &[document::Block]) -> Result<()> {
+fn write_pdf(
+    cli: &Cli,
+    kind: InputKind,
+    blocks: &[document::Block],
+    images: &EmbeddedImages,
+) -> Result<()> {
     let setup = match kind {
         InputKind::Pptx => pdf::layout::PageSetup::SLIDES,
         _ => pdf::layout::PageSetup::DOCUMENT,
     };
-    let rendered = pdf::render(blocks, setup)?;
-    write_output(cli, &rendered.pdf)
+    let rendered = pdf::render(blocks, images, setup)?;
+    write_output(cli, &rendered.pdf)?;
+    if rendered.skipped_images > 0 {
+        eprintln!(
+            "warning: left out {} images in formats a PDF can't hold (such as EMF or TIFF)",
+            rendered.skipped_images
+        );
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "pdf"))]
-fn write_pdf(_cli: &Cli, _kind: InputKind, _blocks: &[document::Block]) -> Result<()> {
+fn write_pdf(
+    _cli: &Cli,
+    _kind: InputKind,
+    _blocks: &[document::Block],
+    _images: &EmbeddedImages,
+) -> Result<()> {
     Err(ConvertError::PdfNotBuilt)
 }
 

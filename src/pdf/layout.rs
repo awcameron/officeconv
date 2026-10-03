@@ -1,18 +1,22 @@
-//! Laying out [`Block`]s on pages: wrapping text into lines, numbering lists, sizing tables,
-//! and starting a new page when one is full.
+//! Laying out [`Block`]s on pages: wrapping text into lines, numbering lists, sizing tables
+//! and images, and starting a new page when one is full.
 //!
 //! The result is a list of [`Page`]s holding positioned [`Item`]s, which `pdf::render` then
 //! paints. Keeping the two apart means the layout can be tested without reading a PDF back.
 //!
 //! Coordinates are in points (1/72 inch), measured from the top-left corner of the page.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
+use krilla::Data;
+use krilla::image::Image;
 use krilla::text::KrillaGlyph;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
 use crate::document::{Block, Cell, ListKind, Run, RunStyle};
+use crate::images::EmbeddedImages;
 
 /// Page size, margins, and text size for one kind of document.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,12 +70,20 @@ impl PageSetup {
 #[derive(Debug, Default)]
 pub struct Page {
     pub items: Vec<Item>,
+    pub links: Vec<Link>,
 }
 
 /// Something to paint, at its final position on the page.
 #[derive(Debug, Clone)]
 pub enum Item {
     Text(TextItem),
+    Image {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        image: Image,
+    },
     /// A thin line, for table borders and rules.
     Line {
         x1: f32,
@@ -98,6 +110,18 @@ pub struct TextItem {
     /// Each glyph's `text_range` is a range of `text`.
     pub glyphs: Vec<KrillaGlyph>,
     pub text: String,
+    /// Drawn in the link color.
+    pub link: bool,
+}
+
+/// A clickable area that opens `url`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub url: String,
 }
 
 impl Item {
@@ -107,7 +131,7 @@ impl Item {
                 text.x += dx;
                 text.baseline += dy;
             }
-            Item::Shade { x, y, .. } => {
+            Item::Image { x, y, .. } | Item::Shade { x, y, .. } => {
                 *x += dx;
                 *y += dy;
             }
@@ -122,38 +146,50 @@ impl Item {
     }
 }
 
-/// One line of text, laid out from (0, 0) until it's placed.
+/// One line of text, or one image, laid out from (0, 0) until it's placed.
 #[derive(Debug, Default)]
 struct LineBox {
     width: f32,
     height: f32,
     items: Vec<Item>,
+    links: Vec<Link>,
 }
 
 /// Heading font sizes, as multiples of the body size, for levels 1 to 6.
 const HEADING_SCALE: [f32; 6] = [2.0, 1.6, 1.3, 1.15, 1.0, 1.0];
 
+/// Points per pixel, taking images to be 96 dpi as Office does.
+const POINTS_PER_PIXEL: f32 = 0.75;
+
 /// Lays out blocks page by page.
 pub struct Layout<'a> {
     fonts: &'a Fonts,
+    images: &'a EmbeddedImages,
     setup: PageSetup,
     pages: Vec<Page>,
     /// Where the next block goes on the last page.
     y: f32,
+    /// Decoded images by key; `None` for ones a PDF can't hold.
+    decoded: HashMap<String, Option<Image>>,
+    skipped_images: usize,
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(fonts: &'a Fonts, setup: PageSetup) -> Self {
+    pub fn new(fonts: &'a Fonts, images: &'a EmbeddedImages, setup: PageSetup) -> Self {
         Layout {
             fonts,
+            images,
             setup,
             pages: vec![Page::default()],
             y: setup.margin,
+            decoded: HashMap::new(),
+            skipped_images: 0,
         }
     }
 
-    /// Lays out every block and returns the pages.
-    pub fn run(mut self, blocks: &[Block]) -> Vec<Page> {
+    /// Lays out every block, returning the pages and how many images were left out because
+    /// their format can't go in a PDF.
+    pub fn run(mut self, blocks: &[Block]) -> (Vec<Page>, usize) {
         let body = self.setup.body_size;
         // How many numbered items came before at each list level, for "1.", "2.", ...
         let mut numbers: Vec<u32> = Vec::new();
@@ -214,7 +250,7 @@ impl<'a> Layout<'a> {
             }
             previous = Some(block);
         }
-        self.pages
+        (self.pages, self.skipped_images)
     }
 
     fn page(&mut self) -> &mut Page {
@@ -256,12 +292,17 @@ impl<'a> Layout<'a> {
         }
     }
 
-    /// Adds a line's items to the current page, with its top-left corner at (x, y), and moves
-    /// down past it.
+    /// Adds a line's items and links to the current page, with its top-left corner at (x, y),
+    /// and moves down past it.
     fn emit(&mut self, line: LineBox, x: f32, y: f32) {
         let page = self.page();
         page.items
             .extend(line.items.into_iter().map(|item| item.moved(x, y)));
+        page.links.extend(line.links.into_iter().map(|link| Link {
+            x: link.x + x,
+            y: link.y + y,
+            ..link
+        }));
         self.y = y + line.height;
     }
 
@@ -333,13 +374,14 @@ impl<'a> Layout<'a> {
                 && self.at_page_top()
                 && let Some((header_height, items)) = &header
             {
-                self.place_row(*header_height, items.clone(), &widths, true);
+                self.place_row(*header_height, items.clone(), Vec::new(), &widths, true);
             }
-            let items: Vec<_> = cells.into_iter().map(|c| c.items).collect();
+            let (items, links): (Vec<_>, Vec<_>) =
+                cells.into_iter().map(|c| (c.items, c.links)).unzip();
             if r == 0 {
                 header = Some((height, items.clone()));
             }
-            self.place_row(height, items, &widths, r == 0);
+            self.place_row(height, items, links, &widths, r == 0);
         }
     }
 
@@ -365,6 +407,11 @@ impl<'a> Layout<'a> {
             for line in lines {
                 cell.items
                     .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
+                cell.links.extend(line.links.into_iter().map(|link| Link {
+                    x: link.x + padding,
+                    y: link.y + y,
+                    ..link
+                }));
                 y += line.height;
             }
             height = height.max(y + padding);
@@ -374,7 +421,14 @@ impl<'a> Layout<'a> {
     }
 
     /// Adds a row at the current position: its shading (for the header), borders, and cells.
-    fn place_row(&mut self, height: f32, cells: Vec<Vec<Item>>, widths: &[f32], header: bool) {
+    fn place_row(
+        &mut self,
+        height: f32,
+        cells: Vec<Vec<Item>>,
+        links: Vec<Vec<Link>>,
+        widths: &[f32],
+        header: bool,
+    ) {
         let left = self.setup.margin;
         let top = self.y;
         let right = left + widths.iter().sum::<f32>();
@@ -393,6 +447,13 @@ impl<'a> Layout<'a> {
         for (c, items) in cells.into_iter().enumerate() {
             page.items
                 .extend(items.into_iter().map(|i| i.moved(x, top)));
+            if let Some(links) = links.get(c) {
+                page.links.extend(links.iter().map(|link| Link {
+                    x: link.x + x,
+                    y: link.y + top,
+                    ..link.clone()
+                }));
+            }
             x += widths[c];
         }
 
@@ -422,15 +483,95 @@ impl<'a> Layout<'a> {
         self.layout_runs(&runs, self.setup.body_size, width)
     }
 
-    /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
-    fn longest_word(&self, runs: &[Run], size: f32) -> f32 {
-        Paragraph::shape(self.fonts, runs).longest_word() * size
+    /// Lays out runs as lines no wider than `width`. Each image gets a line of its own.
+    fn layout_runs(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
+        let mut lines = Vec::new();
+        let mut after_image = false;
+        for group in runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none()) {
+            match &group[0].image {
+                Some(key) => {
+                    if let Some(line) = self.layout_image(key, group[0].link.as_deref(), width) {
+                        lines.push(line);
+                    }
+                    after_image = true;
+                }
+                None if after_image => {
+                    // Text after an image starts a new line, so drop the space before it.
+                    let mut group = group.to_vec();
+                    group[0].text = group[0].text.trim_start().to_string();
+                    lines.extend(self.layout_text(&group, size, width));
+                }
+                None => lines.extend(self.layout_text(group, size, width)),
+            }
+        }
+        lines
     }
 
-    /// Wraps runs into lines no wider than `width`, breaking where Unicode allows (after
+    /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
+    fn longest_word(&self, runs: &[Run], size: f32) -> f32 {
+        runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none())
+            .filter(|group| group[0].image.is_none())
+            .map(|group| Paragraph::shape(self.fonts, group).longest_word() * size)
+            .fold(0.0, f32::max)
+    }
+
+    /// An image scaled down, if needed, to fit `width` and the page's height.
+    fn layout_image(&mut self, key: &str, link: Option<&str>, width: f32) -> Option<LineBox> {
+        let image = self.decode(key)?;
+        let (pixels_wide, pixels_high) = image.size();
+        let natural_width = pixels_wide as f32 * POINTS_PER_PIXEL;
+        let natural_height = pixels_high as f32 * POINTS_PER_PIXEL;
+        let max_height = self.setup.bottom() - self.setup.margin;
+        let scale = 1.0_f32
+            .min(width / natural_width)
+            .min(max_height / natural_height);
+        let (w, h) = (natural_width * scale, natural_height * scale);
+        if !(w > 0.0 && h > 0.0) {
+            return None;
+        }
+
+        let mut line = LineBox {
+            width: w,
+            height: h,
+            items: vec![Item::Image {
+                x: 0.0,
+                y: 0.0,
+                width: w,
+                height: h,
+                image,
+            }],
+            links: Vec::new(),
+        };
+        if let Some(url) = link {
+            line.links.push(Link {
+                x: 0.0,
+                y: 0.0,
+                width: w,
+                height: h,
+                url: url.to_string(),
+            });
+        }
+        Some(line)
+    }
+
+    /// The decoded image for `key`, or `None` if it's missing or in a format a PDF can't hold
+    /// (such as EMF or TIFF). Each image is decoded once, and counted once when skipped.
+    fn decode(&mut self, key: &str) -> Option<Image> {
+        if let Some(image) = self.decoded.get(key) {
+            return image.clone();
+        }
+        let image = self.images.get(key).and_then(decode_image);
+        if image.is_none() {
+            self.skipped_images += 1;
+        }
+        self.decoded.insert(key.to_string(), image.clone());
+        image
+    }
+
+    /// Wraps text runs into lines no wider than `width`, breaking where Unicode allows (after
     /// spaces and hyphens, between CJK characters) and always at `"\n"`. A word wider than a
     /// whole line is broken between characters.
-    fn layout_runs(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
+    fn layout_text(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
         let paragraph = Paragraph::shape(self.fonts, runs);
         if paragraph.text.trim().is_empty() {
             return Vec::new();
@@ -480,6 +621,8 @@ struct Paragraph {
     text: String,
     /// Each glyph with the run it came from, in text order.
     glyphs: Vec<(KrillaGlyph, FontId, usize)>,
+    /// The link of each run.
+    links: Vec<Option<String>>,
     /// `advance_before[i]` is the total advance of glyphs `0..i`, in ems.
     advance_before: Vec<f32>,
 }
@@ -511,6 +654,7 @@ impl Paragraph {
         Paragraph {
             text,
             glyphs,
+            links: runs.iter().map(|run| run.link.clone()).collect(),
             advance_before,
         }
     }
@@ -576,7 +720,7 @@ impl Paragraph {
         let mut x = 0.0;
         let glyphs = &self.glyphs[span];
         for group in glyphs.chunk_by(|a, b| a.1 == b.1 && a.2 == b.2) {
-            let (_, font, _) = group[0];
+            let (_, font, run) = group[0];
             let start = group
                 .iter()
                 .map(|(g, _, _)| g.text_range.start)
@@ -597,6 +741,16 @@ impl Paragraph {
                 .collect();
             let advance: f32 = rebased.iter().map(|g| g.x_advance).sum::<f32>() * size;
 
+            let link = &self.links[run];
+            if let Some(url) = link {
+                line.links.push(Link {
+                    x,
+                    y: 0.0,
+                    width: advance,
+                    height,
+                    url: url.clone(),
+                });
+            }
             line.items.push(Item::Text(TextItem {
                 x,
                 baseline,
@@ -604,6 +758,7 @@ impl Paragraph {
                 size,
                 glyphs: rebased,
                 text: self.text[start..end].to_string(),
+                link: link.is_some(),
             }));
             x += advance;
         }
@@ -669,6 +824,23 @@ fn list_marker(numbers: &mut Vec<u32>, kind: ListKind, level: u8) -> String {
     }
 }
 
+/// Decodes an image by its first bytes. Returns `None` for formats a PDF can't hold.
+fn decode_image(bytes: &[u8]) -> Option<Image> {
+    let data: Data = bytes.to_vec().into();
+    let image = if bytes.starts_with(b"\x89PNG") {
+        Image::from_png(data, true)
+    } else if bytes.starts_with(b"\xFF\xD8") {
+        Image::from_jpeg(data, true)
+    } else if bytes.starts_with(b"GIF8") {
+        Image::from_gif(data, true)
+    } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Image::from_webp(data, true)
+    } else {
+        return None;
+    };
+    image.ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,7 +851,8 @@ mod tests {
 
     fn lay_out(blocks: &[Block], setup: PageSetup) -> Vec<Page> {
         let fonts = Fonts::new();
-        Layout::new(&fonts, setup).run(blocks)
+        let images = EmbeddedImages::default();
+        Layout::new(&fonts, &images, setup).run(blocks).0
     }
 
     /// Each page's text, one string per line (items sharing a baseline are joined).
@@ -829,6 +1002,21 @@ mod tests {
     }
 
     #[test]
+    fn links_cover_their_text() {
+        let runs = vec![
+            Run::new("See ", RunStyle::default()),
+            Run::new("the docs", RunStyle::default()).linked("https://example.com"),
+        ];
+        let pages = lay_out(&[Block::Paragraph(runs)], PageSetup::DOCUMENT);
+
+        let [link] = pages[0].links.as_slice() else {
+            panic!("expected one link: {:?}", pages[0].links);
+        };
+        assert_eq!(link.url, "https://example.com");
+        assert!(link.x > PageSetup::DOCUMENT.margin && link.width > 0.0);
+    }
+
+    #[test]
     fn sizes_columns_like_a_browser() {
         // Everything fits: natural widths.
         assert_eq!(
@@ -845,5 +1033,11 @@ mod tests {
             column_widths(&[100.0, 100.0], &[200.0, 200.0], 100.0),
             [50.0, 50.0]
         );
+    }
+
+    #[test]
+    fn skips_images_a_pdf_cannot_hold() {
+        assert!(decode_image(b"not an image").is_none());
+        assert!(decode_image(b"\x89PNG but not really").is_none());
     }
 }

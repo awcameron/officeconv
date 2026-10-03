@@ -2,10 +2,12 @@
 //!
 //! The PDF shows the converted content, laid out simply: it doesn't reproduce Word's or
 //! PowerPoint's own fonts, colors, margins or slide designs. Text is set in Noto Sans, which is
-//! built in (see [`fonts`]).
+//! built in, with installed fonts filling in characters it lacks (see [`fonts`]).
 
 pub mod fonts;
 pub mod layout;
+
+use std::collections::BTreeSet;
 
 use krilla::Document;
 use krilla::action::{Action, LinkAction};
@@ -27,6 +29,8 @@ use layout::{Item, Layout, Page, PageSetup};
 #[derive(Debug)]
 pub struct Rendered {
     pub pdf: Vec<u8>,
+    /// Characters that no font had, drawn as boxes.
+    pub missing_chars: BTreeSet<char>,
     /// Images left out because their format can't go in a PDF (such as EMF or TIFF).
     pub skipped_images: usize,
 }
@@ -34,8 +38,8 @@ pub struct Rendered {
 /// Lays out `blocks` on pages shaped by `setup` and writes them as a PDF. Image runs hold keys
 /// into `images`.
 pub fn render(blocks: &[Block], images: &EmbeddedImages, setup: PageSetup) -> Result<Rendered> {
-    let fonts = Fonts::new();
-    let (pages, skipped_images) = Layout::new(&fonts, images, setup).run(blocks);
+    let mut fonts = Fonts::new();
+    let (pages, skipped_images) = Layout::new(&mut fonts, images, setup).run(blocks);
 
     let mut document = Document::new();
     document
@@ -51,6 +55,7 @@ pub fn render(blocks: &[Block], images: &EmbeddedImages, setup: PageSetup) -> Re
 
     Ok(Rendered {
         pdf,
+        missing_chars: fonts.missing().clone(),
         skipped_images,
     })
 }

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-03
-- **Issue:** #27, for the feature in #13 (implemented in #21–#26)
+- **Issue:** #27, for the feature in #13 (implemented in #21–#26). Option B measured in #29.
 
 This record was written after the feature was built. The choice below was made while
 implementing #13 rather than compared up front; this document compares it with the alternatives
@@ -48,9 +48,25 @@ Generate Typst markup from the `Block` model and compile it with the `typst` cra
 - **For:** layout is solved and mature, including font fallback, right-to-left and complex
   scripts, hyphenation, justification, and tables that split across pages. Almost no layout code
   of our own.
-- **Against:** a much larger dependency tree, binary and build time (not measured here). A second
-  document language between our model and the PDF, with escaping to get right. We'd track Typst's
-  library API, which isn't promised to be stable.
+- **Against:** a second document language between our model and the PDF, with escaping to get
+  right, and a library API that changes between releases (0.15 moved `PagedDocument` into a new
+  crate and changed how file IDs are built).
+- **Measured (#29):** a prototype (`spike/29-typst-pdf`) rendered the same model in about 214 lines,
+  against about 1,090 for option A. Both used Noto Sans plus installed fonts, and both write PDF
+  through krilla.
+
+  |                          | A (ours)    | B (Typst)    |
+  | ------------------------ | ----------- | ------------ |
+  | Release binary           | 5.4 MB      | 34.5 MB      |
+  | Clean release build      | 3 m 21 s    | 16 m 30 s    |
+  | Crates in the tree       | 129         | 402          |
+  | 300 short paragraphs     | 0.02 s      | 0.18 s       |
+  | 10-page document         | 0.15 s      | 0.35 s       |
+
+  Typst rendered Arabic and Hebrew correctly where A doesn't, and its table columns looked
+  slightly better. It hit the same pitfalls A did (macOS's LastResort font, a space after
+  pictures), and it lets a word longer than a line overflow the margin. It scans every installed
+  font on every run, which adds about 0.2 s to each PDF.
 
 ### C. Shell out to LibreOffice
 
@@ -103,6 +119,11 @@ Decisions that came with it:
   are unaffected.
 
 ## When to revisit
+
+The #29 prototype shows a switch to Typst would be small in code but large in size: the binary
+6.4× bigger and clean release builds 5× slower. If right-to-left support is needed, first size
+the middle path of adding bidi reordering (`unicode-bidi`) and right-to-left shaping (which
+rustybuzz already supports) to A's layout; that hasn't been tried.
 
 Reconsider **Typst (B)** if any of these happen:
 

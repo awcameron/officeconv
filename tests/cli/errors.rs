@@ -112,7 +112,9 @@ fn rejects_pptx_to_csv_and_sheet_options() {
         .args(["--to", "csv"])
         .assert()
         .failure()
-        .stderr(contains("cannot convert pptx to csv; pptx supports: md"));
+        .stderr(contains(
+            "cannot convert pptx to csv; pptx supports: md, pdf",
+        ));
     officeconv()
         .arg(&path)
         .args(["--to", "md", "--all-sheets"])
@@ -184,4 +186,16 @@ fn reports_a_file_that_cannot_be_opened() {
         .assert()
         .failure()
         .stderr(contains("could not open").and(contains("ermission denied")));
+}
+
+#[test]
+#[cfg(not(feature = "pdf"))]
+fn says_when_pdf_output_is_not_built_in() {
+    let (_dir, path) = sample_docx("<w:p/>");
+    officeconv()
+        .arg(&path)
+        .args(["--to", "pdf", "-o", "out.pdf"])
+        .assert()
+        .failure()
+        .stderr(contains("doesn't include PDF output"));
 }

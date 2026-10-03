@@ -8,5 +8,7 @@ mod docx;
 mod errors;
 mod images;
 mod input;
+#[cfg(feature = "pdf")]
+mod pdf;
 mod pptx;
 mod xlsx;

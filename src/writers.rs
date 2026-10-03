@@ -29,6 +29,7 @@ pub fn write_table<W: Write>(
         OutputFormat::Tsv => write_delimited(table, b'\t', out),
         OutputFormat::Json => write_json(table, json, out),
         OutputFormat::Markdown => write_markdown(table, out),
+        OutputFormat::Pdf => unreachable!("InputKind::check_output rejects sheets as PDF"),
     }
 }
 

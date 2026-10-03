@@ -1,10 +1,10 @@
 # officeconv
 
-A small command-line tool that converts Office files to plain-text formats:
+A small command-line tool that converts Office files to plain-text formats and PDF:
 
 - **XLSX** spreadsheets to **CSV**, **TSV**, **JSON**, or a **Markdown table**
-- **DOCX** documents to **Markdown**
-- **PPTX** presentations to **Markdown**
+- **DOCX** documents to **Markdown** or **PDF**
+- **PPTX** presentations to **Markdown** or **PDF**
 
 It's written in Rust as a learning project.
 
@@ -18,6 +18,9 @@ cargo install --path .
 
 That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` works from anywhere.
 
+PDF output is included by default. To leave it out for a smaller binary, add
+`--no-default-features`; `--to pdf` then says it isn't built in.
+
 ## Usage
 
 ```text
@@ -26,18 +29,18 @@ officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --a
 
 | Option              | Meaning                                                                  |
 | ------------------- | ------------------------------------------------------------------------ |
-| `-t, --to <FORMAT>` | `csv`, `tsv`, `json`, or `md` (`markdown` also works)                    |
+| `-t, --to <FORMAT>` | `csv`, `tsv`, `json`, `md` (`markdown` also works), or `pdf`             |
 | `--from <TYPE>`     | `xlsx`, `docx`, or `pptx`: the input type, instead of detecting it       |
 | `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory      |
 | `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
 | `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
 | `--typed`           | JSON only: write numbers, booleans and empty cells as JSON values        |
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
-| `--images DIR`      | Save images into `DIR` and link them from the Markdown                   |
+| `--images DIR`      | Save images into `DIR` and link them from the Markdown (not for `pdf`)   |
 
 The input type comes from the file extension. If the extension isn't one of these three (for
 example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file instead. DOCX and PPTX
-files only convert to `md`.
+files convert to `md` or `pdf`; XLSX files convert to everything except `pdf`.
 
 ### Reading from stdin
 
@@ -93,6 +96,10 @@ officeconv talk.pptx --to md -o talk.md
 # The same deck without speaker notes, for sharing
 officeconv talk.pptx --to md --no-notes -o handout.md
 
+# A Word document or a deck as PDF
+officeconv notes.docx --to pdf -o notes.pdf
+officeconv talk.pptx --to pdf --no-notes -o handout.pdf
+
 # Keep the pictures: save them in ./notes_images and link them from notes.md
 officeconv notes.docx --to md -o notes.md --images notes_images
 
@@ -107,7 +114,7 @@ Errors go to stderr and exit with status 1:
 
 ```text
 $ officeconv notes.docx --to csv
-Error: cannot convert docx to csv; docx supports: md
+Error: cannot convert docx to csv; docx supports: md, pdf
 ```
 
 ## What gets converted
@@ -193,6 +200,23 @@ Pictures become their own paragraph where they sit on the slide, but only with `
 Not converted yet: charts, SmartArt, and text or pictures inherited from the slide master or
 layout.
 
+### PDF
+
+`--to pdf` lays out the document's headings and text, with bold, italic and line breaks.
+
+- **It shows the content, not the original layout.** Word's and PowerPoint's own fonts, colors,
+  margins, columns and slide designs aren't reproduced.
+- DOCX becomes A4 pages with 1-inch margins. PPTX becomes one 16:9 landscape page per slide, with
+  speaker notes under the slide unless you pass `--no-notes`. A slide with more text than fits
+  continues onto another page.
+- Not laid out yet: lists and tables come out as plain paragraphs, links as plain text, and
+  pictures are left out. `--images` isn't used with PDF.
+- Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
+  Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, show
+  as boxes.
+- A PDF is binary, so it's only written to stdout when stdout is piped or redirected
+  (`officeconv notes.docx --to pdf > notes.pdf`). In a terminal, use `-o`.
+
 ### Images
 
 With `--images DIR`, each picture stored in a DOCX, PPTX or XLSX is saved into `DIR`, which is
@@ -241,6 +265,10 @@ src/
   input.rs           the input (a file or stdin), its type, and which outputs each supports
   opc.rs             zip parts, relationships, and the XmlHandler event loop
   output.rs          stdout, a file, or one file per sheet
+  pdf/
+    mod.rs           Blocks to PDF: paints the laid-out pages with krilla
+    layout.rs        line wrapping and page breaks
+    fonts.rs         the built-in Noto Sans fonts
   table.rs           Table and Cell: the grid every writer works from
   xlsx/
     mod.rs           XLSX sheets to Table (calamine)
@@ -253,9 +281,11 @@ src/
     mod.rs           streams word/document.xml into Blocks (quick-xml)
     package.rs       numbering and style lookups from the rest of the .docx
   pptx.rs            reads slides in presentation order, with their notes, into Blocks
-tests/cli.rs         end-to-end tests that run the real binary
+tests/cli/           end-to-end tests that run the real binary
+assets/fonts/        Noto Sans, built into the binary for PDF output
 ```
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The Noto Sans fonts in `assets/fonts/`, which are built into the binary, are
+licensed under the [SIL Open Font License 1.1](assets/fonts/OFL.txt).

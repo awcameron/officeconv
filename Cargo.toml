@@ -13,13 +13,22 @@ categories = ["command-line-utilities", "text-processing"]
 calamine = "0.36.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
+krilla = { version = "0.8.2", optional = true }
 quick-xml = "0.42.0"
+rustybuzz = { version = "0.20", optional = true }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 thiserror = "2.0.21"
+unicode-linebreak = { version = "0.1.5", optional = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[features]
+default = ["pdf"]
+# `--to pdf`. Without it the binary is smaller, and `--to pdf` says it isn't built in.
+pdf = ["dep:krilla", "dep:rustybuzz", "dep:unicode-linebreak"]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
+pdf-extract = "0.12.1"
 predicates = "3.1.4"
 rust_xlsxwriter = "0.99.1"
 tempfile = "3.27.0"

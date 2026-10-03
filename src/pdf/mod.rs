@@ -9,7 +9,7 @@ pub mod layout;
 
 use krilla::Document;
 use krilla::color::luma;
-use krilla::geom::{PathBuilder, Point};
+use krilla::geom::{PathBuilder, Point, Rect};
 use krilla::metadata::Metadata;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, Stroke};
@@ -84,6 +84,26 @@ fn paint_item(surface: &mut Surface<'_>, item: Item, fonts: &Fonts) {
             }));
             surface.draw_path(&path);
             surface.set_stroke(None);
+        }
+        Item::Shade {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            let Some(rect) = Rect::from_xywh(x, y, width, height) else {
+                return;
+            };
+            let mut path = PathBuilder::new();
+            path.push_rect(rect);
+            let Some(path) = path.finish() else {
+                return;
+            };
+            surface.set_fill(Some(Fill {
+                paint: luma::Color::new(238).into(),
+                ..Fill::default()
+            }));
+            surface.draw_path(&path);
         }
     }
 }

@@ -202,15 +202,18 @@ layout.
 
 ### PDF
 
-`--to pdf` lays out the document's headings and text, with bold, italic and line breaks.
+`--to pdf` lays out the document's headings, text, lists and tables, with bold, italic and line
+breaks.
 
 - **It shows the content, not the original layout.** Word's and PowerPoint's own fonts, colors,
   margins, columns and slide designs aren't reproduced.
 - DOCX becomes A4 pages with 1-inch margins. PPTX becomes one 16:9 landscape page per slide, with
   speaker notes under the slide unless you pass `--no-notes`. A slide with more text than fits
   continues onto another page.
-- Not laid out yet: lists and tables come out as plain paragraphs, links as plain text, and
-  pictures are left out. `--images` isn't used with PDF.
+- Numbered lists are numbered properly (`1.`, `2.`, ...), restarting at each level. Long table rows
+  wrap inside their cells, and a table that runs onto another page repeats its header row.
+- Not laid out yet: links come out as plain text, and pictures are left out. `--images` isn't used
+  with PDF.
 - Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
   Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, show
   as boxes.
@@ -270,7 +273,7 @@ src/
   output.rs          stdout, a file, or one file per sheet
   pdf/
     mod.rs           Blocks to PDF: paints the laid-out pages with krilla
-    layout.rs        line wrapping and page breaks
+    layout.rs        line wrapping, list numbering, tables, and page breaks
     fonts.rs         the built-in Noto Sans fonts
   table.rs           Table and Cell: the grid every writer works from
   xlsx/

@@ -228,6 +228,9 @@ cargo run -- sales.xlsx --to md              # run without installing
 The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so the repo
 doesn't need to contain any binary test files.
 
+Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
+[how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
+
 ### Layout
 
 ```text

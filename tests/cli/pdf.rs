@@ -150,6 +150,21 @@ fn is_image(dict: &pdf_extract::Dictionary) -> bool {
 }
 
 #[test]
+fn draws_cjk_with_an_installed_font() {
+    let (_dir, path) = sample_docx(&para("中文 日本語 한국어"));
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    // Noto Sans has no CJK, so this needs a font installed on the computer. macOS and Windows
+    // always have one; a bare Linux machine may not, and then the PDF shows boxes instead.
+    if stderr.contains("no installed font has these characters") {
+        eprintln!("skipped: no CJK font installed ({stderr})");
+        return;
+    }
+    assert_eq!(stderr, "");
+    assert_eq!(page_texts(&pdf), ["中文 日本語 한국어"]);
+}
+
+#[test]
 fn warns_about_images_a_pdf_cannot_hold() {
     let (_dir, path) = sample_docx_with_parts(
         r#"<w:p><w:r><w:t>Chart:</w:t></w:r><w:r><w:drawing><wp:docPr id="1" name="p" descr="Chart"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p>"#,

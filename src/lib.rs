@@ -120,13 +120,36 @@ fn write_pdf(
     };
     let rendered = pdf::render(blocks, images, setup)?;
     write_output(cli, &rendered.pdf)?;
+    report_pdf_gaps(&rendered);
+    Ok(())
+}
+
+/// Warns about what couldn't go into the PDF: characters no font has, and images in formats
+/// a PDF can't hold.
+#[cfg(feature = "pdf")]
+fn report_pdf_gaps(rendered: &pdf::Rendered) {
+    const SHOWN: usize = 10;
+    let missing = &rendered.missing_chars;
+    if !missing.is_empty() {
+        let mut listed: Vec<String> = missing
+            .iter()
+            .take(SHOWN)
+            .map(|c| format!("{c} (U+{:04X})", u32::from(*c)))
+            .collect();
+        if missing.len() > SHOWN {
+            listed.push(format!("and {} more", missing.len() - SHOWN));
+        }
+        eprintln!(
+            "warning: no installed font has these characters, so they show as boxes: {}",
+            listed.join(", ")
+        );
+    }
     if rendered.skipped_images > 0 {
         eprintln!(
             "warning: left out {} images in formats a PDF can't hold (such as EMF or TIFF)",
             rendered.skipped_images
         );
     }
-    Ok(())
 }
 
 #[cfg(not(feature = "pdf"))]

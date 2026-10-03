@@ -163,7 +163,7 @@ const POINTS_PER_PIXEL: f32 = 0.75;
 
 /// Lays out blocks page by page.
 pub struct Layout<'a> {
-    fonts: &'a Fonts,
+    fonts: &'a mut Fonts,
     images: &'a EmbeddedImages,
     setup: PageSetup,
     pages: Vec<Page>,
@@ -175,7 +175,7 @@ pub struct Layout<'a> {
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(fonts: &'a Fonts, images: &'a EmbeddedImages, setup: PageSetup) -> Self {
+    pub fn new(fonts: &'a mut Fonts, images: &'a EmbeddedImages, setup: PageSetup) -> Self {
         Layout {
             fonts,
             images,
@@ -508,7 +508,7 @@ impl<'a> Layout<'a> {
     }
 
     /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
-    fn longest_word(&self, runs: &[Run], size: f32) -> f32 {
+    fn longest_word(&mut self, runs: &[Run], size: f32) -> f32 {
         runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none())
             .filter(|group| group[0].image.is_none())
             .map(|group| Paragraph::shape(self.fonts, group).longest_word() * size)
@@ -628,19 +628,31 @@ struct Paragraph {
 }
 
 impl Paragraph {
-    fn shape(fonts: &Fonts, runs: &[Run]) -> Self {
+    fn shape(fonts: &mut Fonts, runs: &[Run]) -> Self {
         let mut text = String::new();
         let mut glyphs = Vec::new();
         for (r, run) in runs.iter().enumerate() {
-            let range = text.len()..text.len() + run.text.len();
+            let offset = text.len();
             text.push_str(&run.text);
-            let font = fonts.font_for(run.style);
-            glyphs.extend(
-                fonts
-                    .shape(font, &text, range)
-                    .into_iter()
-                    .map(|g| (g, font, r)),
-            );
+
+            // Split the run where the font changes, and shape each piece.
+            let mut pieces: Vec<(FontId, Range<usize>)> = Vec::new();
+            for (i, c) in run.text.char_indices() {
+                let font = fonts.font_for(c, run.style);
+                let at = offset + i;
+                match pieces.last_mut() {
+                    Some((last, range)) if *last == font => range.end = at + c.len_utf8(),
+                    _ => pieces.push((font, at..at + c.len_utf8())),
+                }
+            }
+            for (font, range) in pieces {
+                glyphs.extend(
+                    fonts
+                        .shape(font, &text, range)
+                        .into_iter()
+                        .map(|g| (g, font, r)),
+                );
+            }
         }
 
         let mut advance_before = Vec::with_capacity(glyphs.len() + 1);
@@ -850,9 +862,9 @@ mod tests {
     }
 
     fn lay_out(blocks: &[Block], setup: PageSetup) -> Vec<Page> {
-        let fonts = Fonts::new();
+        let mut fonts = Fonts::new();
         let images = EmbeddedImages::default();
-        Layout::new(&fonts, &images, setup).run(blocks).0
+        Layout::new(&mut fonts, &images, setup).run(blocks).0
     }
 
     /// Each page's text, one string per line (items sharing a baseline are joined).

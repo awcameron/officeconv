@@ -216,10 +216,15 @@ links, tables, line breaks, and pictures.
 - Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
   are kept; other formats, such as EMF or TIFF, are left out with a warning.
 - Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
-  Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, show
-  as boxes.
+  Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, are
+  drawn with a font installed on your computer. macOS and Windows always have one; on Linux, install
+  a package such as `fonts-noto-cjk`. If no installed font has a character, it shows as a box, and
+  `officeconv` lists the characters in a warning. Looking through the installed fonts takes about a
+  second the first time a document needs one.
 - A PDF is binary, so it's only written to stdout when stdout is piped or redirected
   (`officeconv notes.docx --to pdf > notes.pdf`). In a terminal, use `-o`.
+- Right-to-left text, such as Arabic or Hebrew, is laid out left to right, so it comes out in the
+  wrong order.
 
 ### Images
 
@@ -272,7 +277,7 @@ src/
   pdf/
     mod.rs           Blocks to PDF: paints the laid-out pages with krilla
     layout.rs        line wrapping, list numbering, tables, images, and page breaks
-    fonts.rs         the built-in Noto Sans fonts
+    fonts.rs         the built-in Noto Sans, and installed fonts for what it lacks
   table.rs           Table and Cell: the grid every writer works from
   xlsx/
     mod.rs           XLSX sheets to Table (calamine)

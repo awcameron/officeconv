@@ -114,7 +114,7 @@ fn format_datetime(dt: &ExcelDateTime) -> String {
 mod tests {
     use super::*;
     use calamine::{CellErrorType, ExcelDateTimeType};
-    use std::path::Path;
+    use std::io::Cursor;
 
     fn datetime(serial: f64) -> Data {
         Data::DateTime(ExcelDateTime::new(
@@ -162,16 +162,12 @@ mod tests {
         assert_eq!(cell_to_string(&Data::DateTime(duration)), "36:00:00");
     }
 
-    /// Writes the sample workbook into `dir` and opens it.
-    fn sample_file(dir: &Path) -> std::fs::File {
-        std::fs::File::open(sample_workbook(dir)).unwrap()
-    }
-
-    /// Writes a small workbook with two sheets into `dir` and returns its path.
-    fn sample_workbook(dir: &Path) -> std::path::PathBuf {
+    /// A small workbook with two sheets, built in memory.
+    ///
+    /// The readers take any `Read + Seek`, so a `Cursor` over the bytes works like a file.
+    fn sample_workbook() -> Cursor<Vec<u8>> {
         use rust_xlsxwriter::{Format, Workbook};
 
-        let path = dir.join("sample.xlsx");
         let mut workbook = Workbook::new();
         let date_format = Format::new().set_num_format("yyyy-mm-dd");
 
@@ -191,14 +187,12 @@ mod tests {
         let notes = workbook.add_worksheet().set_name("Notes").unwrap();
         notes.write(0, 0, "Note").unwrap();
 
-        workbook.save(&path).unwrap();
-        path
+        Cursor::new(workbook.save_to_buffer().unwrap())
     }
 
     #[test]
     fn reads_first_sheet_by_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let sheet = read_sheet(sample_file(dir.path()), None).unwrap();
+        let sheet = read_sheet(sample_workbook(), None).unwrap();
 
         assert_eq!(sheet.name, "Sales");
         assert_eq!(sheet.table.headers, ["Region", "Units", "Shipped"]);
@@ -217,15 +211,13 @@ mod tests {
 
     #[test]
     fn reads_named_sheet() {
-        let dir = tempfile::tempdir().unwrap();
-        let sheet = read_sheet(sample_file(dir.path()), Some("Notes")).unwrap();
+        let sheet = read_sheet(sample_workbook(), Some("Notes")).unwrap();
         assert_eq!(sheet.table.headers, ["Note"]);
     }
 
     #[test]
     fn reads_all_sheets_in_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let sheets = read_all_sheets(sample_file(dir.path())).unwrap();
+        let sheets = read_all_sheets(sample_workbook()).unwrap();
         let names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["Sales", "Notes"]);
         assert_eq!(sheets[1].table.headers, ["Note"]);
@@ -233,8 +225,7 @@ mod tests {
 
     #[test]
     fn unknown_sheet_lists_available_ones() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = read_sheet(sample_file(dir.path()), Some("Nope")).unwrap_err();
+        let err = read_sheet(sample_workbook(), Some("Nope")).unwrap_err();
         assert_eq!(
             err.to_string(),
             "sheet \"Nope\" not found; available sheets: Sales, Notes"

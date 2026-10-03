@@ -202,8 +202,8 @@ layout.
 
 ### PDF
 
-`--to pdf` lays out the document's headings, text, lists and tables, with bold, italic and line
-breaks.
+`--to pdf` lays out the same content the Markdown output has: headings, bold and italic, lists,
+links, tables, line breaks, and pictures.
 
 - **It shows the content, not the original layout.** Word's and PowerPoint's own fonts, colors,
   margins, columns and slide designs aren't reproduced.
@@ -212,8 +212,9 @@ breaks.
   continues onto another page.
 - Numbered lists are numbered properly (`1.`, `2.`, ...), restarting at each level. Long table rows
   wrap inside their cells, and a table that runs onto another page repeats its header row.
-- Not laid out yet: links come out as plain text, and pictures are left out. `--images` isn't used
-  with PDF.
+  Links are clickable.
+- Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
+  are kept; other formats, such as EMF or TIFF, are left out with a warning.
 - Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
   Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, show
   as boxes.
@@ -270,7 +271,7 @@ src/
   output.rs          stdout, a file, or one file per sheet
   pdf/
     mod.rs           Blocks to PDF: paints the laid-out pages with krilla
-    layout.rs        line wrapping, list numbering, tables, and page breaks
+    layout.rs        line wrapping, list numbering, tables, images, and page breaks
     fonts.rs         the built-in Noto Sans fonts
   table.rs           Table and Cell: the grid every writer works from
   xlsx/

@@ -61,6 +61,15 @@ pub enum ConvertError {
     #[error("--no-notes only applies to .pptx input")]
     NotesOptionOnlyForPptx,
 
+    #[error("--images doesn't apply to --to pdf: the PDF holds its images itself")]
+    ImagesWithPdf,
+
+    #[error("not writing a PDF to the terminal; use -o FILE, or pipe the output")]
+    PdfToTerminal,
+
+    #[error("this build of officeconv doesn't include PDF output (the `pdf` feature)")]
+    PdfNotBuilt,
+
     #[error("could not read workbook: {0}")]
     Xlsx(#[from] calamine::XlsxError),
 
@@ -75,6 +84,9 @@ pub enum ConvertError {
 
     #[error("could not parse document: {0}")]
     DocxXml(#[from] quick_xml::Error),
+
+    #[error("could not write PDF: {0}")]
+    Pdf(String),
 
     #[error("could not create {}: {source}", path.display())]
     CreateOutput {

@@ -7,12 +7,14 @@ pub mod images;
 pub mod input;
 pub mod opc;
 pub mod output;
+#[cfg(feature = "pdf")]
+pub mod pdf;
 pub mod pptx;
 pub mod table;
 pub mod writers;
 pub mod xlsx;
 
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use cli::Cli;
@@ -30,6 +32,9 @@ pub fn run(cli: &Cli) -> Result<()> {
     if cli.typed && cli.to != OutputFormat::Json {
         return Err(ConvertError::TypedOnlyForJson);
     }
+    if cli.to == OutputFormat::Pdf && !cfg!(feature = "pdf") {
+        return Err(ConvertError::PdfNotBuilt);
+    }
 
     let source = Source::from_arg(&cli.input)?;
     let kind = source.kind(cli.from)?;
@@ -41,6 +46,14 @@ pub fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
     }
+    if cli.to == OutputFormat::Pdf {
+        if cli.images.is_some() {
+            return Err(ConvertError::ImagesWithPdf);
+        }
+        if cli.output.is_none() && io::stdout().is_terminal() {
+            return Err(ConvertError::PdfToTerminal);
+        }
+    }
 
     match kind {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli, &source),
@@ -49,17 +62,16 @@ pub fn run(cli: &Cli) -> Result<()> {
     }
 }
 
-/// Converts a Word or PowerPoint file to Markdown, saving its images if asked to.
+/// Converts a Word or PowerPoint file to Markdown (saving its images if asked to) or to PDF.
 fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
-    let mut images = match &cli.images {
+    let mut export = match &cli.images {
         Some(dir) => Some(ImageExport::new(
             dir,
             output::markdown_dir(cli.output.as_deref()),
         )?),
         None => None,
     };
-
-    let mode = match images.as_mut() {
+    let images = match export.as_mut() {
         Some(export) => Images::Save(export),
         None => Images::Skip,
     };
@@ -71,26 +83,46 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         } else {
             pptx::Notes::Include
         };
-        pptx::read_blocks(reader, notes, mode)?
+        pptx::read_blocks(reader, notes, images)?
     } else {
-        docx::read_blocks(reader, mode)?
+        docx::read_blocks(reader, images)?
     };
-    write_document(cli, &blocks)?;
 
-    if let Some(images) = &images {
+    if cli.to == OutputFormat::Pdf {
+        return write_pdf(cli, kind, &blocks);
+    }
+
+    write_output(cli, document::markdown::render(&blocks).as_bytes())?;
+    if let Some(export) = &export {
         eprintln!(
             "saved {} images to {}",
-            images.count(),
-            images.dir().display()
+            export.count(),
+            export.dir().display()
         );
     }
     Ok(())
 }
 
-/// Writes a Word or PowerPoint document as Markdown to stdout or the `-o` file.
-fn write_document(cli: &Cli, blocks: &[document::Block]) -> Result<()> {
+/// Writes a Word document as A4 pages, or a deck as one landscape page per slide.
+#[cfg(feature = "pdf")]
+fn write_pdf(cli: &Cli, kind: InputKind, blocks: &[document::Block]) -> Result<()> {
+    let setup = match kind {
+        InputKind::Pptx => pdf::layout::PageSetup::SLIDES,
+        _ => pdf::layout::PageSetup::DOCUMENT,
+    };
+    let rendered = pdf::render(blocks, setup)?;
+    write_output(cli, &rendered.pdf)
+}
+
+#[cfg(not(feature = "pdf"))]
+fn write_pdf(_cli: &Cli, _kind: InputKind, _blocks: &[document::Block]) -> Result<()> {
+    Err(ConvertError::PdfNotBuilt)
+}
+
+/// Writes the converted document to stdout or the `-o` file.
+fn write_output(cli: &Cli, bytes: &[u8]) -> Result<()> {
     let mut out = output::open_output(cli.output.as_deref())?;
-    out.write_all(document::markdown::render(blocks).as_bytes())?;
+    out.write_all(bytes)?;
     out.flush()?;
     Ok(())
 }

@@ -156,14 +156,24 @@ impl InputKind {
 
     /// Returns an error if this input can't be converted to `to`.
     pub fn check_output(self, to: OutputFormat) -> Result<()> {
-        match (self, to) {
-            (InputKind::Xlsx, _) => Ok(()),
-            (InputKind::Docx | InputKind::Pptx, OutputFormat::Markdown) => Ok(()),
-            (InputKind::Docx | InputKind::Pptx, _) => Err(ConvertError::UnsupportedConversion {
+        let supported = match self {
+            InputKind::Xlsx => "csv, tsv, json, md",
+            InputKind::Docx | InputKind::Pptx => "md, pdf",
+        };
+        let ok = match self {
+            InputKind::Xlsx => to != OutputFormat::Pdf,
+            InputKind::Docx | InputKind::Pptx => {
+                matches!(to, OutputFormat::Markdown | OutputFormat::Pdf)
+            }
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(ConvertError::UnsupportedConversion {
                 input: self,
                 to,
-                supported: "md",
-            }),
+                supported,
+            })
         }
     }
 }
@@ -308,11 +318,19 @@ mod tests {
     }
 
     #[test]
-    fn documents_only_convert_to_markdown() {
+    fn documents_convert_to_markdown_or_pdf_and_sheets_to_text() {
         assert!(InputKind::Docx.check_output(OutputFormat::Markdown).is_ok());
+        assert!(InputKind::Docx.check_output(OutputFormat::Pdf).is_ok());
         assert!(InputKind::Docx.check_output(OutputFormat::Csv).is_err());
-        assert!(InputKind::Pptx.check_output(OutputFormat::Markdown).is_ok());
+        assert!(InputKind::Pptx.check_output(OutputFormat::Pdf).is_ok());
         assert!(InputKind::Pptx.check_output(OutputFormat::Json).is_err());
         assert!(InputKind::Xlsx.check_output(OutputFormat::Json).is_ok());
+        assert_eq!(
+            InputKind::Xlsx
+                .check_output(OutputFormat::Pdf)
+                .unwrap_err()
+                .to_string(),
+            "cannot convert xlsx to pdf; xlsx supports: csv, tsv, json, md"
+        );
     }
 }

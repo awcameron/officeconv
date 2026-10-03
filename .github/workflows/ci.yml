@@ -31,3 +31,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - name: Test
         run: cargo test
+      - name: Lint without PDF
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - name: Test without PDF
+        run: cargo test --no-default-features

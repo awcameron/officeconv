@@ -1,5 +1,5 @@
 //! A small document model shared by the DOCX and PPTX readers: just enough structure
-//! to write Markdown.
+//! to write Markdown or a simple PDF.
 
 pub mod markdown;
 

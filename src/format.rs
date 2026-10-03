@@ -15,6 +15,7 @@ pub enum OutputFormat {
     Json,
     #[value(name = "md", alias = "markdown")]
     Markdown,
+    Pdf,
 }
 
 impl OutputFormat {
@@ -25,6 +26,7 @@ impl OutputFormat {
             OutputFormat::Tsv => "tsv",
             OutputFormat::Json => "json",
             OutputFormat::Markdown => "md",
+            OutputFormat::Pdf => "pdf",
         }
     }
 }

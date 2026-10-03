@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "text-processing"]
 calamine = "0.36.1"
 clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"], optional = true }
 fontdb = { version = "0.24.0", optional = true }
 krilla = { version = "0.8.2", optional = true }
 quick-xml = "0.42.0"
@@ -25,7 +26,13 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [features]
 default = ["pdf"]
 # `--to pdf`. Without it the binary is smaller, and `--to pdf` says it isn't built in.
-pdf = ["dep:fontdb", "dep:krilla", "dep:rustybuzz", "dep:unicode-linebreak"]
+pdf = [
+    "dep:flate2",
+    "dep:fontdb",
+    "dep:krilla",
+    "dep:rustybuzz",
+    "dep:unicode-linebreak",
+]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
@@ -33,3 +40,13 @@ pdf-extract = "0.12.1"
 predicates = "3.1.4"
 rust_xlsxwriter = "0.99.1"
 tempfile = "3.27.0"
+
+[build-dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+
+# Smaller release binaries: no debug symbols, and whole-program optimization. This makes
+# release builds slower, but not debug builds or `cargo test`.
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1

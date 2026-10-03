@@ -840,6 +840,7 @@ dependencies = [
  "calamine",
  "clap",
  "csv",
+ "flate2",
  "fontdb",
  "krilla",
  "pdf-extract",

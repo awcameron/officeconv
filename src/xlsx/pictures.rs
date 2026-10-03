@@ -283,6 +283,87 @@ mod tests {
         );
     }
 
+    /// A one-sheet workbook package, built in memory, whose drawing holds `anchors`.
+    ///
+    /// Spreadsheet libraries tend to write pictures already in position order, which would let
+    /// a missing sort go unnoticed, so this writes the drawing XML by hand.
+    fn workbook_with_drawing(anchors: &str) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
+        use std::io::Write;
+
+        let rels = |entries: &[(&str, &str, &str)]| {
+            let body: String = entries
+                .iter()
+                .map(|(id, kind, target)| {
+                    format!(r#"<Relationship Id="{id}" Type="http://x/{kind}" Target="{target}"/>"#)
+                })
+                .collect();
+            format!("<Relationships>{body}</Relationships>")
+        };
+        let parts = [
+            (
+                "xl/workbook.xml",
+                r#"<workbook xmlns:r="r"><sheets><sheet name="Sales" sheetId="1" r:id="rId1"/></sheets></workbook>"#.to_string(),
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                rels(&[("rId1", "worksheet", "worksheets/sheet1.xml")]),
+            ),
+            (
+                "xl/worksheets/_rels/sheet1.xml.rels",
+                rels(&[("rId1", "drawing", "../drawings/drawing1.xml")]),
+            ),
+            ("xl/drawings/drawing1.xml", drawing(anchors)),
+            (
+                "xl/drawings/_rels/drawing1.xml.rels",
+                rels(&[
+                    ("rId1", "image", "../media/logo.png"),
+                    ("rId2", "image", "../media/chart.png"),
+                    ("rId3", "image", "../media/key.png"),
+                ]),
+            ),
+        ];
+
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, contents) in parts {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(contents.as_bytes()).unwrap();
+        }
+        ZipArchive::new(writer.finish().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn sorts_pictures_into_reading_order() {
+        // Drawn in the order logo (D5), chart (D2), key (A2).
+        let mut archive = workbook_with_drawing(&format!(
+            "{}{}{}",
+            anchor("twoCellAnchor", 4, 3, &pic("Company logo", "rId1")),
+            anchor("twoCellAnchor", 1, 3, &pic("Sales chart", "rId2")),
+            anchor("oneCellAnchor", 1, 0, &pic("Key", "rId3")),
+        ));
+
+        let pictures = read_pictures(&mut archive, "Sales").unwrap();
+        let read: Vec<(&str, &str)> = pictures
+            .iter()
+            .map(|p| (p.alt.as_str(), p.part.as_str()))
+            .collect();
+        // Top to bottom, then left to right: A2, D2, D5.
+        assert_eq!(
+            read,
+            [
+                ("Key", "xl/media/key.png"),
+                ("Sales chart", "xl/media/chart.png"),
+                ("Company logo", "xl/media/logo.png"),
+            ]
+        );
+        assert!(
+            read_pictures(&mut archive, "No such sheet")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[test]
     fn handles_unprefixed_xml_and_absolute_anchors() {
         // openpyxl writes the drawing namespace as the default, with no `xdr:` prefix.

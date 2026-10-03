@@ -106,6 +106,68 @@ fn numbers_lists_and_draws_tables() {
 }
 
 #[test]
+fn links_and_embeds_pictures() {
+    let picture = r#"<w:p><w:r><w:drawing><wp:docPr id="1" name="p" descr="Logo"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Learn </w:t></w:r><w:hyperlink r:id="rId9"><w:r><w:t>Rust</w:t></w:r></w:hyperlink></w:p>{picture}"#
+    );
+    let (_dir, path) = sample_docx_with_parts(
+        &body,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[
+                    ("rId9", "hyperlink", "https://www.rust-lang.org"),
+                    ("rId4", "image", "media/image1.png"),
+                ]),
+            ),
+            part("word/media/image1.png", RED_PNG),
+        ],
+    );
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert_eq!(page_texts(&pdf), ["Learn Rust"]);
+    let raw = String::from_utf8_lossy(&pdf);
+    assert!(
+        raw.contains("https://www.rust-lang.org"),
+        "no link annotation"
+    );
+    let document = pdf_extract::Document::load_mem(&pdf).unwrap();
+    let has_image = document.objects.values().any(|object| {
+        object
+            .as_stream()
+            .is_ok_and(|stream| is_image(&stream.dict))
+    });
+    assert!(has_image, "no image in the PDF");
+    assert_eq!(stderr, "");
+}
+
+/// True for an image XObject's dictionary.
+fn is_image(dict: &pdf_extract::Dictionary) -> bool {
+    dict.get(b"Subtype")
+        .and_then(|subtype| subtype.as_name())
+        .is_ok_and(|name| name == b"Image")
+}
+
+#[test]
+fn warns_about_images_a_pdf_cannot_hold() {
+    let (_dir, path) = sample_docx_with_parts(
+        r#"<w:p><w:r><w:t>Chart:</w:t></w:r><w:r><w:drawing><wp:docPr id="1" name="p" descr="Chart"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p>"#,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[("rId4", "image", "media/image1.emf")]),
+            ),
+            part("word/media/image1.emf", "not a format a PDF can hold"),
+        ],
+    );
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert_eq!(page_texts(&pdf), ["Chart:"]);
+    assert!(stderr.contains("left out 1 images"), "{stderr}");
+}
+
+#[test]
 fn wraps_long_paragraphs_onto_more_pages() {
     let sentence = "The quick brown fox jumps over the lazy dog. ".repeat(30);
     let body: String = (1..=12)

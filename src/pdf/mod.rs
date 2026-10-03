@@ -8,8 +8,10 @@ pub mod fonts;
 pub mod layout;
 
 use krilla::Document;
-use krilla::color::luma;
-use krilla::geom::{PathBuilder, Point, Rect};
+use krilla::action::{Action, LinkAction};
+use krilla::annotation::{Annotation, LinkAnnotation, Target};
+use krilla::color::{luma, rgb};
+use krilla::geom::{PathBuilder, Point, Rect, Size, Transform};
 use krilla::metadata::Metadata;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, Stroke};
@@ -17,19 +19,23 @@ use krilla::surface::Surface;
 
 use crate::document::Block;
 use crate::error::{ConvertError, Result};
+use crate::images::EmbeddedImages;
 use fonts::Fonts;
 use layout::{Item, Layout, Page, PageSetup};
 
-/// A finished PDF.
+/// A finished PDF, and what couldn't go into it.
 #[derive(Debug)]
 pub struct Rendered {
     pub pdf: Vec<u8>,
+    /// Images left out because their format can't go in a PDF (such as EMF or TIFF).
+    pub skipped_images: usize,
 }
 
-/// Lays out `blocks` on pages shaped by `setup` and writes them as a PDF.
-pub fn render(blocks: &[Block], setup: PageSetup) -> Result<Rendered> {
+/// Lays out `blocks` on pages shaped by `setup` and writes them as a PDF. Image runs hold keys
+/// into `images`.
+pub fn render(blocks: &[Block], images: &EmbeddedImages, setup: PageSetup) -> Result<Rendered> {
     let fonts = Fonts::new();
-    let pages = Layout::new(&fonts, setup).run(blocks);
+    let (pages, skipped_images) = Layout::new(&fonts, images, setup).run(blocks);
 
     let mut document = Document::new();
     document
@@ -43,8 +49,14 @@ pub fn render(blocks: &[Block], setup: PageSetup) -> Result<Rendered> {
         .finish()
         .map_err(|err| ConvertError::Pdf(err.to_string()))?;
 
-    Ok(Rendered { pdf })
+    Ok(Rendered {
+        pdf,
+        skipped_images,
+    })
 }
+
+/// The color of link text.
+const LINK_BLUE: (u8, u8, u8) = (0x1a, 0x5f, 0xb4);
 
 fn paint_page(document: &mut Document, settings: PageSettings, page: Page, fonts: &Fonts) {
     let mut pdf_page = document.start_page_with(settings);
@@ -53,13 +65,33 @@ fn paint_page(document: &mut Document, settings: PageSettings, page: Page, fonts
         paint_item(&mut surface, item, fonts);
     }
     surface.finish();
+
+    for link in page.links {
+        let Some(rect) = Rect::from_xywh(link.x, link.y, link.width, link.height) else {
+            continue;
+        };
+        let target = Target::Action(Action::Link(LinkAction::new(link.url)));
+        pdf_page.add_annotation(Annotation::new_link(
+            LinkAnnotation::new(rect, target),
+            None,
+        ));
+    }
     pdf_page.finish();
 }
 
 fn paint_item(surface: &mut Surface<'_>, item: Item, fonts: &Fonts) {
     match item {
         Item::Text(text) => {
-            surface.set_fill(Some(Fill::default()));
+            let fill = if text.link {
+                let (r, g, b) = LINK_BLUE;
+                Fill {
+                    paint: rgb::Color::new(r, g, b).into(),
+                    ..Fill::default()
+                }
+            } else {
+                Fill::default()
+            };
+            surface.set_fill(Some(fill));
             surface.draw_glyphs(
                 Point::from_xy(text.x, text.baseline),
                 &text.glyphs,
@@ -68,6 +100,20 @@ fn paint_item(surface: &mut Surface<'_>, item: Item, fonts: &Fonts) {
                 text.size,
                 false,
             );
+        }
+        Item::Image {
+            x,
+            y,
+            width,
+            height,
+            image,
+        } => {
+            let Some(size) = Size::from_wh(width, height) else {
+                return;
+            };
+            surface.push_transform(&Transform::from_translate(x, y));
+            surface.draw_image(image, size);
+            surface.pop();
         }
         Item::Line { x1, y1, x2, y2 } => {
             let mut path = PathBuilder::new();

@@ -4,8 +4,8 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::OutputFormat;
 use crate::error::{ConvertError, Result};
+use crate::format::OutputFormat;
 
 /// Opens the file at `path`, or stdout when there's no path. Either way, output is buffered.
 pub fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {

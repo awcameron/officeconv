@@ -4,7 +4,7 @@ use std::io::{self, Write};
 
 use serde_json::{Map, Number, Value};
 
-use crate::cli::OutputFormat;
+use crate::format::OutputFormat;
 use crate::table::{Cell, Table};
 
 /// How JSON writes cell values.

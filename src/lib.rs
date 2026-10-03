@@ -2,6 +2,7 @@ pub mod cli;
 pub mod document;
 pub mod docx;
 pub mod error;
+pub mod format;
 pub mod images;
 pub mod input;
 pub mod opc;
@@ -14,8 +15,9 @@ pub mod xlsx;
 use std::io::Write;
 use std::path::Path;
 
-use cli::{Cli, OutputFormat};
+use cli::Cli;
 use error::{ConvertError, Result};
+use format::OutputFormat;
 use images::ImageExport;
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
@@ -23,6 +25,12 @@ use zip::ZipArchive;
 
 /// Validates the request and runs the matching converter.
 pub fn run(cli: &Cli) -> Result<()> {
+    // Checks that don't depend on the input come first, so a slow pipe on stdin doesn't
+    // have to finish before a simple usage mistake is reported.
+    if cli.typed && cli.to != OutputFormat::Json {
+        return Err(ConvertError::TypedOnlyForJson);
+    }
+
     let source = Source::from_arg(&cli.input)?;
     let kind = source.kind(cli.from)?;
     kind.check_output(cli.to)?;
@@ -30,16 +38,8 @@ pub fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Xlsx && (cli.sheet.is_some() || cli.all_sheets) {
         return Err(ConvertError::SheetOptionOnlyForXlsx);
     }
-    if cli.typed && cli.to != OutputFormat::Json {
-        return Err(ConvertError::TypedOnlyForJson);
-    }
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
-    }
-    if let Source::File(path) = &source
-        && !path.is_file()
-    {
-        return Err(ConvertError::InputNotFound(path.clone()));
     }
 
     match kind {

@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use zip::ZipArchive;
 
-use crate::cli::OutputFormat;
 use crate::error::{ConvertError, Result};
+use crate::format::OutputFormat;
 
 /// Anything that can be read and jumped around in, like a file or bytes in memory.
 ///
@@ -31,8 +31,14 @@ pub enum Source {
 
 impl Source {
     /// The input named on the command line: `-` reads all of stdin, anything else is a path.
+    ///
+    /// A path must be a file that exists. Checking here, before anything tries to work out the
+    /// type, means a missing file or a directory always gets the same "not found" error.
     pub fn from_arg(arg: &Path) -> Result<Self> {
         if arg != Path::new("-") {
+            if !arg.is_file() {
+                return Err(ConvertError::InputNotFound(arg.to_path_buf()));
+            }
             return Ok(Source::File(arg.to_path_buf()));
         }
 
@@ -51,8 +57,8 @@ impl Source {
         Ok(Source::Stdin(bytes))
     }
 
-    /// Works out the input kind: `from` when given, else the file extension, else (for stdin)
-    /// the parts inside the archive.
+    /// Works out the input kind. In order: `from` when given; a file's extension when it's
+    /// one we know; otherwise the parts inside the archive (always the case for stdin).
     ///
     /// A `from` that doesn't match the contents is an error, so a wrong `--from` gets a clear
     /// message instead of a confusing one about a missing part.
@@ -65,7 +71,12 @@ impl Source {
             return Ok(expected);
         }
         match self {
-            Source::File(path) => InputKind::from_path(path),
+            // A known extension is trusted without opening the file. An unknown one (`.zip`,
+            // `.xlsm`, no extension) falls back to looking inside before giving up.
+            Source::File(path) => match InputKind::from_path(path) {
+                Ok(kind) => Ok(kind),
+                Err(unsupported) => InputKind::from_contents(self.reader()?).ok_or(unsupported),
+            },
             Source::Stdin(bytes) => InputKind::from_contents(Cursor::new(bytes.as_slice()))
                 .ok_or(ConvertError::UnrecognizedStdin),
         }
@@ -219,14 +230,45 @@ mod tests {
     }
 
     #[test]
-    fn from_sets_the_type_of_a_file_with_the_wrong_extension() {
+    fn unknown_extensions_fall_back_to_the_contents() {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("report.zip");
-        std::fs::write(&path, zip_with(&["word/document.xml"])).unwrap();
-        let file = Source::File(path);
+        let office = dir.path().join("report.zip");
+        std::fs::write(&office, zip_with(&["word/document.xml"])).unwrap();
+        let not_office = dir.path().join("notes.zip");
+        std::fs::write(&not_office, zip_with(&["notes.txt"])).unwrap();
 
-        assert!(file.kind(None).is_err());
-        assert_eq!(file.kind(Some(InputKind::Docx)).unwrap(), InputKind::Docx);
+        let office = Source::from_arg(&office).unwrap();
+        assert_eq!(office.kind(None).unwrap(), InputKind::Docx);
+        assert_eq!(office.kind(Some(InputKind::Docx)).unwrap(), InputKind::Docx);
+
+        let err = Source::from_arg(&not_office)
+            .unwrap()
+            .kind(None)
+            .unwrap_err();
+        assert!(
+            err.to_string().starts_with("unsupported input file"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn known_extensions_are_trusted_without_opening_the_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("book.xlsx");
+        std::fs::write(&path, b"not really a workbook").unwrap();
+        assert_eq!(
+            Source::from_arg(&path).unwrap().kind(None).unwrap(),
+            InputKind::Xlsx
+        );
+    }
+
+    #[test]
+    fn missing_files_and_directories_are_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for path in [dir.path().join("missing.xlsx"), dir.path().to_path_buf()] {
+            let err = Source::from_arg(&path).unwrap_err();
+            assert!(err.to_string().starts_with("input file not found"), "{err}");
+        }
     }
 
     #[test]

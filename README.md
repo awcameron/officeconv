@@ -35,7 +35,9 @@ officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --a
 | `--no-notes`        | PPTX only: leave out speaker notes                                       |
 | `--images DIR`      | Save images into `DIR` and link them from the Markdown                   |
 
-The input type comes from the file extension. DOCX and PPTX files only convert to `md`.
+The input type comes from the file extension. If the extension isn't one of these three (for
+example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file instead. DOCX and PPTX
+files only convert to `md`.
 
 ### Reading from stdin
 
@@ -53,12 +55,13 @@ curl -s https://example.com/deck.pptx | officeconv - --to md
 - Stdin is read into memory first, because zip files need random access. Files given by path are
   read from disk.
 - If nothing is piped in, `officeconv -` stops with an error instead of waiting for input.
+- To read a file that's actually named `-`, write it as `./-`.
 
-`--from` sets the type and skips detection. This is also useful for a file whose extension is
-wrong or missing:
+`--from` sets the type and skips detection. This is useful when a file's extension is misleading,
+such as a workbook saved as `report.docx`:
 
 ```sh
-officeconv export.zip --to csv --from xlsx
+officeconv report.docx --to csv --from xlsx
 ```
 
 If `--from` doesn't match what's inside, you get an error that says what the file looks like
@@ -232,6 +235,7 @@ src/
   main.rs            entry point: parse arguments, run, print errors
   lib.rs             run(): validate, then hand off to a converter
   cli.rs             command-line options (clap)
+  format.rs          OutputFormat: csv, tsv, json, md
   error.rs           ConvertError, with one variant per kind of failure
   images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
   input.rs           the input (a file or stdin), its type, and which outputs each supports

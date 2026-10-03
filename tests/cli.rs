@@ -870,23 +870,89 @@ fn reports_empty_or_unrecognized_stdin() {
 }
 
 #[test]
-fn from_reads_a_file_with_the_wrong_extension() {
+fn detects_the_type_of_a_file_with_an_unknown_extension() {
     let (dir, path) = sample_xlsx();
     let renamed = dir.path().join("export.zip");
     std::fs::rename(&path, &renamed).unwrap();
 
+    for extra in [&[][..], &["--from", "xlsx"][..]] {
+        officeconv()
+            .arg(&renamed)
+            .args(["--to", "csv"])
+            .args(extra)
+            .assert()
+            .success()
+            .stdout(predicates::str::starts_with("Region,Units\n"));
+    }
+}
+
+#[test]
+fn from_overrides_a_misleading_extension() {
+    // A workbook saved with a .docx name: the extension is trusted unless --from says otherwise.
+    let (dir, path) = sample_xlsx();
+    let misnamed = dir.path().join("report.docx");
+    std::fs::rename(&path, &misnamed).unwrap();
+
     officeconv()
-        .arg(&renamed)
-        .args(["--to", "csv"])
+        .arg(&misnamed)
+        .args(["--to", "md"])
         .assert()
         .failure()
-        .stderr(contains("use --from to set the type"));
+        .stderr(contains("could not read document"));
     officeconv()
-        .arg(&renamed)
+        .arg(&misnamed)
         .args(["--to", "csv", "--from", "xlsx"])
         .assert()
         .success()
         .stdout(predicates::str::starts_with("Region,Units\n"));
+}
+
+#[test]
+fn reports_a_directory_as_not_found_with_or_without_from() {
+    let dir = TempDir::new().unwrap();
+    let folder = dir.path().join("book.xlsx");
+    std::fs::create_dir(&folder).unwrap();
+
+    for extra in [&[][..], &["--from", "xlsx"][..]] {
+        officeconv()
+            .arg(&folder)
+            .args(["--to", "csv"])
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(contains("input file not found"));
+    }
+}
+
+#[test]
+fn rejects_typed_before_reading_stdin() {
+    // Not valid input: if stdin were read first, this would fail with a different error.
+    officeconv()
+        .args(["-", "--to", "csv", "--typed"])
+        .write_stdin("not an office file")
+        .assert()
+        .failure()
+        .stderr(contains("--typed only applies to --to json"));
+}
+
+#[cfg(unix)]
+#[test]
+fn reports_a_file_that_cannot_be_opened() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, path) = sample_xlsx();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Running as root ignores file permissions, so there's nothing to test.
+    if std::fs::File::open(&path).is_ok() {
+        return;
+    }
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "csv"])
+        .assert()
+        .failure()
+        .stderr(contains("could not open").and(contains("ermission denied")));
 }
 
 #[test]

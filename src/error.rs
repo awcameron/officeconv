@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::cli::OutputFormat;
+use crate::format::OutputFormat;
 use crate::input::InputKind;
 
 #[derive(Debug, Error)]

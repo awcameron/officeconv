@@ -1,6 +1,5 @@
 //! Bad input and option combinations: each fails with a clear message.
 
-use predicates::prelude::*;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -165,6 +164,10 @@ fn reports_a_directory_as_not_found_with_or_without_from() {
 #[test]
 fn reports_a_file_that_cannot_be_opened() {
     use std::os::unix::fs::PermissionsExt;
+
+    // Imported here, not at the top: this test isn't compiled on Windows, where a file-level
+    // import would be unused and fail `clippy -D warnings`.
+    use predicates::prelude::*;
 
     let (_dir, path) = sample_xlsx();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();

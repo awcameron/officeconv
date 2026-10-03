@@ -1,4 +1,5 @@
-//! Saving images from a `.docx` or `.pptx` next to the Markdown that links to them.
+//! What happens to the images in a `.docx`, `.pptx` or `.xlsx`: saved next to the Markdown
+//! that links to them, kept in memory for a PDF, or left out.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -58,13 +59,9 @@ impl ImageExport {
             return Ok(Some(link.clone()));
         }
 
-        let mut entry = match archive.by_name(part) {
-            Ok(entry) => entry,
-            Err(ZipError::FileNotFound) => return Ok(None),
-            Err(err) => return Err(err.into()),
+        let Some(bytes) = read_part_bytes(archive, part)? else {
+            return Ok(None);
         };
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).map_err(ZipError::from)?;
 
         // Only the last segment of the part name is used, so a name like
         // `../../etc/x` can't write outside the folder.
@@ -95,16 +92,73 @@ impl ImageExport {
     }
 }
 
-/// Saves the images the blocks refer to and links them, or removes them when `export` is `None`.
+/// Image bytes kept in memory, keyed by their part inside the package, for embedding in a PDF.
+#[derive(Debug, Default)]
+pub struct EmbeddedImages {
+    bytes: HashMap<String, Vec<u8>>,
+}
+
+impl EmbeddedImages {
+    /// Reads the image stored at `part` (once) and returns the key to look it up by.
+    ///
+    /// Returns `None` if the package doesn't contain that part.
+    pub fn add<R: Read + Seek>(
+        &mut self,
+        archive: &mut ZipArchive<R>,
+        part: &str,
+    ) -> Result<Option<String>> {
+        if !self.bytes.contains_key(part) {
+            let Some(bytes) = read_part_bytes(archive, part)? else {
+                return Ok(None);
+            };
+            self.bytes.insert(part.to_string(), bytes);
+        }
+        Ok(Some(part.to_string()))
+    }
+
+    /// The bytes of the image that [`EmbeddedImages::add`] returned `key` for.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        self.bytes.get(key).map(Vec::as_slice)
+    }
+}
+
+/// What to do with the images a document refers to.
+#[derive(Debug)]
+pub enum Images<'a> {
+    /// Leave them out.
+    Skip,
+    /// Save them into a folder and link them from the Markdown.
+    Save(&'a mut ImageExport),
+    /// Keep their bytes in memory; each image run then holds its key in [`EmbeddedImages`].
+    Embed(&'a mut EmbeddedImages),
+}
+
+/// Handles the images the blocks refer to as `images` says, removing the ones it leaves out.
 pub fn link_images<R: Read + Seek>(
     blocks: &mut Vec<Block>,
     archive: &mut ZipArchive<R>,
-    export: Option<&mut ImageExport>,
+    images: Images<'_>,
 ) -> Result<()> {
-    match export {
-        Some(export) => resolve_images(blocks, |part| export.export(archive, part)),
-        None => resolve_images(blocks, |_| Ok(None)),
+    match images {
+        Images::Skip => resolve_images(blocks, |_| Ok(None)),
+        Images::Save(export) => resolve_images(blocks, |part| export.export(archive, part)),
+        Images::Embed(embedded) => resolve_images(blocks, |part| embedded.add(archive, part)),
     }
+}
+
+/// The bytes of `part`, or `None` if the package doesn't contain it.
+fn read_part_bytes<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    part: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut entry = match archive.by_name(part) {
+        Ok(entry) => entry,
+        Err(ZipError::FileNotFound) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).map_err(ZipError::from)?;
+    Ok(Some(bytes))
 }
 
 /// The path from `markdown_dir` to `images_dir`, with `/` separators and a trailing `/`
@@ -174,6 +228,22 @@ mod tests {
         assert_eq!(export.count(), 2);
         assert_eq!(fs::read(images.join("image1.png")).unwrap(), b"one");
         assert_eq!(fs::read(images.join("Image1-2.PNG")).unwrap(), b"two");
+    }
+
+    #[test]
+    fn embeds_each_image_once_by_its_part() {
+        let mut zip = archive(&[("word/media/image1.png", b"one")]);
+        let mut embedded = EmbeddedImages::default();
+
+        let key = embedded.add(&mut zip, "word/media/image1.png").unwrap();
+        let again = embedded.add(&mut zip, "word/media/image1.png").unwrap();
+        let missing = embedded.add(&mut zip, "word/media/nope.png").unwrap();
+
+        assert_eq!(key.as_deref(), Some("word/media/image1.png"));
+        assert_eq!(again, key);
+        assert_eq!(missing, None);
+        assert_eq!(embedded.get("word/media/image1.png"), Some(&b"one"[..]));
+        assert_eq!(embedded.get("word/media/nope.png"), None);
     }
 
     #[test]

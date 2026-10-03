@@ -27,7 +27,7 @@ use crate::document::{
     Block, ListKind, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
 };
 use crate::error::Result;
-use crate::images::{self, ImageExport};
+use crate::images::{self, Images};
 use crate::opc::{self, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
@@ -59,11 +59,11 @@ pub struct Targets {
 
 /// Reads a `.pptx` and returns it as blocks, slide by slide.
 ///
-/// With `images`, pictures are saved there and linked; without it, they're left out.
+/// `images` says whether pictures are saved, embedded, or left out.
 pub fn read_blocks<R: Read + Seek>(
     reader: R,
     notes: Notes,
-    images: Option<&mut ImageExport>,
+    images: Images<'_>,
 ) -> Result<Vec<Block>> {
     let mut archive = opc::open(reader)?;
     let presentation = opc::read_required_part(&mut archive, PRESENTATION)?;

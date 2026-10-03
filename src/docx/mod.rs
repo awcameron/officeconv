@@ -24,7 +24,7 @@ use crate::document::{
     Block, Cell, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
 };
 use crate::error::Result;
-use crate::images::{self, ImageExport};
+use crate::images::{self, Images};
 use crate::opc::{self, XmlHandler, attr};
 use package::Package;
 
@@ -32,11 +32,8 @@ const DOCUMENT: &str = "word/document.xml";
 
 /// Reads a `.docx` and returns its body as blocks.
 ///
-/// With `images`, pictures are saved there and linked; without it, they're left out.
-pub fn read_blocks<R: Read + Seek>(
-    reader: R,
-    images: Option<&mut ImageExport>,
-) -> Result<Vec<Block>> {
+/// `images` says whether pictures are saved, embedded, or left out.
+pub fn read_blocks<R: Read + Seek>(reader: R, images: Images<'_>) -> Result<Vec<Block>> {
     let mut archive = opc::open(reader)?;
     let document = opc::read_required_part(&mut archive, DOCUMENT)?;
 

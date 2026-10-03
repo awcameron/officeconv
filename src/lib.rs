@@ -18,7 +18,7 @@ use std::path::Path;
 use cli::Cli;
 use error::{ConvertError, Result};
 use format::OutputFormat;
-use images::ImageExport;
+use images::{ImageExport, Images};
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
 use zip::ZipArchive;
@@ -59,6 +59,11 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         None => None,
     };
 
+    let mode = match images.as_mut() {
+        Some(export) => Images::Save(export),
+        None => Images::Skip,
+    };
+
     let reader = source.reader()?;
     let blocks = if kind == InputKind::Pptx {
         let notes = if cli.no_notes {
@@ -66,9 +71,9 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         } else {
             pptx::Notes::Include
         };
-        pptx::read_blocks(reader, notes, images.as_mut())?
+        pptx::read_blocks(reader, notes, mode)?
     } else {
-        docx::read_blocks(reader, images.as_mut())?
+        docx::read_blocks(reader, mode)?
     };
     write_document(cli, &blocks)?;
 

@@ -1,0 +1,84 @@
+name: Release
+
+# Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) publishes a GitHub
+# Release with a binary for each platform. PRs that change this file build every platform
+# without publishing anything.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: [.github/workflows/release.yml]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches Cargo.toml
+        if: github.event_name == 'push'
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
+            exit 1
+          fi
+      - name: Test
+        run: cargo test --locked
+
+  create-release:
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  upload:
+    needs: [check, create-release]
+    # Runs on PRs too, where create-release is skipped, to check that every platform builds.
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # Built in a cross container, which also gives an older, more compatible glibc.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: officeconv
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          # The Noto Sans licence has to travel with the fonts built into the binary.
+          include: LICENSE,README.md,assets/fonts/OFL.txt
+          checksum: sha256
+          locked: true
+          dry-run: ${{ github.event_name == 'pull_request' }}
+          dry-run-intended: true
+          token: ${{ github.token }}

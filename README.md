@@ -297,6 +297,18 @@ tests/cli/           end-to-end tests that run the real binary
 assets/fonts/        Noto Sans, built into the binary for PDF output
 ```
 
+### Releasing
+
+Bump `version` in `Cargo.toml` in a PR, merge it, then tag that commit on `main`:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The [release workflow](.github/workflows/release.yml) checks that the tag matches
+`Cargo.toml`, runs the tests, and publishes a GitHub Release with a binary for Linux (x86_64,
+arm64), macOS (Apple Silicon, Intel) and Windows, each with a SHA-256 checksum.
+
 ## License
 
 [MIT](LICENSE). The Noto Sans fonts in `assets/fonts/`, which are built into the binary, are

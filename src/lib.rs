@@ -9,6 +9,8 @@ pub mod opc;
 pub mod output;
 #[cfg(feature = "pdf")]
 pub mod pdf;
+#[cfg(feature = "typst-spike")]
+pub mod pdf_typst;
 pub mod pptx;
 pub mod table;
 pub mod writers;
@@ -32,7 +34,7 @@ pub fn run(cli: &Cli) -> Result<()> {
     if cli.typed && cli.to != OutputFormat::Json {
         return Err(ConvertError::TypedOnlyForJson);
     }
-    if cli.to == OutputFormat::Pdf && !cfg!(feature = "pdf") {
+    if cli.to == OutputFormat::Pdf && !cfg!(any(feature = "pdf", feature = "typst-spike")) {
         return Err(ConvertError::PdfNotBuilt);
     }
 
@@ -107,8 +109,34 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
 
 /// Writes a Word document as A4 pages, or a deck as one landscape page per slide. Image runs
 /// hold keys into `images`.
-#[cfg(feature = "pdf")]
+#[cfg(any(feature = "pdf", feature = "typst-spike"))]
 fn write_pdf(
+    cli: &Cli,
+    kind: InputKind,
+    blocks: &[document::Block],
+    images: &EmbeddedImages,
+) -> Result<()> {
+    // PROTOTYPE (#29): render through Typst when it's the only backend built, or when
+    // OFFICECONV_PDF_ENGINE=typst.
+    #[cfg(feature = "typst-spike")]
+    if !cfg!(feature = "pdf") || std::env::var("OFFICECONV_PDF_ENGINE").as_deref() == Ok("typst") {
+        let pages = match kind {
+            InputKind::Pptx => pdf_typst::Pages::Slides,
+            _ => pdf_typst::Pages::Document,
+        };
+        let pdf = pdf_typst::render(blocks, images, pages)?;
+        return write_output(cli, &pdf);
+    }
+    #[cfg(feature = "pdf")]
+    {
+        write_krilla_pdf(cli, kind, blocks, images)
+    }
+    #[cfg(not(feature = "pdf"))]
+    unreachable!("the Typst prototype handles every PDF without the pdf feature")
+}
+
+#[cfg(feature = "pdf")]
+fn write_krilla_pdf(
     cli: &Cli,
     kind: InputKind,
     blocks: &[document::Block],
@@ -152,7 +180,7 @@ fn report_pdf_gaps(rendered: &pdf::Rendered) {
     }
 }
 
-#[cfg(not(feature = "pdf"))]
+#[cfg(not(any(feature = "pdf", feature = "typst-spike")))]
 fn write_pdf(
     _cli: &Cli,
     _kind: InputKind,

@@ -20,6 +20,10 @@ quick-xml = "0.42.0"
 rustybuzz = { version = "0.20", optional = true }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 thiserror = "2.0.21"
+typst = { version = "0.15.1", optional = true }
+typst-kit = { version = "0.15.1", features = ["scan-fonts"], optional = true }
+typst-layout = { version = "0.15.1", optional = true }
+typst-pdf = { version = "0.15.1", optional = true }
 unicode-linebreak = { version = "0.1.5", optional = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
@@ -33,6 +37,9 @@ pdf = [
     "dep:rustybuzz",
     "dep:unicode-linebreak",
 ]
+
+# Prototype only (#29): render PDF through Typst instead of our own layout, to measure it.
+typst-spike = ["dep:typst", "dep:typst-kit", "dep:typst-layout", "dep:typst-pdf"]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"

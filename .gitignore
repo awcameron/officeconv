@@ -1,1 +1,8 @@
 /target
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store

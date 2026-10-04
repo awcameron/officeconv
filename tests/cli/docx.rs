@@ -15,6 +15,60 @@ fn converts_docx_to_markdown() {
     );
 }
 
+/// A document with one hyperlink, `click me`, whose target is `target` as written in the XML.
+fn docx_linking_to(target: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    sample_docx_with_parts(
+        r#"<w:p><w:hyperlink r:id="rId1"><w:r><w:t>click me</w:t></w:r></w:hyperlink></w:p>"#,
+        &[part(
+            "word/_rels/document.xml.rels",
+            rels(&[("rId1", "hyperlink", target)]),
+        )],
+    )
+}
+
+#[test]
+fn link_targets_cannot_break_out_of_the_link() {
+    // A newline ends the link and a tab separates HTML attributes, so without escaping the
+    // `<img>` becomes live HTML on its own line.
+    let (_dir, path) = docx_linking_to(
+        "https://example.com/&#10;&#10;&lt;img&#9;src=x&#9;onerror=&quot;alert&amp;#40;1&amp;#41;&quot;&gt;",
+    );
+
+    assert_eq!(
+        convert(&path, "md"),
+        "[click me](https://example.com/%0A%0A%3Cimg%09src=x%09onerror=%22alert&#40;1&#41;%22%3E)\n"
+    );
+}
+
+#[test]
+fn drops_links_with_unsafe_schemes_but_keeps_their_text() {
+    for target in [
+        "javascript:alert(1)",
+        "JavaScript:alert(1)",
+        "java&#9;script:alert(1)",
+        "data:text/html,hi",
+        "vbscript:msgbox",
+    ] {
+        let (_dir, path) = docx_linking_to(target);
+        assert_eq!(convert(&path, "md"), "click me\n", "target {target}");
+    }
+
+    for (target, expected) in [
+        ("https://example.com", "https://example.com"),
+        ("HTTP://example.com", "HTTP://example.com"),
+        ("mailto:me@example.com", "mailto:me@example.com"),
+        ("other.docx", "other.docx"),
+        ("../shared/report.pdf#page=2", "../shared/report.pdf#page=2"),
+    ] {
+        let (_dir, path) = docx_linking_to(target);
+        assert_eq!(
+            convert(&path, "md"),
+            format!("[click me]({expected})\n"),
+            "target {target}"
+        );
+    }
+}
+
 #[test]
 fn converts_docx_lists_links_and_tables() {
     let numbering = format!(

@@ -166,6 +166,10 @@ Images are left out unless you pass `--images DIR`; see [Images](#images).
 Text that Markdown would read as formatting (`*`, `_`, `[`, or a line starting with `#`, for
 example) is escaped.
 
+Links are kept when they're `http`, `https` or `mailto`, or relative, such as `other.docx`. Any
+other kind, such as `javascript:` or `file:`, could run code or open local files when clicked, so
+its text is kept without the link, in Markdown and PDF.
+
 Not converted yet: footnotes, comments, headers and footers, and merged table cells
 (they become empty cells). Headings that use custom style names aren't detected. Every numbered
 item is written as `1.` because Markdown renumbers lists when it renders them.

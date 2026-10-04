@@ -106,6 +106,24 @@ fn numbers_lists_and_draws_tables() {
 }
 
 #[test]
+fn leaves_out_links_with_unsafe_schemes() {
+    let (_dir, path) = sample_docx_with_parts(
+        r#"<w:p><w:hyperlink r:id="rId1"><w:r><w:t>click me</w:t></w:r></w:hyperlink></w:p>"#,
+        &[part(
+            "word/_rels/document.xml.rels",
+            rels(&[("rId1", "hyperlink", "javascript:alert(1)")]),
+        )],
+    );
+    let (pdf, _stderr) = convert_to_pdf(&path, &[]);
+
+    assert_eq!(page_texts(&pdf), ["click me"]);
+    assert!(
+        !String::from_utf8_lossy(&pdf).contains("javascript"),
+        "the PDF links to javascript:"
+    );
+}
+
+#[test]
 fn links_and_embeds_pictures() {
     let picture = r#"<w:p><w:r><w:drawing><wp:docPr id="1" name="p" descr="Logo"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p>"#;
     let body = format!(

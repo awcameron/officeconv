@@ -127,6 +127,8 @@ bounded, `officeconv` stops with an error when:
 - stdin has more than 1 GB
 
 The sizes are counted as the file is read, not taken from the zip's headers, which can be faked.
+For `.xlsx` files, every part is checked before the workbook is read, so files it doesn't convert,
+such as embedded media, count toward the total too.
 
 ## What gets converted
 

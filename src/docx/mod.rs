@@ -34,19 +34,19 @@ const DOCUMENT: &str = "word/document.xml";
 ///
 /// `images` says whether pictures are saved, embedded, or left out.
 pub fn read_blocks<R: Read + Seek>(reader: R, images: Images<'_>) -> Result<Vec<Block>> {
-    let mut archive = opc::open(reader)?;
-    let document = opc::read_required_part(&mut archive, DOCUMENT)?;
+    let mut archive = opc::Archive::open(reader)?;
+    let document = archive.read_required_part(DOCUMENT)?;
 
     let mut package = Package::default();
-    if let Some(xml) = opc::read_part(&mut archive, &opc::rels_path(DOCUMENT))? {
+    if let Some(xml) = archive.read_part(&opc::rels_path(DOCUMENT))? {
         let relationships = opc::parse_relationships(&xml)?;
         package.links = opc::hyperlinks(&relationships);
         package.images = opc::image_parts(&relationships, DOCUMENT);
     }
-    if let Some(xml) = opc::read_part(&mut archive, "word/numbering.xml")? {
+    if let Some(xml) = archive.read_part("word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
     }
-    if let Some(xml) = opc::read_part(&mut archive, "word/styles.xml")? {
+    if let Some(xml) = archive.read_part("word/styles.xml")? {
         package.styles = package::parse_styles(&xml)?;
     }
 

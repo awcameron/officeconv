@@ -4,9 +4,12 @@ pub mod pictures;
 
 use std::io::{Read, Seek};
 
+use zip::result::ZipError;
+
 use calamine::{Data, ExcelDateTime, Reader, Xlsx};
 
 use crate::error::{ConvertError, Result};
+use crate::opc::Archive;
 use crate::table::{Cell, Table};
 
 /// One worksheet, converted to text.
@@ -19,7 +22,8 @@ pub struct Sheet {
 /// Reads one sheet from a workbook.
 ///
 /// With `sheet: None`, reads the first sheet in the workbook.
-pub fn read_sheet<R: Read + Seek>(reader: R, sheet: Option<&str>) -> Result<Sheet> {
+pub fn read_sheet<R: Read + Seek>(mut reader: R, sheet: Option<&str>) -> Result<Sheet> {
+    check_sizes(&mut reader)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
 
@@ -39,7 +43,8 @@ pub fn read_sheet<R: Read + Seek>(reader: R, sheet: Option<&str>) -> Result<Shee
 }
 
 /// Reads every sheet in a workbook, in workbook order.
-pub fn read_all_sheets<R: Read + Seek>(reader: R) -> Result<Vec<Sheet>> {
+pub fn read_all_sheets<R: Read + Seek>(mut reader: R) -> Result<Vec<Sheet>> {
+    check_sizes(&mut reader)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
     if names.is_empty() {
@@ -50,6 +55,19 @@ pub fn read_all_sheets<R: Read + Seek>(reader: R) -> Result<Vec<Sheet>> {
         .into_iter()
         .map(|name| load_sheet(&mut workbook, name))
         .collect()
+}
+
+/// Checks the workbook's XML decompresses to within [`Limits`](crate::opc::Limits), then
+/// rewinds `reader`.
+///
+/// calamine has no size limit of its own, so a small workbook could otherwise make it use
+/// gigabytes. A file that isn't a zip archive is left for calamine to report.
+fn check_sizes<R: Read + Seek>(reader: &mut R) -> Result<()> {
+    if let Ok(mut archive) = Archive::open(&mut *reader) {
+        archive.check_xml_parts()?;
+    }
+    reader.rewind().map_err(ZipError::from)?;
+    Ok(())
 }
 
 /// Loads the cells of the sheet called `name` from an already-open workbook.

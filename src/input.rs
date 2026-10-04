@@ -10,6 +10,7 @@ use zip::ZipArchive;
 
 use crate::error::{ConvertError, Result};
 use crate::format::OutputFormat;
+use crate::opc::Limits;
 
 /// Anything that can be read and jumped around in, like a file or bytes in memory.
 ///
@@ -42,15 +43,12 @@ impl Source {
             return Ok(Source::File(arg.to_path_buf()));
         }
 
-        let mut stdin = io::stdin().lock();
+        let stdin = io::stdin().lock();
         // Nothing piped in: fail now instead of silently waiting for keyboard input.
         if stdin.is_terminal() {
             return Err(ConvertError::StdinIsTerminal);
         }
-        let mut bytes = Vec::new();
-        stdin
-            .read_to_end(&mut bytes)
-            .map_err(ConvertError::ReadStdin)?;
+        let bytes = read_at_most(stdin, Limits::DEFAULT.total)?;
         if bytes.is_empty() {
             return Err(ConvertError::EmptyStdin);
         }
@@ -109,6 +107,20 @@ impl Source {
             Source::Stdin(_) => "stdin".to_string(),
         }
     }
+}
+
+/// Reads all of stdin, up to `limit` bytes. Stdin has to be held in memory (see [`Source`]),
+/// so without a limit a never-ending pipe would use all of it.
+fn read_at_most(stdin: impl Read, limit: u64) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    stdin
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ConvertError::ReadStdin)?;
+    if bytes.len() as u64 > limit {
+        return Err(ConvertError::StdinTooLarge { limit });
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -305,6 +317,16 @@ mod tests {
             "sales"
         );
         assert_eq!(Source::Stdin(Vec::new()).stem(), "stdin");
+    }
+
+    #[test]
+    fn stops_reading_stdin_at_the_limit() {
+        assert_eq!(read_at_most(&b"abc"[..], 3).unwrap(), b"abc");
+        let err = read_at_most(&b"abcd"[..], 3).unwrap_err();
+        assert!(
+            matches!(err, ConvertError::StdinTooLarge { limit: 3 }),
+            "{err:?}"
+        );
     }
 
     #[test]

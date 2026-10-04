@@ -85,6 +85,21 @@ pub enum ConvertError {
     #[error("could not parse document: {0}")]
     DocxXml(#[from] quick_xml::Error),
 
+    #[error(
+        "{part} in the input decompresses to more than {}, the most officeconv reads from one part",
+        megabytes(*.limit)
+    )]
+    PartTooLarge { part: String, limit: u64 },
+
+    #[error(
+        "the input decompresses to more than {}, the most officeconv reads from one file",
+        megabytes(*.limit)
+    )]
+    InputTooLarge { limit: u64 },
+
+    #[error("stdin has more than {}, the most officeconv reads", megabytes(*.limit))]
+    StdinTooLarge { limit: u64 },
+
     #[error("could not write PDF: {0}")]
     Pdf(String),
 
@@ -104,6 +119,11 @@ fn describe_found(found: Option<InputKind>) -> String {
         Some(kind) => format!("it looks like a .{kind}"),
         None => "it isn't an Office file".to_string(),
     }
+}
+
+/// A size limit as it appears in a message, such as `256 MB`.
+fn megabytes(bytes: u64) -> String {
+    format!("{} MB", bytes >> 20)
 }
 
 /// Shorthand so functions can write `Result<T>` instead of `Result<T, ConvertError>`.

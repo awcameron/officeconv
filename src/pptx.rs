@@ -65,9 +65,9 @@ pub fn read_blocks<R: Read + Seek>(
     notes: Notes,
     images: Images<'_>,
 ) -> Result<Vec<Block>> {
-    let mut archive = opc::open(reader)?;
-    let presentation = opc::read_required_part(&mut archive, PRESENTATION)?;
-    let relationships = match opc::read_part(&mut archive, &opc::rels_path(PRESENTATION))? {
+    let mut archive = opc::Archive::open(reader)?;
+    let presentation = archive.read_required_part(PRESENTATION)?;
+    let relationships = match archive.read_part(&opc::rels_path(PRESENTATION))? {
         Some(xml) => opc::parse_relationships(&xml)?,
         None => HashMap::new(),
     };
@@ -78,11 +78,11 @@ pub fn read_blocks<R: Read + Seek>(
             continue;
         };
         let part = opc::resolve_target(PRESENTATION, &relationship.target);
-        let Some(xml) = opc::read_part(&mut archive, &part)? else {
+        let Some(xml) = archive.read_part(&part)? else {
             continue;
         };
 
-        let slide_relationships = match opc::read_part(&mut archive, &opc::rels_path(&part))? {
+        let slide_relationships = match archive.read_part(&opc::rels_path(&part))? {
             Some(rels) => opc::parse_relationships(&rels)?,
             None => HashMap::new(),
         };
@@ -99,7 +99,7 @@ pub fn read_blocks<R: Read + Seek>(
             .map(|r| opc::resolve_target(&part, &r.target));
         if notes == Notes::Include
             && let Some(notes_part) = notes_part
-            && let Some(notes_xml) = opc::read_part(&mut archive, &notes_part)?
+            && let Some(notes_xml) = archive.read_part(&notes_part)?
         {
             slide.notes = parse_notes(&notes_xml)?;
         }

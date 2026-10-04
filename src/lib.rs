@@ -23,7 +23,6 @@ use format::OutputFormat;
 use images::{EmbeddedImages, ImageExport, Images};
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
-use zip::ZipArchive;
 
 /// Validates the request and runs the matching converter.
 pub fn run(cli: &Cli) -> Result<()> {
@@ -247,7 +246,7 @@ fn write_sheet(
 ///
 /// `'a` is the lifetime of the [`Source`]: when the input is stdin, the reader borrows its bytes.
 struct SheetImages<'a> {
-    archive: ZipArchive<Box<dyn ReadSeek + 'a>>,
+    archive: opc::Archive<Box<dyn ReadSeek + 'a>>,
     export: ImageExport,
 }
 
@@ -258,7 +257,7 @@ impl<'a> SheetImages<'a> {
             return Ok(None);
         };
         Ok(Some(SheetImages {
-            archive: opc::open(source.reader()?)?,
+            archive: opc::Archive::open(source.reader()?)?,
             export: ImageExport::new(dir, markdown_dir)?,
         }))
     }

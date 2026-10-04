@@ -57,14 +57,14 @@ pub fn read_all_sheets<R: Read + Seek>(mut reader: R) -> Result<Vec<Sheet>> {
         .collect()
 }
 
-/// Checks the workbook's XML decompresses to within [`Limits`](crate::opc::Limits), then
-/// rewinds `reader`.
+/// Checks every part of the workbook decompresses to within [`Limits`](crate::opc::Limits),
+/// then rewinds `reader`.
 ///
 /// calamine has no size limit of its own, so a small workbook could otherwise make it use
 /// gigabytes. A file that isn't a zip archive is left for calamine to report.
 fn check_sizes<R: Read + Seek>(reader: &mut R) -> Result<()> {
     if let Ok(mut archive) = Archive::open(&mut *reader) {
-        archive.check_xml_parts()?;
+        archive.check_part_sizes()?;
     }
     reader.rewind().map_err(ZipError::from)?;
     Ok(())

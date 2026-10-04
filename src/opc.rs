@@ -87,16 +87,16 @@ impl<R: Read + Seek> Archive<R> {
         Ok(Some(bytes))
     }
 
-    /// Decompresses every XML part without keeping it, to check it's within the limits.
+    /// Decompresses every part without keeping it, to check it's within the limits.
     ///
-    /// This is for packages read by a library that can't be limited itself (calamine).
-    pub fn check_xml_parts(&mut self) -> Result<()> {
+    /// This is for packages read by a library that can't be limited itself (calamine). Every
+    /// part is checked, whatever its name: a workbook's relationships can point a sheet at a part
+    /// named anything, such as `sheet1.dat`.
+    pub fn check_part_sizes(&mut self) -> Result<()> {
         for i in 0..self.zip.len() {
             let entry = self.zip.by_index(i)?;
             let name = entry.name().to_string();
-            if name.ends_with(".xml") || name.ends_with(".rels") {
-                read_limited(entry, &name, self.limits, &mut self.read, &mut io::sink())?;
-            }
+            read_limited(entry, &name, self.limits, &mut self.read, &mut io::sink())?;
         }
         Ok(())
     }
@@ -365,17 +365,28 @@ mod tests {
     }
 
     #[test]
-    fn checks_xml_parts_but_not_other_files() {
+    fn checks_every_part_whatever_its_name() {
         let big = [b' '; 11];
-        let mut media = Archive::with_limits(zip_with(&[("xl/media/v.mp4", &big)]), SMALL).unwrap();
-        media.check_xml_parts().unwrap();
+        // calamine finds sheets through the workbook's relationships, so a sheet can be named
+        // anything, and media files count toward the total too.
+        for name in [
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet1.dat",
+            "xl/media/v.mp4",
+        ] {
+            let mut archive = Archive::with_limits(zip_with(&[(name, &big)]), SMALL).unwrap();
+            assert!(
+                matches!(
+                    archive.check_part_sizes(),
+                    Err(ConvertError::PartTooLarge { .. })
+                ),
+                "{name}"
+            );
+        }
 
-        let mut sheet =
-            Archive::with_limits(zip_with(&[("xl/worksheets/sheet1.xml", &big)]), SMALL).unwrap();
-        assert!(matches!(
-            sheet.check_xml_parts(),
-            Err(ConvertError::PartTooLarge { .. })
-        ));
+        let mut small =
+            Archive::with_limits(zip_with(&[("xl/worksheets/sheet1.dat", b"ok")]), SMALL).unwrap();
+        small.check_part_sizes().unwrap();
     }
 
     #[test]

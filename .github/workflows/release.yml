@@ -17,7 +17,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -37,7 +37,7 @@ jobs:
   create-release:
     needs: check
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Create release
@@ -56,10 +56,10 @@ jobs:
           # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
           # rather than whatever the runner's Ubuntu has, and run on older distributions.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             build-tool: cross
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             build-tool: cross
           - target: aarch64-apple-darwin
             os: macos-latest

@@ -153,13 +153,21 @@ fn split_edges(text: &str) -> (&str, &str, &str) {
 
 /// Percent-encodes what would end a Markdown link target early or change its meaning:
 /// whitespace (including line breaks), control characters, `<`, `>`, `"`, `(`, `)` and `\`.
+/// `&` becomes `&amp;`.
 ///
 /// Without this, a newline in a link from the document would end the link, and whatever
-/// followed, such as raw HTML, would become part of the Markdown.
+/// followed, such as raw HTML, would become part of the Markdown. Renderers also decode
+/// `&#58;` in a link target to `:`, so `javascript&#58;` would become a `javascript:` link; with
+/// `&amp;`, the browser sees the literal text `&#58;` instead.
 fn escape_url(url: &str) -> String {
     let mut out = String::with_capacity(url.len());
     for c in url.chars() {
-        if c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"' | '(' | ')' | '\\') {
+        if c == '&' {
+            out.push_str("&amp;");
+        } else if c.is_whitespace()
+            || c.is_control()
+            || matches!(c, '<' | '>' | '"' | '(' | ')' | '\\')
+        {
             let mut bytes = [0; 4];
             for byte in c.encode_utf8(&mut bytes).bytes() {
                 out.push_str(&format!("%{byte:02X}"));
@@ -310,6 +318,22 @@ mod tests {
 | ---- | ------------ |
 | A\\|B | Bobby<br>Don |
 "
+        );
+    }
+
+    #[test]
+    fn escapes_ampersands_in_link_targets() {
+        // Renderers decode `&#58;` in a link target to `:`, so an unescaped `&` could turn
+        // `javascript&#58;` into `javascript:`. `&amp;` decodes back to a plain `&`.
+        let link =
+            |url: &str| render(&[Block::Paragraph(vec![run("a", false, false).linked(url)])]);
+        assert_eq!(
+            link("javascript&#58;alert"),
+            "[a](javascript&amp;#58;alert)\n"
+        );
+        assert_eq!(
+            link("https://x.com/?a=1&b=2"),
+            "[a](https://x.com/?a=1&amp;b=2)\n"
         );
     }
 

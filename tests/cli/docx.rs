@@ -36,8 +36,27 @@ fn link_targets_cannot_break_out_of_the_link() {
 
     assert_eq!(
         convert(&path, "md"),
-        "[click me](https://example.com/%0A%0A%3Cimg%09src=x%09onerror=%22alert&#40;1&#41;%22%3E)\n"
+        "[click me](https://example.com/%0A%0A%3Cimg%09src=x%09onerror=%22alert&amp;#40;1&amp;#41;%22%3E)\n"
     );
+}
+
+#[test]
+fn entities_in_link_targets_cannot_form_a_scheme() {
+    // Renderers decode `&#58;` to `:` and `&#9;` to a tab (which browsers strip from URLs), so
+    // these would become `javascript:` links if the `&` weren't escaped.
+    for (target, expected) in [
+        (
+            "javascript&amp;#58;alert&amp;#40;document.domain&amp;#41;",
+            "[click me](javascript&amp;#58;alert&amp;#40;document.domain&amp;#41;)\n",
+        ),
+        (
+            "java&amp;#9;script:alert&amp;#40;1&amp;#41;",
+            "[click me](java&amp;#9;script:alert&amp;#40;1&amp;#41;)\n",
+        ),
+    ] {
+        let (_dir, path) = docx_linking_to(target);
+        assert_eq!(convert(&path, "md"), expected, "target {target}");
+    }
 }
 
 #[test]

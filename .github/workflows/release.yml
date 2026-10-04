@@ -19,7 +19,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -39,7 +39,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Create release
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
         env:
@@ -53,11 +53,14 @@ jobs:
     strategy:
       matrix:
         include:
+          # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
+          # rather than whatever the runner's Ubuntu has, and run on older distributions.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-          # Built in a cross container, which also gives an older, more compatible glibc.
+            build-tool: cross
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            build-tool: cross
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
@@ -65,7 +68,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -74,6 +77,7 @@ jobs:
         with:
           bin: officeconv
           target: ${{ matrix.target }}
+          build-tool: ${{ matrix.build-tool }}
           archive: $bin-$tag-$target
           # The Noto Sans licence has to travel with the fonts built into the binary.
           include: LICENSE,README.md,assets/fonts/OFL.txt

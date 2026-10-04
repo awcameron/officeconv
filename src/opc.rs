@@ -112,13 +112,33 @@ pub fn parse_relationships(xml: &str) -> Result<HashMap<String, Relationship>> {
 
 /// Just the external links: relationship ID -> URL.
 ///
-/// Other relationships (images, a link that jumps to another slide) aren't web links.
+/// Other relationships (images, a link that jumps to another slide) aren't web links. Only
+/// `http`, `https`, `mailto` and relative links are kept: the text of any other link, such as
+/// `javascript:`, is converted without the link.
 pub fn hyperlinks(relationships: &HashMap<String, Relationship>) -> HashMap<String, String> {
     relationships
         .iter()
-        .filter(|(_, r)| r.kind == "hyperlink")
+        .filter(|(_, r)| r.kind == "hyperlink" && is_safe_link(&r.target))
         .map(|(id, r)| (id.clone(), r.target.clone()))
         .collect()
+}
+
+/// True for an `http`, `https` or `mailto` link, or a relative one with no scheme, such as
+/// `other.docx`.
+///
+/// Other schemes, such as `javascript:`, `data:` or `file:`, can run code or open local files
+/// when someone clicks the link in the Markdown or PDF.
+fn is_safe_link(target: &str) -> bool {
+    // The scheme is everything before the first `:`, as long as no `/`, `?` or `#` comes first.
+    match target.find([':', '/', '?', '#']) {
+        Some(i) if target[i..].starts_with(':') => {
+            let scheme = &target[..i];
+            ["http", "https", "mailto"]
+                .iter()
+                .any(|safe| scheme.eq_ignore_ascii_case(safe))
+        }
+        _ => true,
+    }
 }
 
 /// Images stored in the package: relationship ID -> image part (`ppt/media/image1.png`).
@@ -219,6 +239,30 @@ mod tests {
         );
         assert_eq!(links["rId1"].kind, "styles");
         assert_eq!(hyperlinks(&links).len(), 1);
+    }
+
+    #[test]
+    fn keeps_only_safe_links() {
+        for target in [
+            "https://a.com",
+            "HTTP://a.com",
+            "mailto:me@a.com",
+            "a.docx",
+            "../b.pdf#p=2",
+            "/x:y",
+        ] {
+            assert!(is_safe_link(target), "{target}");
+        }
+        for target in [
+            "javascript:alert(1)",
+            "java\tscript:x",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "C:\\a.docx",
+            " https://a.com",
+        ] {
+            assert!(!is_safe_link(target), "{target}");
+        }
     }
 
     #[test]

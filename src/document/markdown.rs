@@ -151,11 +151,24 @@ fn split_edges(text: &str) -> (&str, &str, &str) {
     (&text[..start], inner, &text[start + inner.len()..])
 }
 
-/// Spaces and parentheses would end a Markdown link target early.
+/// Percent-encodes what would end a Markdown link target early or change its meaning:
+/// whitespace (including line breaks), control characters, `<`, `>`, `"`, `(`, `)` and `\`.
+///
+/// Without this, a newline in a link from the document would end the link, and whatever
+/// followed, such as raw HTML, would become part of the Markdown.
 fn escape_url(url: &str) -> String {
-    url.replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
+    let mut out = String::with_capacity(url.len());
+    for c in url.chars() {
+        if c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | '"' | '(' | ')' | '\\') {
+            let mut bytes = [0; 4];
+            for byte in c.encode_utf8(&mut bytes).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Escapes characters that Markdown would treat as formatting.
@@ -297,6 +310,17 @@ mod tests {
 | ---- | ------------ |
 | A\\|B | Bobby<br>Don |
 "
+        );
+    }
+
+    #[test]
+    fn escapes_link_targets_that_would_end_the_link() {
+        let blocks = [Block::Paragraph(vec![
+            run("a", false, false).linked("https://x.com/a b\n<i>\u{2028}(\"\\)"),
+        ])];
+        assert_eq!(
+            render(&blocks),
+            "[a](https://x.com/a%20b%0A%3Ci%3E%E2%80%A8%28%22%5C%29)\n"
         );
     }
 

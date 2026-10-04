@@ -155,6 +155,39 @@ fn all_sheets_keeps_sheets_whose_file_names_clash() {
 }
 
 #[test]
+fn all_sheets_keeps_sheets_that_differ_only_in_unicode_normalization() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("report.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    // Both display as "Café"; macOS treats the two file names as the same file.
+    let (composed, decomposed) = ("Caf\u{e9}", "Cafe\u{301}");
+    for (name, text) in [(composed, "1"), (decomposed, "2")] {
+        workbook
+            .add_worksheet()
+            .set_name(name)
+            .unwrap()
+            .write(0, 0, text)
+            .unwrap();
+    }
+    workbook.save(&input).unwrap();
+    let out_dir = dir.path().join("out");
+
+    officeconv()
+        .arg(&input)
+        .args(["--to", "csv", "--all-sheets", "-o"])
+        .arg(&out_dir)
+        .assert()
+        .success();
+
+    for (file, text) in [
+        (format!("report-{composed}.csv"), "1\n"),
+        (format!("report-{decomposed}-2.csv"), "2\n"),
+    ] {
+        assert_eq!(std::fs::read_to_string(out_dir.join(file)).unwrap(), text);
+    }
+}
+
+#[test]
 fn all_sheets_defaults_to_current_directory() {
     let (dir, path) = sample_xlsx();
 

@@ -6,11 +6,9 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use zip::ZipArchive;
-use zip::result::ZipError;
-
 use crate::document::{Block, resolve_images};
 use crate::error::{ConvertError, Result};
+use crate::opc::Archive;
 use crate::output::{UniqueNames, ensure_dir, safe_file_name};
 
 /// Writes images into one folder, each at most once, and remembers the link to each.
@@ -52,14 +50,14 @@ impl ImageExport {
     /// Returns `None` if the package doesn't contain that part.
     pub fn export<R: Read + Seek>(
         &mut self,
-        archive: &mut ZipArchive<R>,
+        archive: &mut Archive<R>,
         part: &str,
     ) -> Result<Option<String>> {
         if let Some(link) = self.links.get(part) {
             return Ok(Some(link.clone()));
         }
 
-        let Some(bytes) = read_part_bytes(archive, part)? else {
+        let Some(bytes) = archive.read_bytes(part)? else {
             return Ok(None);
         };
 
@@ -88,11 +86,11 @@ impl EmbeddedImages {
     /// Returns `None` if the package doesn't contain that part.
     pub fn add<R: Read + Seek>(
         &mut self,
-        archive: &mut ZipArchive<R>,
+        archive: &mut Archive<R>,
         part: &str,
     ) -> Result<Option<String>> {
         if !self.bytes.contains_key(part) {
-            let Some(bytes) = read_part_bytes(archive, part)? else {
+            let Some(bytes) = archive.read_bytes(part)? else {
                 return Ok(None);
             };
             self.bytes.insert(part.to_string(), bytes);
@@ -120,7 +118,7 @@ pub enum Images<'a> {
 /// Handles the images the blocks refer to as `images` says, removing the ones it leaves out.
 pub fn link_images<R: Read + Seek>(
     blocks: &mut Vec<Block>,
-    archive: &mut ZipArchive<R>,
+    archive: &mut Archive<R>,
     images: Images<'_>,
 ) -> Result<()> {
     match images {
@@ -128,21 +126,6 @@ pub fn link_images<R: Read + Seek>(
         Images::Save(export) => resolve_images(blocks, |part| export.export(archive, part)),
         Images::Embed(embedded) => resolve_images(blocks, |part| embedded.add(archive, part)),
     }
-}
-
-/// The bytes of `part`, or `None` if the package doesn't contain it.
-fn read_part_bytes<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    part: &str,
-) -> Result<Option<Vec<u8>>> {
-    let mut entry = match archive.by_name(part) {
-        Ok(entry) => entry,
-        Err(ZipError::FileNotFound) => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-    let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes).map_err(ZipError::from)?;
-    Ok(Some(bytes))
 }
 
 /// The path from `markdown_dir` to `images_dir`, with `/` separators and a trailing `/`
@@ -177,7 +160,7 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     /// A zip holding the given parts.
-    fn archive(parts: &[(&str, &[u8])]) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
+    fn archive(parts: &[(&str, &[u8])]) -> Archive<std::io::Cursor<Vec<u8>>> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, bytes) in parts {
             writer
@@ -185,7 +168,7 @@ mod tests {
                 .unwrap();
             writer.write_all(bytes).unwrap();
         }
-        ZipArchive::new(writer.finish().unwrap()).unwrap()
+        Archive::open(writer.finish().unwrap()).unwrap()
     }
 
     #[test]

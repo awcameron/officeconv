@@ -5,42 +5,129 @@
 //! so on that `word/document.xml` refers to by ID (`rId5`).
 
 use std::collections::HashMap;
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek, Write};
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use crate::error::Result;
+use crate::error::{ConvertError, Result};
 
-/// Opens a package from anything readable and seekable, such as a file or bytes in memory.
-pub fn open<R: Read + Seek>(reader: R) -> Result<ZipArchive<R>> {
-    Ok(ZipArchive::new(reader)?)
+const MB: u64 = 1 << 20;
+
+/// How much a package may decompress to.
+///
+/// A small file can decompress to gigabytes (a "zip bomb"), and the sizes in a zip's headers can
+/// be faked, so these are checked against the bytes actually read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The most one part may decompress to.
+    pub part: u64,
+    /// The most all the parts read from one package may add up to.
+    pub total: u64,
 }
 
-/// Reads one part from the archive, or `None` if the package doesn't have it.
-pub fn read_part<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    name: &str,
-) -> Result<Option<String>> {
-    let mut entry = match archive.by_name(name) {
-        Ok(entry) => entry,
-        Err(ZipError::FileNotFound) => return Ok(None),
-        Err(err) => return Err(err.into()),
+impl Limits {
+    /// Far above any real document, while keeping memory use bounded.
+    pub const DEFAULT: Limits = Limits {
+        part: 256 * MB,
+        total: 1024 * MB,
     };
-
-    let mut xml = String::new();
-    entry.read_to_string(&mut xml).map_err(ZipError::from)?;
-    Ok(Some(xml))
 }
 
-/// Reads a part that must exist.
-pub fn read_required_part<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+/// An open package, which keeps count of how much has been read from it.
+#[derive(Debug)]
+pub struct Archive<R> {
+    zip: ZipArchive<R>,
+    limits: Limits,
+    /// Bytes read so far, after decompressing.
+    read: u64,
+}
+
+impl<R: Read + Seek> Archive<R> {
+    /// Opens a package from anything readable and seekable, such as a file or bytes in memory.
+    pub fn open(reader: R) -> Result<Self> {
+        Archive::with_limits(reader, Limits::DEFAULT)
+    }
+
+    pub fn with_limits(reader: R, limits: Limits) -> Result<Self> {
+        Ok(Archive {
+            zip: ZipArchive::new(reader)?,
+            limits,
+            read: 0,
+        })
+    }
+
+    /// Reads one XML part, or `None` if the package doesn't have it.
+    pub fn read_part(&mut self, name: &str) -> Result<Option<String>> {
+        let Some(bytes) = self.read_bytes(name)? else {
+            return Ok(None);
+        };
+        let xml = String::from_utf8(bytes)
+            .map_err(|err| ZipError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+        Ok(Some(xml))
+    }
+
+    /// Reads an XML part that must exist.
+    pub fn read_required_part(&mut self, name: &str) -> Result<String> {
+        self.read_part(name)?
+            .ok_or_else(|| ZipError::FileNotFound.into())
+    }
+
+    /// Reads any part, such as an image, or `None` if the package doesn't have it.
+    pub fn read_bytes(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+        let entry = match self.zip.by_name(name) {
+            Ok(entry) => entry,
+            Err(ZipError::FileNotFound) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let mut bytes = Vec::new();
+        read_limited(entry, name, self.limits, &mut self.read, &mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Decompresses every XML part without keeping it, to check it's within the limits.
+    ///
+    /// This is for packages read by a library that can't be limited itself (calamine).
+    pub fn check_xml_parts(&mut self) -> Result<()> {
+        for i in 0..self.zip.len() {
+            let entry = self.zip.by_index(i)?;
+            let name = entry.name().to_string();
+            if name.ends_with(".xml") || name.ends_with(".rels") {
+                read_limited(entry, &name, self.limits, &mut self.read, &mut io::sink())?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Copies the part `name` from `entry` to `out`, adding its size to `read`.
+///
+/// Stops one byte past what the limits allow, so a part that's too big is never read in full.
+fn read_limited(
+    entry: impl Read,
     name: &str,
-) -> Result<String> {
-    read_part(archive, name)?.ok_or_else(|| ZipError::FileNotFound.into())
+    limits: Limits,
+    read: &mut u64,
+    out: &mut impl Write,
+) -> Result<()> {
+    let allowed = limits.part.min(limits.total.saturating_sub(*read));
+    let copied = io::copy(&mut entry.take(allowed + 1), out).map_err(ZipError::from)?;
+    if copied > allowed {
+        return Err(if allowed == limits.part {
+            ConvertError::PartTooLarge {
+                part: name.to_string(),
+                limit: limits.part,
+            }
+        } else {
+            ConvertError::InputTooLarge {
+                limit: limits.total,
+            }
+        });
+    }
+    *read += copied;
+    Ok(())
 }
 
 /// The relationships file for a part: `ppt/slides/slide1.xml` -> `ppt/slides/_rels/slide1.xml.rels`.
@@ -219,6 +306,77 @@ pub fn attr(e: &BytesStart, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A package with the given parts, built in memory.
+    fn zip_with(parts: &[(&str, &[u8])]) -> io::Cursor<Vec<u8>> {
+        let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+        for (name, bytes) in parts {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap()
+    }
+
+    const SMALL: Limits = Limits {
+        part: 10,
+        total: 25,
+    };
+
+    #[test]
+    fn reads_parts_within_the_limits() {
+        let mut archive = Archive::with_limits(
+            zip_with(&[("a.xml", b"0123456789"), ("b.png", b"012")]),
+            SMALL,
+        )
+        .unwrap();
+        assert_eq!(archive.read_part("a.xml").unwrap().unwrap(), "0123456789");
+        assert_eq!(archive.read_bytes("b.png").unwrap().unwrap(), b"012");
+        assert_eq!(archive.read_part("missing.xml").unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_a_part_over_the_limit() {
+        let mut archive =
+            Archive::with_limits(zip_with(&[("word/document.xml", &[b' '; 11])]), SMALL).unwrap();
+        let err = archive.read_part("word/document.xml").unwrap_err();
+        assert!(
+            matches!(&err, ConvertError::PartTooLarge { part, limit: 10 } if part == "word/document.xml"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_parts_that_add_up_to_more_than_the_total() {
+        let ten = [b' '; 10];
+        let mut archive = Archive::with_limits(
+            zip_with(&[("a.xml", &ten), ("b.xml", &ten), ("c.xml", &ten)]),
+            SMALL,
+        )
+        .unwrap();
+        archive.read_bytes("a.xml").unwrap();
+        archive.read_bytes("b.xml").unwrap();
+        let err = archive.read_bytes("c.xml").unwrap_err();
+        assert!(
+            matches!(err, ConvertError::InputTooLarge { limit: 25 }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn checks_xml_parts_but_not_other_files() {
+        let big = [b' '; 11];
+        let mut media = Archive::with_limits(zip_with(&[("xl/media/v.mp4", &big)]), SMALL).unwrap();
+        media.check_xml_parts().unwrap();
+
+        let mut sheet =
+            Archive::with_limits(zip_with(&[("xl/worksheets/sheet1.xml", &big)]), SMALL).unwrap();
+        assert!(matches!(
+            sheet.check_xml_parts(),
+            Err(ConvertError::PartTooLarge { .. })
+        ));
+    }
 
     #[test]
     fn reads_relationship_targets() {

@@ -16,12 +16,11 @@ use std::collections::HashMap;
 use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
-use zip::ZipArchive;
 
 use crate::document::{Block, Run};
 use crate::error::Result;
 use crate::images::{self, ImageExport, Images};
-use crate::opc::{self, XmlHandler, attr};
+use crate::opc::{self, Archive, XmlHandler, attr};
 
 const WORKBOOK: &str = "xl/workbook.xml";
 
@@ -40,7 +39,7 @@ pub struct Picture {
 /// Saves the pictures on `sheet` and returns one Markdown paragraph per picture, in reading
 /// order (top to bottom, then left to right).
 pub fn export_sheet_pictures<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+    archive: &mut Archive<R>,
     sheet: &str,
     export: &mut ImageExport,
 ) -> Result<Vec<Block>> {
@@ -54,7 +53,7 @@ pub fn export_sheet_pictures<R: Read + Seek>(
 
 /// Finds the pictures on the sheet called `sheet`, sorted into reading order.
 pub fn read_pictures<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+    archive: &mut Archive<R>,
     sheet: &str,
 ) -> Result<Vec<Picture>> {
     let Some(sheet_part) = sheet_part(archive, sheet)? else {
@@ -63,10 +62,10 @@ pub fn read_pictures<R: Read + Seek>(
 
     let mut pictures = Vec::new();
     for drawing in related_parts(archive, &sheet_part, "drawing")? {
-        let Some(xml) = opc::read_part(archive, &drawing)? else {
+        let Some(xml) = archive.read_part(&drawing)? else {
             continue;
         };
-        let images = match opc::read_part(archive, &opc::rels_path(&drawing))? {
+        let images = match archive.read_part(&opc::rels_path(&drawing))? {
             Some(rels) => opc::image_parts(&opc::parse_relationships(&rels)?, &drawing),
             None => HashMap::new(),
         };
@@ -79,8 +78,8 @@ pub fn read_pictures<R: Read + Seek>(
 }
 
 /// The worksheet part for the sheet called `name`, such as `xl/worksheets/sheet1.xml`.
-fn sheet_part<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<Option<String>> {
-    let Some(workbook) = opc::read_part(archive, WORKBOOK)? else {
+fn sheet_part<R: Read + Seek>(archive: &mut Archive<R>, name: &str) -> Result<Option<String>> {
+    let Some(workbook) = archive.read_part(WORKBOOK)? else {
         return Ok(None);
     };
 
@@ -94,7 +93,7 @@ fn sheet_part<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result
         return Ok(None);
     };
 
-    let relationships = match opc::read_part(archive, &opc::rels_path(WORKBOOK))? {
+    let relationships = match archive.read_part(&opc::rels_path(WORKBOOK))? {
         Some(xml) => opc::parse_relationships(&xml)?,
         None => return Ok(None),
     };
@@ -105,11 +104,11 @@ fn sheet_part<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result
 
 /// Parts that `part` links to with relationships of the given kind.
 fn related_parts<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+    archive: &mut Archive<R>,
     part: &str,
     kind: &str,
 ) -> Result<Vec<String>> {
-    let Some(xml) = opc::read_part(archive, &opc::rels_path(part))? else {
+    let Some(xml) = archive.read_part(&opc::rels_path(part))? else {
         return Ok(Vec::new());
     };
     let mut parts: Vec<String> = opc::parse_relationships(&xml)?
@@ -287,7 +286,7 @@ mod tests {
     ///
     /// Spreadsheet libraries tend to write pictures already in position order, which would let
     /// a missing sort go unnoticed, so this writes the drawing XML by hand.
-    fn workbook_with_drawing(anchors: &str) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
+    fn workbook_with_drawing(anchors: &str) -> Archive<std::io::Cursor<Vec<u8>>> {
         use std::io::Write;
 
         let rels = |entries: &[(&str, &str, &str)]| {
@@ -330,7 +329,7 @@ mod tests {
                 .unwrap();
             writer.write_all(contents.as_bytes()).unwrap();
         }
-        ZipArchive::new(writer.finish().unwrap()).unwrap()
+        Archive::open(writer.finish().unwrap()).unwrap()
     }
 
     #[test]

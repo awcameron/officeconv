@@ -117,6 +117,17 @@ $ officeconv notes.docx --to csv
 Error: cannot convert docx to csv; docx supports: md, pdf
 ```
 
+### Size limits
+
+Office files are zip archives, and a small file can decompress to gigabytes. To keep memory use
+bounded, `officeconv` stops with an error when:
+
+- one part of the file (such as `word/document.xml` or an image) decompresses to more than 256 MB
+- everything it reads from one file decompresses to more than 1 GB in total, images included
+- stdin has more than 1 GB
+
+The sizes are counted as the file is read, not taken from the zip's headers, which can be faked.
+
 ## What gets converted
 
 ### XLSX

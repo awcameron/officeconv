@@ -120,6 +120,41 @@ fn writes_each_sheet_to_its_own_file() {
 }
 
 #[test]
+fn all_sheets_keeps_sheets_whose_file_names_clash() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("report.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    // `|` becomes `_` and a trailing dot is dropped, so each pair makes the same file name.
+    for (name, text) in [("a|b", "1"), ("a_b", "2"), ("Notes", "3"), ("Notes.", "4")] {
+        workbook
+            .add_worksheet()
+            .set_name(name)
+            .unwrap()
+            .write(0, 0, text)
+            .unwrap();
+    }
+    workbook.save(&input).unwrap();
+    let out_dir = dir.path().join("out");
+
+    officeconv()
+        .arg(&input)
+        .args(["--to", "csv", "--all-sheets", "-o"])
+        .arg(&out_dir)
+        .assert()
+        .success()
+        .stderr(contains("report-a_b-2.csv").and(contains("report-Notes-2.csv")));
+
+    for (file, text) in [
+        ("report-a_b.csv", "1\n"),
+        ("report-a_b-2.csv", "2\n"),
+        ("report-Notes.csv", "3\n"),
+        ("report-Notes-2.csv", "4\n"),
+    ] {
+        assert_eq!(std::fs::read_to_string(out_dir.join(file)).unwrap(), text);
+    }
+}
+
+#[test]
 fn all_sheets_defaults_to_current_directory() {
     let (dir, path) = sample_xlsx();
 

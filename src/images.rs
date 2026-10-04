@@ -1,7 +1,7 @@
 //! What happens to the images in a `.docx`, `.pptx` or `.xlsx`: saved next to the Markdown
 //! that links to them, kept in memory for a PDF, or left out.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use zip::result::ZipError;
 
 use crate::document::{Block, resolve_images};
 use crate::error::{ConvertError, Result};
-use crate::output::{ensure_dir, safe_file_name};
+use crate::output::{UniqueNames, ensure_dir, safe_file_name};
 
 /// Writes images into one folder, each at most once, and remembers the link to each.
 #[derive(Debug)]
@@ -21,8 +21,8 @@ pub struct ImageExport {
     link_prefix: String,
     /// Image part -> the link already written for it.
     links: HashMap<String, String>,
-    /// File names taken so far, lowercased because macOS and Windows ignore case.
-    taken: HashSet<String>,
+    /// File names already used in `dir`.
+    names: UniqueNames,
 }
 
 impl ImageExport {
@@ -34,7 +34,7 @@ impl ImageExport {
             dir: dir.to_path_buf(),
             link_prefix: link_prefix(dir, markdown_dir),
             links: HashMap::new(),
-            taken: HashSet::new(),
+            names: UniqueNames::default(),
         })
     }
 
@@ -66,29 +66,13 @@ impl ImageExport {
         // Only the last segment of the part name is used, so a name like
         // `../../etc/x` can't write outside the folder.
         let original = part.rsplit('/').next().unwrap_or(part);
-        let name = self.unique_name(&safe_file_name(original));
+        let name = self.names.claim(&safe_file_name(original));
         let path = self.dir.join(&name);
         fs::write(&path, bytes).map_err(|source| ConvertError::CreateOutput { path, source })?;
 
         let link = format!("{}{name}", self.link_prefix);
         self.links.insert(part.to_string(), link.clone());
         Ok(Some(link))
-    }
-
-    /// `image.png`, or `image-2.png` if that's taken, and so on.
-    fn unique_name(&mut self, name: &str) -> String {
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
-            _ => (name, String::new()),
-        };
-
-        let mut candidate = name.to_string();
-        let mut n = 2;
-        while !self.taken.insert(candidate.to_lowercase()) {
-            candidate = format!("{stem}-{n}{ext}");
-            n += 1;
-        }
-        candidate
     }
 }
 

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Workflows pin actions to commit SHAs; this opens a PR when an action releases a new version,
+  # updating the SHA and its version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

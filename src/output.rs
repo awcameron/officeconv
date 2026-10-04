@@ -5,6 +5,8 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use unicode_normalization::UnicodeNormalization;
+
 use crate::error::{ConvertError, Result};
 use crate::format::OutputFormat;
 
@@ -57,7 +59,7 @@ pub fn sheet_output_path(
 /// Hands out file names not yet used in one folder.
 #[derive(Debug, Default)]
 pub struct UniqueNames {
-    /// Names taken so far, lowercased because macOS and Windows ignore case.
+    /// Names taken so far, as [`same_file_key`] gives them.
     taken: HashSet<String>,
 }
 
@@ -71,12 +73,21 @@ impl UniqueNames {
 
         let mut candidate = name.to_string();
         let mut n = 2;
-        while !self.taken.insert(candidate.to_lowercase()) {
+        while !self.taken.insert(same_file_key(&candidate)) {
             candidate = format!("{stem}-{n}{ext}");
             n += 1;
         }
         candidate
     }
+}
+
+/// A form of `name` that's the same for every name a file system could treat as the same file.
+///
+/// macOS and Windows ignore case, and macOS also treats different Unicode spellings of the same
+/// text as one name: `é` as one code point, or as `e` plus a combining accent. So the name is
+/// lowercased, then normalized to NFC (one code point wherever possible).
+fn same_file_key(name: &str) -> String {
+    name.to_lowercase().nfc().collect()
 }
 
 /// Replaces characters that aren't allowed in file names on common systems.
@@ -118,6 +129,16 @@ mod tests {
         assert_eq!(path("Q1 2026"), Path::new("out/sales-Q1 2026.md"));
         assert_eq!(path("a|b"), Path::new("out/sales-a_b.md"));
         assert_eq!(path("a_b"), Path::new("out/sales-a_b-2.md"));
+    }
+
+    #[test]
+    fn numbers_names_that_differ_only_in_unicode_normalization() {
+        // Both display as "Café": one code point for é, or e plus a combining accent. macOS
+        // treats them as the same file name.
+        let mut names = UniqueNames::default();
+        assert_eq!(names.claim("Caf\u{e9}.csv"), "Caf\u{e9}.csv");
+        assert_eq!(names.claim("Cafe\u{301}.csv"), "Cafe\u{301}-2.csv");
+        assert_eq!(names.claim("CAFE\u{301}.csv"), "CAFE\u{301}-3.csv");
     }
 
     #[test]

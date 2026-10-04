@@ -21,6 +21,7 @@ rustybuzz = { version = "0.20", optional = true }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 thiserror = "2.0.21"
 unicode-linebreak = { version = "0.1.5", optional = true }
+unicode-normalization = "0.1.25"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [features]

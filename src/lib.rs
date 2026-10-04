@@ -95,11 +95,7 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
 
     write_output(cli, document::markdown::render(&blocks).as_bytes())?;
     if let Some(export) = &export {
-        eprintln!(
-            "saved {} images to {}",
-            export.count(),
-            export.dir().display()
-        );
+        export.report();
     }
     Ok(())
 }
@@ -263,11 +259,6 @@ impl<'a> SheetImages<'a> {
     }
 
     fn report(&self) {
-        let export = &self.export;
-        eprintln!(
-            "saved {} images to {}",
-            export.count(),
-            export.dir().display()
-        );
+        self.export.report();
     }
 }

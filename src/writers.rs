@@ -28,7 +28,7 @@ pub fn write_table<W: Write>(
         OutputFormat::Csv => write_delimited(table, b',', out),
         OutputFormat::Tsv => write_delimited(table, b'\t', out),
         OutputFormat::Json => write_json(table, json, out),
-        OutputFormat::Markdown => write_markdown(table, out),
+        OutputFormat::Markdown => write_markdown(table, MarkdownCells::Text, out),
         OutputFormat::Pdf => unreachable!("InputKind::check_output rejects sheets as PDF"),
     }
 }
@@ -120,25 +120,30 @@ fn json_keys(headers: &[String]) -> Vec<String> {
     keys
 }
 
+/// What the cells given to [`write_markdown`] hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkdownCells {
+    /// Plain text, such as a spreadsheet's values: escaped so it shows as written.
+    Text,
+    /// Markdown already, such as a document's formatted runs: written as it is.
+    Markdown,
+}
+
 /// A GitHub-flavored Markdown table with padded columns.
-pub fn write_markdown<W: Write>(table: &Table, mut out: W) -> io::Result<()> {
+pub fn write_markdown<W: Write>(table: &Table, cells: MarkdownCells, mut out: W) -> io::Result<()> {
     if table.is_empty() {
         return Ok(());
     }
 
-    let headers: Vec<String> = table
-        .headers
-        .iter()
-        .map(|h| escape_markdown_cell(h))
-        .collect();
+    let cell = |text: &str| match cells {
+        MarkdownCells::Text => escape_markdown_cell(&escape_markdown_text(text)),
+        MarkdownCells::Markdown => escape_markdown_cell(text),
+    };
+    let headers: Vec<String> = table.headers.iter().map(|h| cell(h)).collect();
     let rows: Vec<Vec<String>> = table
         .rows
         .iter()
-        .map(|row| {
-            row.iter()
-                .map(|c| escape_markdown_cell(&c.to_string()))
-                .collect()
-        })
+        .map(|row| row.iter().map(|c| cell(&c.to_string())).collect())
         .collect();
 
     // Each column is as wide as its widest cell, and at least 3 so `---` fits.
@@ -165,6 +170,35 @@ fn write_markdown_row<W: Write>(out: &mut W, cells: &[String], widths: &[usize])
         .map(|(cell, &width)| format!("{cell:<width$}"))
         .collect();
     writeln!(out, "| {} |", padded.join(" | "))
+}
+
+/// Escapes `text` so Markdown shows it as written, rather than as formatting or HTML.
+///
+/// `\\`, `*`, `_`, `` ` ``, `[` and `]` get a backslash. `<` becomes `&lt;` rather than `\\<`,
+/// because Python-Markdown doesn't treat `\\<` as an escape. `&` becomes `&amp;` where it starts
+/// something a renderer would decode, such as `&copy;` or `&#58;`. A lone `&`, as in `Q&A`, stays.
+pub fn escape_markdown_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, c) in text.char_indices() {
+        match c {
+            '\\' | '*' | '_' | '`' | '[' | ']' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '<' => out.push_str("&lt;"),
+            '&' if starts_entity(&text[i + 1..]) => out.push_str("&amp;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// True if `rest`, the text after an `&`, would make it an entity: a name, or `#` and a number,
+/// then `;`.
+fn starts_entity(rest: &str) -> bool {
+    let body = rest.strip_prefix('#').unwrap_or(rest);
+    let len = body.chars().take_while(char::is_ascii_alphanumeric).count();
+    len > 0 && body[len..].starts_with(';')
 }
 
 /// Pipes would end the cell and newlines would end the row, so escape both.
@@ -303,6 +337,42 @@ mod tests {
 | North\\|East | 12    |
 | S           | 7     |
 "
+        );
+    }
+
+    #[test]
+    fn markdown_escapes_text_cells_but_not_markdown_ones() {
+        let t = table(&[&["<b>", "*"], &["&copy;", "a_b"]]);
+        let render = |cells| {
+            let mut buffer = Vec::new();
+            write_markdown(&t, cells, &mut buffer).unwrap();
+            String::from_utf8(buffer).unwrap()
+        };
+        assert_eq!(
+            render(MarkdownCells::Text),
+            "\
+| &lt;b>     | \\*   |
+| ---------- | ---- |
+| &amp;copy; | a\\_b |
+"
+        );
+        assert_eq!(
+            render(MarkdownCells::Markdown),
+            "\
+| <b>    | *   |
+| ------ | --- |
+| &copy; | a_b |
+"
+        );
+    }
+
+    #[test]
+    fn escapes_text_so_markdown_shows_it_literally() {
+        assert_eq!(escape_markdown_text(r"\ * _ ` [ ]"), r"\\ \* \_ \` \[ \]");
+        assert_eq!(escape_markdown_text("<img src=x>"), "&lt;img src=x>");
+        assert_eq!(
+            escape_markdown_text("&copy; &#58; &#x3A; Q&A R & D &; &#;"),
+            "&amp;copy; &amp;#58; &amp;#x3A; Q&A R & D &; &#;"
         );
     }
 

@@ -63,6 +63,36 @@ fn converts_xlsx_to_every_format() {
 }
 
 #[test]
+fn markdown_shows_cell_text_literally() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("notes.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    let rows = [
+        ["<b>Name</b>", "Note"],
+        ["Ann", "<img src=x onerror=alert(1)>"],
+        ["Bob", "&copy; *not italic* Q&A"],
+    ];
+    for (r, row) in rows.iter().enumerate() {
+        for (c, text) in row.iter().enumerate() {
+            sheet.write(r as u32, c as u16, *text).unwrap();
+        }
+    }
+    workbook.save(&input).unwrap();
+
+    // `<` and entities would otherwise be live HTML, and `*` would be formatting.
+    assert_eq!(
+        convert(&input, "md"),
+        "\
+| &lt;b>Name&lt;/b> | Note                            |
+| ----------------- | ------------------------------- |
+| Ann               | &lt;img src=x onerror=alert(1)> |
+| Bob               | &amp;copy; \\*not italic\\* Q&A   |
+"
+    );
+}
+
+#[test]
 fn writes_to_output_file() {
     let (dir, path) = sample_xlsx();
     let out = dir.path().join("sales.csv");

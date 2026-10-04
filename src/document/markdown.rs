@@ -2,7 +2,7 @@
 
 use super::{Block, Cell, ListKind, Run, RunStyle, append_run};
 use crate::table::Table;
-use crate::writers::write_markdown;
+use crate::writers::{MarkdownCells, escape_markdown_text, write_markdown};
 
 /// Renders blocks as Markdown, separated by blank lines.
 ///
@@ -70,7 +70,12 @@ fn render_table(rows: &[Vec<Cell>]) -> String {
         .collect();
 
     let mut buffer = Vec::new();
-    write_markdown(&Table::from_rows(rows), &mut buffer).expect("writing to a Vec can't fail");
+    write_markdown(
+        &Table::from_rows(rows),
+        MarkdownCells::Markdown,
+        &mut buffer,
+    )
+    .expect("writing to a Vec can't fail");
     String::from_utf8(buffer)
         .expect("the table writer only writes the UTF-8 it was given")
         .trim_end()
@@ -123,7 +128,7 @@ fn render_runs(runs: &[Run]) -> String {
 fn render_run(run: &Run) -> String {
     if let Some(source) = &run.image {
         // Alt text can't span lines in Markdown.
-        let alt = escape_inline(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
+        let alt = escape_markdown_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
         return format!("![{alt}]({})", escape_url(source));
     }
 
@@ -136,11 +141,11 @@ fn render_run(run: &Run) -> String {
 
     let (leading, inner, trailing) = split_edges(&run.text);
     if marker.is_empty() || inner.is_empty() {
-        return escape_inline(&run.text);
+        return escape_markdown_text(&run.text);
     }
     format!(
         "{leading}{marker}{}{marker}{trailing}",
-        escape_inline(inner)
+        escape_markdown_text(inner)
     )
 }
 
@@ -175,18 +180,6 @@ fn escape_url(url: &str) -> String {
         } else {
             out.push(c);
         }
-    }
-    out
-}
-
-/// Escapes characters that Markdown would treat as formatting.
-fn escape_inline(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        if matches!(c, '\\' | '*' | '_' | '`' | '[' | ']' | '<') {
-            out.push('\\');
-        }
-        out.push(c);
     }
     out
 }
@@ -379,6 +372,9 @@ mod tests {
     fn escapes_markdown_syntax() {
         let runs = [run("2*3 = snake_case [x] -> y", false, false)];
         assert_eq!(render_runs(&runs), r"2\*3 = snake\_case \[x\] -> y");
+
+        let runs = [run("<b> &copy; Q&A", false, false)];
+        assert_eq!(render_runs(&runs), "&lt;b> &amp;copy; Q&A");
     }
 
     #[test]

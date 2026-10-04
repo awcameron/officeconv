@@ -192,9 +192,10 @@ fn convert_all_sheets(cli: &Cli, source: &Source) -> Result<()> {
     output::ensure_dir(dir)?;
     let mut images = SheetImages::open(cli, source, dir)?;
     let stem = source.stem();
+    let mut names = output::UniqueNames::default();
 
     for sheet in xlsx::read_all_sheets(source.reader()?)? {
-        let path = output::sheet_output_path(dir, &stem, &sheet.name, cli.to);
+        let path = output::sheet_output_path(dir, &stem, &sheet.name, cli.to, &mut names);
         let mut out = output::open_output(Some(&path))?;
         write_sheet(&sheet, cli, images.as_mut(), &mut out)?;
         out.flush()?;

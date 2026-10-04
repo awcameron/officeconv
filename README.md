@@ -143,6 +143,9 @@ Error: cannot convert docx to csv; docx supports: md, pdf
   stay floats, since JavaScript can't hold larger integers exactly. A formula is written as the
   result Excel last calculated. If the file has none saved, the cell is empty.
 - In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
+- With `--all-sheets`, each file is named after its sheet. Characters a file name can't hold, such
+  as `|`, become `_`, and trailing dots are dropped. If two sheets end up with the same file name,
+  the later one gets a number added, such as `sales-a_b-2.csv`.
 - With `--images DIR`, pictures placed on the sheet are saved. Markdown lists them after the table,
   top to bottom and then left to right. CSV, TSV and JSON can't refer to images, so their data is
   unchanged and the files are only saved. See [Images](#images).

@@ -1,5 +1,6 @@
 //! Where converted output goes: stdout, a file, or one file per sheet.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -39,9 +40,43 @@ pub fn ensure_dir(dir: &Path) -> Result<()> {
 }
 
 /// Builds `<dir>/<stem>-<sheet>.<ext>`, e.g. `out/sales-Q1.csv`.
-pub fn sheet_output_path(dir: &Path, stem: &str, sheet: &str, format: OutputFormat) -> PathBuf {
+///
+/// Different sheet names can make the same file name (`a|b` and `a_b`), so `names` adds a
+/// number to a clash: `out/sales-a_b-2.csv`.
+pub fn sheet_output_path(
+    dir: &Path,
+    stem: &str,
+    sheet: &str,
+    format: OutputFormat,
+    names: &mut UniqueNames,
+) -> PathBuf {
     let file_name = format!("{}-{}.{}", stem, safe_file_name(sheet), format.extension());
-    dir.join(file_name)
+    dir.join(names.claim(&file_name))
+}
+
+/// Hands out file names not yet used in one folder.
+#[derive(Debug, Default)]
+pub struct UniqueNames {
+    /// Names taken so far, lowercased because macOS and Windows ignore case.
+    taken: HashSet<String>,
+}
+
+impl UniqueNames {
+    /// `name`, or `name-2`, `name-3`, ... (before the extension) if it's taken.
+    pub fn claim(&mut self, name: &str) -> String {
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (name, String::new()),
+        };
+
+        let mut candidate = name.to_string();
+        let mut n = 2;
+        while !self.taken.insert(candidate.to_lowercase()) {
+            candidate = format!("{stem}-{n}{ext}");
+            n += 1;
+        }
+        candidate
+    }
 }
 
 /// Replaces characters that aren't allowed in file names on common systems.
@@ -70,8 +105,31 @@ mod tests {
 
     #[test]
     fn builds_sheet_paths() {
-        let path = sheet_output_path(Path::new("out"), "sales", "Q1 2026", OutputFormat::Markdown);
-        assert_eq!(path, Path::new("out/sales-Q1 2026.md"));
+        let mut names = UniqueNames::default();
+        let mut path = |sheet| {
+            sheet_output_path(
+                Path::new("out"),
+                "sales",
+                sheet,
+                OutputFormat::Markdown,
+                &mut names,
+            )
+        };
+        assert_eq!(path("Q1 2026"), Path::new("out/sales-Q1 2026.md"));
+        assert_eq!(path("a|b"), Path::new("out/sales-a_b.md"));
+        assert_eq!(path("a_b"), Path::new("out/sales-a_b-2.md"));
+    }
+
+    #[test]
+    fn numbers_clashing_names_ignoring_case() {
+        let mut names = UniqueNames::default();
+        assert_eq!(names.claim("image.png"), "image.png");
+        assert_eq!(names.claim("Image.PNG"), "Image-2.PNG");
+        assert_eq!(names.claim("image.png"), "image-3.png");
+        assert_eq!(names.claim("README"), "README");
+        assert_eq!(names.claim("readme"), "readme-2");
+        assert_eq!(names.claim(".hidden"), ".hidden");
+        assert_eq!(names.claim(".hidden"), ".hidden-2");
     }
 
     #[test]

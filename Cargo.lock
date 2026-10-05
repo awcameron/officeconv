@@ -842,6 +842,7 @@ dependencies = [
  "csv",
  "flate2",
  "fontdb",
+ "imagesize",
  "krilla",
  "pdf-extract",
  "predicates",

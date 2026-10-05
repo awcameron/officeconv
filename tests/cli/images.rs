@@ -266,3 +266,35 @@ fn xlsx_output_is_unchanged_without_images_flag() {
     );
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn reads_a_drawing_linked_twice_once() {
+    // A second relationship from the sheet to the same drawing. Excel never does this, but
+    // without a check each one would read the drawing and list its pictures again.
+    let (_dir, original) = xlsx_with_pictures();
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&original).unwrap()).unwrap();
+    let mut parts = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut contents = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut contents).unwrap();
+        if entry.name() == "xl/worksheets/_rels/sheet1.xml.rels" {
+            let duplicate = r#"<Relationship Id="rIdAgain" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#;
+            contents = String::from_utf8(contents)
+                .unwrap()
+                .replace("</Relationships>", duplicate)
+                .into_bytes();
+        }
+        parts.push((entry.name().to_string(), contents));
+    }
+    let (dir, path) = sample_package("book.xlsx", &parts);
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--images"])
+        .arg(dir.path().join("img"))
+        .assert()
+        .success()
+        .stdout(contains("![Sales chart]").count(1))
+        .stdout(contains("![Company logo]").count(1));
+}

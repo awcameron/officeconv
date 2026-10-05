@@ -18,7 +18,7 @@
 //! Each slide becomes a `## Slide N: Title` heading followed by its text, with speaker notes
 //! under `### Notes` and a horizontal rule between slides.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
@@ -72,12 +72,21 @@ pub fn read_blocks<R: Read + Seek>(
         None => HashMap::new(),
     };
 
+    // A slide or notes part is read once, however many entries point at it. PowerPoint never
+    // repeats one, and the size limits count bytes read, not work: listing one slide 500,000
+    // times would otherwise turn a 1 MB file into 500 MB of output.
+    let mut seen_slides = HashSet::new();
+    let mut seen_notes = HashSet::new();
+
     let mut slides = Vec::new();
     for id in slide_ids(&presentation)? {
         let Some(relationship) = relationships.get(&id) else {
             continue;
         };
         let part = opc::resolve_target(PRESENTATION, &relationship.target);
+        if !seen_slides.insert(part.clone()) {
+            continue;
+        }
         let Some(xml) = archive.read_part(&part)? else {
             continue;
         };
@@ -99,6 +108,7 @@ pub fn read_blocks<R: Read + Seek>(
             .map(|r| opc::resolve_target(&part, &r.target));
         if notes == Notes::Include
             && let Some(notes_part) = notes_part
+            && seen_notes.insert(notes_part.clone())
             && let Some(notes_xml) = archive.read_part(&notes_part)?
         {
             slide.notes = parse_notes(&notes_xml)?;

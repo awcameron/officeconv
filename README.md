@@ -119,8 +119,8 @@ Error: cannot convert docx to csv; docx supports: md, pdf
 
 ### Size limits
 
-Office files are zip archives, and a small file can decompress to gigabytes. To keep memory use
-bounded, `officeconv` stops with an error when:
+Office files are zip archives, and a small file can decompress to gigabytes. To bound how much
+it decompresses, `officeconv` stops with an error when:
 
 - one part of the file (such as `word/document.xml` or an image) decompresses to more than 256 MB
 - everything it reads from one file decompresses to more than 1 GB in total, images included
@@ -129,6 +129,10 @@ bounded, `officeconv` stops with an error when:
 The sizes are counted as the file is read, not taken from the zip's headers, which can be faked.
 For `.xlsx` files, every part is checked before the workbook is read, so files it doesn't convert,
 such as embedded media, count toward the total too.
+
+These limits bound how much is decompressed, not how much memory or output that turns into. A
+file within them can still use a few times as much memory as it decompresses to, such as when PDF
+output decodes its pictures.
 
 These limits are part of what makes `officeconv` safe to run on files from people you don't
 trust. See [SECURITY.md](SECURITY.md) for the full list, the known gaps, and how to report a

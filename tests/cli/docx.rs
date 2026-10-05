@@ -89,6 +89,19 @@ fn drops_links_with_unsafe_schemes_but_keeps_their_text() {
 }
 
 #[test]
+fn markdown_shows_html_and_entities_in_text_literally() {
+    // Python-Markdown doesn't treat `\\<` as an escape, so `<` has to be written as `&lt;`.
+    let (_dir, path) = sample_docx(
+        "<w:p><w:r><w:t>&lt;img src=x onerror=alert(1)&gt; costs &amp;pound;5, Q&amp;A</w:t></w:r></w:p>",
+    );
+
+    assert_eq!(
+        convert(&path, "md"),
+        "&lt;img src=x onerror=alert(1)> costs &amp;pound;5, Q&A\n"
+    );
+}
+
+#[test]
 fn converts_docx_lists_links_and_tables() {
     let numbering = format!(
         r#"<w:numbering xmlns:w="{WORD_NS}">

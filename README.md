@@ -156,6 +156,8 @@ such as embedded media, count toward the total too.
   stay floats, since JavaScript can't hold larger integers exactly. A formula is written as the
   result Excel last calculated. If the file has none saved, the cell is empty.
 - In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
+  Text that Markdown would read as formatting or HTML is escaped too, so a cell shows exactly what
+  it holds.
 - With `--all-sheets`, each file is named after its sheet. Characters a file name can't hold, such
   as `|`, become `_`, and trailing dots are dropped. If two sheets end up with the same file name,
   the later one gets a number added, such as `sales-a_b-2.csv`. Names count as the same when they
@@ -179,7 +181,8 @@ such as embedded media, count toward the total too.
 Images are left out unless you pass `--images DIR`; see [Images](#images).
 
 Text that Markdown would read as formatting (`*`, `_`, `[`, or a line starting with `#`, for
-example) is escaped.
+example) is escaped. So is HTML: `<` is written as `&lt;`, and `&` as `&amp;` where it would start
+an entity such as `&copy;`, so the text shows exactly as written.
 
 Links are kept when they're `http`, `https` or `mailto`, or relative, such as `other.docx`. Any
 other kind, such as `javascript:` or `file:`, could run code or open local files when clicked, so

@@ -243,7 +243,8 @@ links, tables, line breaks, and pictures.
   wrap inside their cells, and a table that runs onto another page repeats its header row.
   Links are clickable.
 - Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
-  are kept; other formats, such as EMF or TIFF, are left out with a warning.
+  are kept; other formats, such as EMF or TIFF, are left out with a warning. So are pictures
+  larger than 50 megapixels, which could take gigabytes of memory to decode.
 - Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
   Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, are
   drawn with a font installed on your computer. macOS and Windows always have one; on Linux, install

@@ -1,0 +1,38 @@
+# `cargo deny check`, run in CI. officeconv reads untrusted files (see SECURITY.md), so the
+# crates that parse them are checked for known vulnerabilities, along with their licenses and
+# where they come from.
+
+[graph]
+all-features = true
+
+[advisories]
+# Fails on any advisory for a crate in Cargo.lock, including unmaintained and yanked crates.
+# To accept one, add its ID here with the reason.
+ignore = [
+    # rustybuzz and ttf-parser are unmaintained, with no known vulnerability. The PDF feature
+    # needs them until krilla moves off them (krilla 0.8.2 hasn't). Tracked in #76.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: needed by krilla; replace with harfrust, #76" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: comes with rustybuzz; #76" },
+]
+
+[licenses]
+# Permissive licenses only, so the MIT binary can be shared without extra conditions.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

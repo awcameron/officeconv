@@ -2,6 +2,7 @@
 
 pub mod pictures;
 
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
 
 use zip::result::ZipError;
@@ -9,13 +10,17 @@ use zip::result::ZipError;
 use calamine::{Data, ExcelDateTime, Reader, Xlsx};
 
 use crate::error::{ConvertError, Result};
-use crate::opc::Archive;
+use crate::opc::{self, Archive, attr};
 use crate::table::{Cell, Table};
+
+const WORKBOOK: &str = "xl/workbook.xml";
 
 /// One worksheet, converted to text.
 #[derive(Debug)]
 pub struct Sheet {
     pub name: String,
+    /// The worksheet's part, such as `xl/worksheets/sheet1.xml`, if the workbook says.
+    pub part: Option<String>,
     pub table: Table,
 }
 
@@ -24,6 +29,7 @@ pub struct Sheet {
 /// With `sheet: None`, reads the first sheet in the workbook.
 pub fn read_sheet<R: Read + Seek>(mut reader: R, sheet: Option<&str>) -> Result<Sheet> {
     check_sizes(&mut reader)?;
+    let mut parts = read_sheet_parts(&mut reader)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
 
@@ -39,22 +45,78 @@ pub fn read_sheet<R: Read + Seek>(mut reader: R, sheet: Option<&str>) -> Result<
         None => names.first().ok_or(ConvertError::NoSheets)?.clone(),
     };
 
-    load_sheet(&mut workbook, name)
+    let part = parts.remove(&name);
+    load_sheet(&mut workbook, name, part)
 }
 
 /// Reads every sheet in a workbook, in workbook order.
+///
+/// A worksheet is read once, under the first name that points at it. Excel never gives one
+/// worksheet two names, and the size limits count bytes read, not work: listing one worksheet
+/// thousands of times would otherwise write it to thousands of files.
 pub fn read_all_sheets<R: Read + Seek>(mut reader: R) -> Result<Vec<Sheet>> {
     check_sizes(&mut reader)?;
+    let mut parts = read_sheet_parts(&mut reader)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
     if names.is_empty() {
         return Err(ConvertError::NoSheets);
     }
 
+    let mut read = HashSet::new();
     names
         .into_iter()
-        .map(|name| load_sheet(&mut workbook, name))
+        .filter_map(|name| {
+            let part = parts.remove(&name);
+            if let Some(part) = &part
+                && !read.insert(part.clone())
+            {
+                return None;
+            }
+            Some(load_sheet(&mut workbook, name, part))
+        })
         .collect()
+}
+
+/// Every sheet's worksheet part, such as `xl/worksheets/sheet1.xml`, by sheet name.
+///
+/// Reads the workbook and its relationships once. A sheet whose relationship is missing isn't
+/// listed.
+pub fn sheet_parts<R: Read + Seek>(archive: &mut Archive<R>) -> Result<HashMap<String, String>> {
+    let Some(workbook) = archive.read_part(WORKBOOK)? else {
+        return Ok(HashMap::new());
+    };
+    let mut ids = Vec::new();
+    opc::visit_elements(&workbook, |e| {
+        if e.local_name().as_ref() == "sheet"
+            && let (Some(name), Some(id)) = (attr(e, "name"), attr(e, "id"))
+        {
+            ids.push((name, id));
+        }
+    })?;
+
+    let relationships = match archive.read_part(&opc::rels_path(WORKBOOK))? {
+        Some(xml) => opc::parse_relationships(&xml)?,
+        None => return Ok(HashMap::new()),
+    };
+    Ok(ids
+        .into_iter()
+        .filter_map(|(name, id)| {
+            let target = &relationships.get(&id)?.target;
+            Some((name, opc::resolve_target(WORKBOOK, target)))
+        })
+        .collect())
+}
+
+/// [`sheet_parts`] for the package `reader` holds, then rewinds `reader`. A file that isn't a
+/// zip archive has none, and is left for calamine to report.
+fn read_sheet_parts<R: Read + Seek>(reader: &mut R) -> Result<HashMap<String, String>> {
+    let parts = match Archive::open(&mut *reader) {
+        Ok(mut archive) => sheet_parts(&mut archive)?,
+        Err(_) => HashMap::new(),
+    };
+    reader.rewind().map_err(ZipError::from)?;
+    Ok(parts)
 }
 
 /// Checks every part of the workbook decompresses to within [`Limits`](crate::opc::Limits),
@@ -70,8 +132,12 @@ fn check_sizes<R: Read + Seek>(reader: &mut R) -> Result<()> {
     Ok(())
 }
 
-/// Loads the cells of the sheet called `name` from an already-open workbook.
-fn load_sheet<R: Read + Seek>(workbook: &mut Xlsx<R>, name: String) -> Result<Sheet> {
+/// Loads the cells of the sheet called `name`, stored in `part`, from an already-open workbook.
+fn load_sheet<R: Read + Seek>(
+    workbook: &mut Xlsx<R>,
+    name: String,
+    part: Option<String>,
+) -> Result<Sheet> {
     let range = workbook.worksheet_range(&name)?;
     let rows = range
         .rows()
@@ -80,6 +146,7 @@ fn load_sheet<R: Read + Seek>(workbook: &mut Xlsx<R>, name: String) -> Result<Sh
 
     Ok(Sheet {
         name,
+        part,
         table: Table::from_cells(rows),
     })
 }

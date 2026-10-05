@@ -22,8 +22,6 @@ use crate::error::Result;
 use crate::images::{self, ImageExport, Images};
 use crate::opc::{self, Archive, XmlHandler, attr};
 
-const WORKBOOK: &str = "xl/workbook.xml";
-
 /// One picture on a sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picture {
@@ -36,14 +34,14 @@ pub struct Picture {
     pub col: u32,
 }
 
-/// Saves the pictures on `sheet` and returns one Markdown paragraph per picture, in reading
-/// order (top to bottom, then left to right).
+/// Saves the pictures on the worksheet stored in `sheet_part` and returns one Markdown paragraph
+/// per picture, in reading order (top to bottom, then left to right).
 pub fn export_sheet_pictures<R: Read + Seek>(
     archive: &mut Archive<R>,
-    sheet: &str,
+    sheet_part: &str,
     export: &mut ImageExport,
 ) -> Result<Vec<Block>> {
-    let mut blocks: Vec<Block> = read_pictures(archive, sheet)?
+    let mut blocks: Vec<Block> = read_pictures(archive, sheet_part)?
         .into_iter()
         .map(|picture| Block::Paragraph(vec![Run::image(picture.part, picture.alt)]))
         .collect();
@@ -51,17 +49,14 @@ pub fn export_sheet_pictures<R: Read + Seek>(
     Ok(blocks)
 }
 
-/// Finds the pictures on the sheet called `sheet`, sorted into reading order.
+/// Finds the pictures on the worksheet stored in `sheet_part` (see
+/// [`sheet_parts`](super::sheet_parts)), sorted into reading order.
 pub fn read_pictures<R: Read + Seek>(
     archive: &mut Archive<R>,
-    sheet: &str,
+    sheet_part: &str,
 ) -> Result<Vec<Picture>> {
-    let Some(sheet_part) = sheet_part(archive, sheet)? else {
-        return Ok(Vec::new());
-    };
-
     let mut pictures = Vec::new();
-    for drawing in related_parts(archive, &sheet_part, "drawing")? {
+    for drawing in related_parts(archive, sheet_part, "drawing")? {
         let Some(xml) = archive.read_part(&drawing)? else {
             continue;
         };
@@ -75,31 +70,6 @@ pub fn read_pictures<R: Read + Seek>(
     // A stable sort keeps pictures in the same cell in the order they were drawn.
     pictures.sort_by_key(|p| (p.row, p.col));
     Ok(pictures)
-}
-
-/// The worksheet part for the sheet called `name`, such as `xl/worksheets/sheet1.xml`.
-fn sheet_part<R: Read + Seek>(archive: &mut Archive<R>, name: &str) -> Result<Option<String>> {
-    let Some(workbook) = archive.read_part(WORKBOOK)? else {
-        return Ok(None);
-    };
-
-    let mut relationship_id = None;
-    opc::visit_elements(&workbook, |e| {
-        if e.local_name().as_ref() == "sheet" && attr(e, "name").as_deref() == Some(name) {
-            relationship_id = attr(e, "id");
-        }
-    })?;
-    let Some(id) = relationship_id else {
-        return Ok(None);
-    };
-
-    let relationships = match archive.read_part(&opc::rels_path(WORKBOOK))? {
-        Some(xml) => opc::parse_relationships(&xml)?,
-        None => return Ok(None),
-    };
-    Ok(relationships
-        .get(&id)
-        .map(|r| opc::resolve_target(WORKBOOK, &r.target)))
 }
 
 /// Parts that `part` links to with relationships of the given kind.
@@ -344,7 +314,7 @@ mod tests {
             anchor("oneCellAnchor", 1, 0, &pic("Key", "rId3")),
         ));
 
-        let pictures = read_pictures(&mut archive, "Sales").unwrap();
+        let pictures = read_pictures(&mut archive, "xl/worksheets/sheet1.xml").unwrap();
         let read: Vec<(&str, &str)> = pictures
             .iter()
             .map(|p| (p.alt.as_str(), p.part.as_str()))
@@ -359,9 +329,18 @@ mod tests {
             ]
         );
         assert!(
-            read_pictures(&mut archive, "No such sheet")
+            read_pictures(&mut archive, "xl/worksheets/missing.xml")
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn maps_sheet_names_to_their_parts() {
+        let mut archive = workbook_with_drawing("");
+        assert_eq!(
+            crate::xlsx::sheet_parts(&mut archive).unwrap(),
+            HashMap::from([("Sales".to_string(), "xl/worksheets/sheet1.xml".to_string())])
         );
     }
 

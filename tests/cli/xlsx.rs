@@ -288,3 +288,53 @@ fn typed_works_with_all_sheets() {
         ])
     );
 }
+
+#[test]
+fn all_sheets_writes_a_worksheet_listed_twice_once() {
+    // A third sheet name, "Copy", for Q1's worksheet. Excel never does this, but a small
+    // workbook could list one worksheet thousands of times, each written to its own file.
+    let dir = TempDir::new().unwrap();
+    let original = dir.path().join("original.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    for (name, text) in [("Q1", "a"), ("Q2", "b")] {
+        workbook
+            .add_worksheet()
+            .set_name(name)
+            .unwrap()
+            .write(0, 0, text)
+            .unwrap();
+    }
+    workbook.save(&original).unwrap();
+    let (_listed_dir, listed) = edit_package(&original, "listed.xlsx", "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</sheets>",
+            r#"<sheet name="Copy" sheetId="9" r:id="rIdCopy"/></sheets>"#,
+        )
+    });
+    let (input_dir, input) = edit_package(
+        &listed,
+        "report.xlsx",
+        "xl/_rels/workbook.xml.rels",
+        |rels| {
+            rels.replace(
+                "</Relationships>",
+                r#"<Relationship Id="rIdCopy" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            )
+        },
+    );
+    let out_dir = input_dir.path().join("out");
+
+    officeconv()
+        .arg(&input)
+        .args(["--to", "csv", "--all-sheets", "-o"])
+        .arg(&out_dir)
+        .assert()
+        .success();
+
+    let mut written: Vec<String> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    assert_eq!(written, ["report-Q1.csv", "report-Q2.csv"]);
+}

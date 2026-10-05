@@ -232,11 +232,12 @@ fn write_sheet(
     let Some(images) = images else {
         return Ok(());
     };
-    let pictures = xlsx::pictures::export_sheet_pictures(
-        &mut images.archive,
-        &sheet.name,
-        &mut images.export,
-    )?;
+    let pictures = match &sheet.part {
+        Some(part) => {
+            xlsx::pictures::export_sheet_pictures(&mut images.archive, part, &mut images.export)?
+        }
+        None => Vec::new(),
+    };
     if format == OutputFormat::Markdown && !pictures.is_empty() {
         if !sheet.table.is_empty() {
             writeln!(out)?;

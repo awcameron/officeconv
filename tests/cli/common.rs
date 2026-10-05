@@ -89,6 +89,28 @@ pub fn sample_package(name: &str, parts: &[(String, Vec<u8>)]) -> (TempDir, Path
     (dir, path)
 }
 
+/// A copy of the package at `original`, named `name`, with `edit` applied to the XML part
+/// called `part`.
+pub fn edit_package(
+    original: &Path,
+    name: &str,
+    part: &str,
+    edit: impl Fn(String) -> String,
+) -> (TempDir, PathBuf) {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(original).unwrap()).unwrap();
+    let mut parts = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let mut contents = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut contents).unwrap();
+        if entry.name() == part {
+            contents = edit(String::from_utf8(contents).unwrap()).into_bytes();
+        }
+        parts.push((entry.name().to_string(), contents));
+    }
+    sample_package(name, &parts)
+}
+
 /// A `.rels` part from `(id, kind, target)` entries, such as `("rId4", "image", "media/a.png")`.
 ///
 /// Targets that are web addresses are marked as external, as Office does.

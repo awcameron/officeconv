@@ -23,7 +23,7 @@ use crate::document::Block;
 use crate::error::{ConvertError, Result};
 use crate::images::EmbeddedImages;
 use fonts::Fonts;
-use layout::{Item, Layout, Page, PageSetup};
+use layout::{Item, Layout, Page, PageSetup, SkippedImages};
 
 /// A finished PDF, and what couldn't go into it.
 #[derive(Debug)]
@@ -31,8 +31,8 @@ pub struct Rendered {
     pub pdf: Vec<u8>,
     /// Characters that no font had, drawn as boxes.
     pub missing_chars: BTreeSet<char>,
-    /// Images left out because their format can't go in a PDF (such as EMF or TIFF).
-    pub skipped_images: usize,
+    /// Images left out, and why.
+    pub skipped_images: SkippedImages,
 }
 
 /// Lays out `blocks` on pages shaped by `setup` and writes them as a PDF. Image runs hold keys

@@ -139,10 +139,18 @@ fn report_pdf_gaps(rendered: &pdf::Rendered) {
             listed.join(", ")
         );
     }
-    if rendered.skipped_images > 0 {
+    let skipped = rendered.skipped_images;
+    if skipped.unsupported > 0 {
         eprintln!(
             "warning: left out {} images in formats a PDF can't hold (such as EMF or TIFF)",
-            rendered.skipped_images
+            skipped.unsupported
+        );
+    }
+    if skipped.too_large > 0 {
+        eprintln!(
+            "warning: left out {} images larger than {} megapixels",
+            skipped.too_large,
+            pdf::layout::MAX_IMAGE_PIXELS / 1_000_000
         );
     }
 }

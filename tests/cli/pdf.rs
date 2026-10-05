@@ -200,6 +200,37 @@ fn warns_about_images_a_pdf_cannot_hold() {
     assert!(stderr.contains("left out 1 images"), "{stderr}");
 }
 
+/// [`RED_PNG`], with a header that says it's `width` x `height` pixels.
+fn png_declaring(width: u32, height: u32) -> Vec<u8> {
+    let mut png = RED_PNG.to_vec();
+    png[16..20].copy_from_slice(&width.to_be_bytes());
+    png[20..24].copy_from_slice(&height.to_be_bytes());
+    png
+}
+
+#[test]
+fn leaves_out_images_too_large_to_decode() {
+    // 100,000 x 100,000 pixels would take tens of GB to decode, from a file of a few bytes.
+    let (_dir, path) = sample_docx_with_parts(
+        r#"<w:p><w:r><w:t>Map:</w:t></w:r><w:r><w:drawing><wp:docPr id="1" name="p" descr="Map"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p>"#,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[("rId4", "image", "media/image1.png")]),
+            ),
+            part("word/media/image1.png", png_declaring(100_000, 100_000)),
+        ],
+    );
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert_eq!(page_texts(&pdf), ["Map:"]);
+    assert!(
+        stderr.contains("left out 1 images larger than 50 megapixels"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("formats a PDF can't hold"), "{stderr}");
+}
+
 #[test]
 fn wraps_long_paragraphs_onto_more_pages() {
     let sentence = "The quick brown fox jumps over the lazy dog. ".repeat(30);

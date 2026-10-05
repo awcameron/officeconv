@@ -76,6 +76,16 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
+      # On the self-hosted Mac, cross runs cargo from the host's toolchains inside its Linux
+      # container, so it needs the Linux toolchain installed next to the macOS one. Downloading
+      # crates inside the container also took an hour, so download them on the host first: the
+      # container shares the host's cargo cache.
+      - name: Prepare cross on the self-hosted runner
+        if: vars.SELF_HOSTED == 'true' && endsWith(matrix.target, 'linux-gnu')
+        run: |
+          rustup toolchain install stable-x86_64-unknown-linux-gnu --profile minimal --force-non-host
+          cargo fetch --locked
+
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: officeconv

@@ -18,6 +18,7 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Threat | How it's handled | Where |
 | --- | --- | --- |
 | Using all memory: a small file that decompresses to gigabytes ("zip bomb"), or an endless stdin | Each part may decompress to 256 MB and a file to 1 GB in total, counted from the bytes actually read rather than the zip's headers. Every part of an `.xlsx` is checked before the workbook is read. Stdin stops at 1 GB. | `opc::Limits`, `xlsx::check_sizes`, `input::read_at_most` |
+| Repeating work: many entries in a small file pointing at the same large part | A slide, a slide's notes, or a sheet's drawing is read once, however many entries point at it. A `.pptx` that lists one slide 500,000 times converts it once. | `pptx::read_blocks`, `xlsx::pictures::related_parts` |
 | Writing outside the output folder | Saved images use only the last segment of their name inside the package, with unsafe characters replaced, so `../../x` can't leave the folder. The same goes for sheet names with `--all-sheets`. | `ImageExport::export`, `output::safe_file_name` |
 | Writing files that aren't images | `--images` saves only files whose bytes are a recognized image format, and names them with that format's extension, so a document can't save an `.html` page with a script. | `ImageFormat::detect` |
 | Links that run code or open local files | Only `http`, `https`, `mailto` and relative links are kept. Other links, such as `javascript:`, `data:` or `file:`, become plain text. | `opc::is_safe_link` |
@@ -30,9 +31,9 @@ database.
 
 These are open, and a fix for each is welcome:
 
-- **Repeated work within the size limits** ([#63](https://github.com/awcameron/officeconv/issues/63)):
-  the limits count bytes decompressed, not work done. A 1 MB `.pptx` that lists the same slide
-  500,000 times stays within them, but takes minutes and gigabytes of memory.
+- **Repeated sheets with `--all-sheets`** ([#79](https://github.com/awcameron/officeconv/issues/79)):
+  a workbook can list one worksheet under many sheet names, and each is written to its own file.
+  A 24 KB `.xlsx` that lists one sheet 2,000 times writes 2,000 files.
 - **Huge image dimensions in PDF output** ([#52](https://github.com/awcameron/officeconv/issues/52)):
   a small image can declare dimensions that would take tens of GB to decode. This hasn't been
   tested yet.

@@ -163,7 +163,7 @@ pub fn presentation(slides_in_order: &[&str]) -> [(String, Vec<u8>); 2] {
 }
 
 /// A placeholder shape: `ph_type` is `title`, `body`, and so on; `paragraphs` is DrawingML.
-fn placeholder(ph_type: &str, paragraphs: &str) -> String {
+pub fn placeholder(ph_type: &str, paragraphs: &str) -> String {
     format!(
         r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="{ph_type}"/><p:cNvSpPr/><p:nvPr><p:ph type="{ph_type}"/></p:nvPr></p:nvSpPr><p:txBody>{paragraphs}</p:txBody></p:sp>"#
     )

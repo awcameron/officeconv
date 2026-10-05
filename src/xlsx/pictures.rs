@@ -116,8 +116,10 @@ fn related_parts<R: Read + Seek>(
         .filter(|r| r.kind == kind && !r.external)
         .map(|r| opc::resolve_target(part, &r.target))
         .collect();
-    // HashMap order is random; sort so output doesn't change from run to run.
+    // HashMap order is random; sort so output doesn't change from run to run. Several
+    // relationships can point at one part, which is read once.
     parts.sort();
+    parts.dedup();
     Ok(parts)
 }
 

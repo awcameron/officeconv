@@ -20,9 +20,14 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# While the repository variable SELF_HOSTED is "true", every job runs on the self-hosted runner
+# (a Mac with Docker, for `cross`), such as when the account's Actions minutes have run out. A Mac
+# can't build the Windows (MSVC) binary, so a release tagged then has no Windows build: wait for
+# GitHub-hosted runners, or build it later.
+
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -44,7 +49,7 @@ jobs:
   create-release:
     needs: check
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Create release
@@ -56,13 +61,14 @@ jobs:
     needs: [check, create-release]
     # Runs on PRs too, where create-release is skipped, to check that the platforms build.
     if: ${{ !failure() && !cancelled() }}
-    runs-on: ${{ endsWith(matrix.target, 'apple-darwin') && 'macos-latest' || endsWith(matrix.target, 'windows-msvc') && 'windows-latest' || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || endsWith(matrix.target, 'apple-darwin') && 'macos-latest' || endsWith(matrix.target, 'windows-msvc') && 'windows-latest' || 'ubuntu-24.04' }}
     strategy:
       matrix:
         # PRs leave out the two macOS targets: macOS minutes count 10x in a private repo, and
         # the Mac builds use the same steps as the others. A version tag builds all five.
         # (A job's `if` can't see the matrix, so the list itself depends on the event.)
-        target: ${{ fromJSON(github.event_name == 'push' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]' || '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]') }}
+        # With SELF_HOSTED, everything but Windows, whatever the event: the minutes are free.
+        target: ${{ fromJSON(vars.SELF_HOSTED == 'true' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]' || github.event_name == 'push' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]' || '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1

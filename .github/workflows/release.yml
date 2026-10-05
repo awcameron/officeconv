@@ -1,13 +1,18 @@
 name: Release
 
 # Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) publishes a GitHub
-# Release with a binary for each platform. PRs that change this file build every platform
-# without publishing anything.
+# Release with a binary for each platform. PRs that change this file build the Linux and
+# Windows binaries without publishing anything.
 on:
   push:
     tags: ['v*']
   pull_request:
     paths: [.github/workflows/release.yml]
+
+# A new push to a PR cancels that PR's older run. A tag's run is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -49,26 +54,15 @@ jobs:
 
   upload:
     needs: [check, create-release]
-    # Runs on PRs too, where create-release is skipped, to check that every platform builds.
+    # Runs on PRs too, where create-release is skipped, to check that the platforms build.
     if: ${{ !failure() && !cancelled() }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ endsWith(matrix.target, 'apple-darwin') && 'macos-latest' || endsWith(matrix.target, 'windows-msvc') && 'windows-latest' || 'ubuntu-24.04' }}
     strategy:
       matrix:
-        include:
-          # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
-          # rather than whatever the runner's Ubuntu has, and run on older distributions.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            build-tool: cross
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            build-tool: cross
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+        # PRs leave out the two macOS targets: macOS minutes count 10x in a private repo, and
+        # the Mac builds use the same steps as the others. A version tag builds all five.
+        # (A job's `if` can't see the matrix, so the list itself depends on the event.)
+        target: ${{ fromJSON(github.event_name == 'push' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]' || '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -80,7 +74,9 @@ jobs:
         with:
           bin: officeconv
           target: ${{ matrix.target }}
-          build-tool: ${{ matrix.build-tool }}
+          # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
+          # rather than whatever the runner's Ubuntu has, and run on older distributions.
+          build-tool: ${{ endsWith(matrix.target, 'linux-gnu') && 'cross' || '' }}
           archive: $bin-$tag-$target
           # The Noto Sans licence has to travel with the fonts built into the binary.
           include: LICENSE,README.md,assets/fonts/OFL.txt

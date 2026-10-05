@@ -1,13 +1,18 @@
 name: Release
 
 # Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) publishes a GitHub
-# Release with a binary for each platform. PRs that change this file build every platform
-# without publishing anything.
+# Release with a binary for each platform. PRs that change this file build the Linux and
+# Windows binaries without publishing anything.
 on:
   push:
     tags: ['v*']
   pull_request:
     paths: [.github/workflows/release.yml]
+
+# A new push to a PR cancels that PR's older run. A tag's run is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -15,11 +20,21 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# While the repository variable SELF_HOSTED is "true", every job runs on the self-hosted runner
+# (a Mac with Docker, for `cross`), such as when the account's Actions minutes have run out. A Mac
+# can't build the Windows (MSVC) binary, so a release tagged then has no Windows build: wait for
+# GitHub-hosted runners, or build it later.
+
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # On the self-hosted Mac, Homebrew's Rust comes before rustup's in PATH. Put rustup's
+      # first, or the toolchain and targets installed below aren't the ones that get used.
+      - name: Use rustup's Rust on the self-hosted runner
+        if: vars.SELF_HOSTED == 'true'
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
@@ -39,7 +54,7 @@ jobs:
   create-release:
     needs: check
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Create release
@@ -49,38 +64,45 @@ jobs:
 
   upload:
     needs: [check, create-release]
-    # Runs on PRs too, where create-release is skipped, to check that every platform builds.
+    # Runs on PRs too, where create-release is skipped, to check that the platforms build.
     if: ${{ !failure() && !cancelled() }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ vars.SELF_HOSTED == 'true' && 'self-hosted' || endsWith(matrix.target, 'apple-darwin') && 'macos-latest' || endsWith(matrix.target, 'windows-msvc') && 'windows-latest' || 'ubuntu-24.04' }}
     strategy:
       matrix:
-        include:
-          # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
-          # rather than whatever the runner's Ubuntu has, and run on older distributions.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            build-tool: cross
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            build-tool: cross
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+        # PRs leave out the two macOS targets: macOS minutes count 10x in a private repo, and
+        # the Mac builds use the same steps as the others. A version tag builds all five.
+        # (A job's `if` can't see the matrix, so the list itself depends on the event.)
+        # With SELF_HOSTED, everything but Windows, whatever the event: the minutes are free.
+        target: ${{ fromJSON(vars.SELF_HOSTED == 'true' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]' || github.event_name == 'push' && '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]' || '["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # On the self-hosted Mac, Homebrew's Rust comes before rustup's in PATH. Put rustup's
+      # first, or the toolchain and targets installed below aren't the ones that get used.
+      - name: Use rustup's Rust on the self-hosted runner
+        if: vars.SELF_HOSTED == 'true'
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
 
+      # On the self-hosted Mac, cross runs cargo from the host's toolchains inside its Linux
+      # container, so it needs the Linux toolchain installed next to the macOS one. Downloading
+      # crates inside the container also took an hour, so download them on the host first: the
+      # container shares the host's cargo cache.
+      - name: Prepare cross on the self-hosted runner
+        if: vars.SELF_HOSTED == 'true' && endsWith(matrix.target, 'linux-gnu')
+        run: |
+          rustup toolchain install stable-x86_64-unknown-linux-gnu --profile minimal --force-non-host
+          cargo fetch --locked
+
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: officeconv
           target: ${{ matrix.target }}
-          build-tool: ${{ matrix.build-tool }}
+          # Linux builds run in cross containers, so the binaries need an old glibc (2.17)
+          # rather than whatever the runner's Ubuntu has, and run on older distributions.
+          build-tool: ${{ endsWith(matrix.target, 'linux-gnu') && 'cross' || '' }}
           archive: $bin-$tag-$target
           # The Noto Sans licence has to travel with the fonts built into the binary.
           include: LICENSE,README.md,assets/fonts/OFL.txt

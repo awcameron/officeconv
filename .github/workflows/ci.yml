@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  # macOS minutes count 10x in a private repo, so macOS is tested weekly rather than on every
+  # change. Run the workflow by hand to test on all three systems.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+# A new push to a PR cancels that PR's older run. Every other run gets its own group, so a run
+# on main is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,9 +24,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # While the repository variable SELF_HOSTED is "true", every run uses the self-hosted
+        # runner instead, such as when the account's Actions minutes have run out.
+        # Otherwise, PRs: Linux and Windows. Pushes to main: Linux only, since the PR already ran
+        # on both. Weekly: macOS. By hand: all three.
+        os: ${{ fromJSON(vars.SELF_HOSTED == 'true' && '["self-hosted"]' || github.event_name == 'pull_request' && '["ubuntu-latest", "windows-latest"]' || github.event_name == 'push' && '["ubuntu-latest"]' || github.event_name == 'schedule' && '["macos-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # On the self-hosted Mac, Homebrew's Rust comes before rustup's in PATH. Put rustup's
+      # first, or the toolchain and targets installed below aren't the ones that get used.
+      - name: Use rustup's Rust on the self-hosted runner
+        if: vars.SELF_HOSTED == 'true'
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable

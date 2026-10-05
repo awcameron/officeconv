@@ -130,6 +130,10 @@ The sizes are counted as the file is read, not taken from the zip's headers, whi
 For `.xlsx` files, every part is checked before the workbook is read, so files it doesn't convert,
 such as embedded media, count toward the total too.
 
+These limits are part of what makes `officeconv` safe to run on files from people you don't
+trust. See [SECURITY.md](SECURITY.md) for the full list, the known gaps, and how to report a
+vulnerability.
+
 ## What gets converted
 
 ### XLSX

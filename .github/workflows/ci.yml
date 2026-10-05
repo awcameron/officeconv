@@ -42,3 +42,12 @@ jobs:
         run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
       - name: Test without PDF
         run: cargo test --locked --no-default-features
+
+  # Known vulnerabilities, licenses and sources of every crate in Cargo.lock (see deny.toml).
+  # The advisory database changes daily, so a new advisory can fail a PR that didn't touch
+  # dependencies: fix it or add it to deny.toml's ignore list with the reason.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1

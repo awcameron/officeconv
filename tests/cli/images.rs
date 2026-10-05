@@ -1,5 +1,6 @@
 //! `--images`: saving pictures from DOCX, PPTX and XLSX and linking them.
 
+use predicates::prelude::*;
 use predicates::str::contains;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -58,7 +59,7 @@ fn saves_docx_images_next_to_the_markdown() {
         &format!(r#"<w:p><w:r><w:t xml:space="preserve">Us: </w:t></w:r>{picture}</w:p>"#),
         &[
             part("word/_rels/document.xml.rels", rels),
-            part("word/media/image1.png", "fake png bytes"),
+            part("word/media/image1.png", RED_PNG),
         ],
     );
     let out = dir.path().join("out");
@@ -80,8 +81,54 @@ fn saves_docx_images_next_to_the_markdown() {
     );
     assert_eq!(
         std::fs::read(out.join("notes_images/image1.png")).unwrap(),
-        b"fake png bytes"
+        RED_PNG
     );
+}
+
+#[test]
+fn saves_only_real_images_and_names_them_by_their_format() {
+    let picture = |id: &str| {
+        format!(
+            r#"<w:p><w:r><w:drawing><wp:docPr id="1" name="p" descr="{id}"/><a:blip r:embed="{id}"/></w:drawing></w:r></w:p>"#
+        )
+    };
+    let (dir, path) = sample_docx_with_parts(
+        &format!("{}{}", picture("rId1"), picture("rId2")),
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[
+                    ("rId1", "image", "media/index.html"),
+                    ("rId2", "image", "media/logo.html"),
+                ]),
+            ),
+            // HTML posing as an image: saving it would put a script in the images folder.
+            part("word/media/index.html", "<script>alert(1)</script>"),
+            // A real PNG with a misleading name: saved, but as .png.
+            part("word/media/logo.html", RED_PNG),
+        ],
+    );
+    let out = dir.path().join("out");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "-o"])
+        .arg(dir.path().join("notes.md"))
+        .arg("--images")
+        .arg(&out)
+        .assert()
+        .success()
+        .stderr(contains("saved 1 images").and(contains("left out 1 files that aren't")));
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+        "![rId2](out/logo.png)\n"
+    );
+    let saved: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(saved, ["logo.png"]);
 }
 
 #[test]
@@ -91,7 +138,7 @@ fn leaves_images_out_without_the_flag() {
         r#"<w:p><w:r><w:drawing><wp:docPr id="1" name="p" descr="Photo"/><a:blip r:embed="rId4"/></w:drawing></w:r></w:p><w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
         &[
             part("word/_rels/document.xml.rels", rels),
-            part("word/media/image1.png", "fake png bytes"),
+            part("word/media/image1.png", RED_PNG),
         ],
     );
     assert_eq!(convert(&path, "md"), "Text\n");
@@ -107,7 +154,7 @@ fn saves_pptx_pictures() {
             "ppt/slides/_rels/slide1.xml.rels",
             rels(&[("rId3", "image", "../media/image1.png")]),
         ),
-        part("ppt/media/image1.png", "fake png bytes"),
+        part("ppt/media/image1.png", RED_PNG),
     ]);
     let (dir, path) = sample_package("talk.pptx", &parts);
 

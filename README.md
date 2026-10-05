@@ -263,6 +263,10 @@ Our chart: ![Sales by region](notes_images/image1.png)
   stdout. If `DIR` is somewhere else, the link is its absolute path.
 - An image used more than once is saved once. File names are kept from the document, and a
   clash gets a number added, such as `image1-2.png`.
+- Only PNG, JPEG, GIF, WebP, BMP, TIFF, EMF and WMF images are saved, recognized by their contents
+  rather than their names. Each gets its format's extension, so a PNG stored as `logo.html` is
+  saved as `logo.png`. Anything else, including SVG (which can contain scripts), is left out with
+  a warning.
 - Images linked from the web or another file, rather than stored in the document, are skipped.
 - With `--all-sheets`, all sheets share `DIR`, and each sheet's Markdown links only its own
   pictures.

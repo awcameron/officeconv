@@ -16,7 +16,7 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
 use crate::document::{Block, Cell, ListKind, Run, RunStyle};
-use crate::images::EmbeddedImages;
+use crate::images::{EmbeddedImages, ImageFormat};
 
 /// Page size, margins, and text size for one kind of document.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -838,17 +838,14 @@ fn list_marker(numbers: &mut Vec<u32>, kind: ListKind, level: u8) -> String {
 
 /// Decodes an image by its first bytes. Returns `None` for formats a PDF can't hold.
 fn decode_image(bytes: &[u8]) -> Option<Image> {
+    let format = ImageFormat::detect(bytes)?;
     let data: Data = bytes.to_vec().into();
-    let image = if bytes.starts_with(b"\x89PNG") {
-        Image::from_png(data, true)
-    } else if bytes.starts_with(b"\xFF\xD8") {
-        Image::from_jpeg(data, true)
-    } else if bytes.starts_with(b"GIF8") {
-        Image::from_gif(data, true)
-    } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        Image::from_webp(data, true)
-    } else {
-        return None;
+    let image = match format {
+        ImageFormat::Png => Image::from_png(data, true),
+        ImageFormat::Jpeg => Image::from_jpeg(data, true),
+        ImageFormat::Gif => Image::from_gif(data, true),
+        ImageFormat::Webp => Image::from_webp(data, true),
+        ImageFormat::Bmp | ImageFormat::Tiff | ImageFormat::Emf | ImageFormat::Wmf => return None,
     };
     image.ok()
 }

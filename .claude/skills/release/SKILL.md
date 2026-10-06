@@ -1,6 +1,7 @@
 ---
 name: release
-description: Cuts an officeconv release through a version-bump PR, then checks what the Release workflow published. Use when the user says "cut the X.Y.Z release", asks what's next for a release, or says a release PR merged.
+description: 'Cuts an officeconv release through a version-bump PR, then checks what the Release workflow published. Use when the user says "cut the X.Y.Z release", asks what''s next for a release, or says a release PR merged.'
+compatibility: Requires git, an authenticated GitHub CLI (gh) and a Rust toolchain.
 ---
 
 # Cutting a release

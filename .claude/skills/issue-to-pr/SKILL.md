@@ -1,6 +1,7 @@
 ---
 name: issue-to-pr
-description: Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.
+description: 'Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.'
+compatibility: Requires git, an authenticated GitHub CLI (gh), a Rust toolchain, and Python 3 for tools/compare.
 ---
 
 # Issue to merged PR

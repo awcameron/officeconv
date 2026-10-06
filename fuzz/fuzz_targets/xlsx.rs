@@ -5,10 +5,9 @@
 use std::io::{self, Cursor};
 
 use libfuzzer_sys::fuzz_target;
-use officeconv::format::OutputFormat;
-use officeconv::opc::Archive;
-use officeconv::writers::{self, JsonValues};
-use officeconv::xlsx::{self, pictures};
+use officeconv::fuzzing::{
+    Archive, JsonValues, OutputFormat, read_pictures, read_xlsx, write_table,
+};
 use officeconv_fuzz::LIMITS;
 
 /// Each way a sheet can be written. Only JSON looks at [`JsonValues`].
@@ -21,13 +20,13 @@ const OUTPUTS: [(OutputFormat, JsonValues); 5] = [
 ];
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(sheets) = xlsx::read_all_sheets_with_limits(Cursor::new(data), LIMITS) else {
+    let Ok(sheets) = read_xlsx(Cursor::new(data), LIMITS) else {
         return;
     };
     for sheet in &sheets {
         for (format, json) in OUTPUTS {
             // Writing to a sink can't fail, so an error here is a bug in the writers.
-            writers::write_table(&sheet.table, format, json, io::sink()).unwrap();
+            write_table(&sheet.table, format, json, io::sink()).unwrap();
         }
     }
 
@@ -37,6 +36,6 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     for part in sheets.iter().filter_map(|sheet| sheet.part.as_deref()) {
-        let _ = pictures::read_pictures(&mut archive, part);
+        let _ = read_pictures(&mut archive, part);
     }
 });

@@ -1,22 +1,49 @@
-pub mod cli;
-pub mod document;
-pub mod docx;
-pub mod error;
-pub mod format;
-pub mod images;
-pub mod input;
-pub mod opc;
-pub mod output;
+//! The `officeconv` command-line tool.
+//!
+//! This crate is a binary, not a library to depend on. The library half holds the code so the
+//! fuzz targets in `fuzz/` can link against it; it has no public API, and any of it may change
+//! in any release. See `docs/adr/0003-binary-only.md`.
+
+mod cli;
+mod document;
+mod docx;
+mod error;
+mod format;
+mod images;
+mod input;
+mod opc;
+mod output;
 #[cfg(feature = "pdf")]
-pub mod pdf;
-pub mod pptx;
-pub mod table;
-pub mod writers;
-pub mod xlsx;
+mod pdf;
+mod pptx;
+mod table;
+mod writers;
+mod xlsx;
 
-use std::io::{self, IsTerminal, Write};
+/// The readers and writers the fuzz targets in `fuzz/` call directly, re-exported for them.
+/// Only built with the `fuzzing` feature, and as unstable as the rest of the crate.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    pub use crate::document::Block;
+    pub use crate::document::markdown::render as render_markdown;
+    pub use crate::docx::read_blocks_with_limits as read_docx;
+    pub use crate::format::OutputFormat;
+    pub use crate::images::{EmbeddedImages, Images};
+    pub use crate::opc::{Archive, Limits, parse_relationships};
+    #[cfg(feature = "pdf")]
+    pub use crate::pdf::{layout::PageSetup, render as render_pdf};
+    pub use crate::pptx::{Notes, read_blocks_with_limits as read_pptx};
+    pub use crate::writers::{JsonValues, write_table};
+    pub use crate::xlsx::pictures::read_pictures;
+    pub use crate::xlsx::read_all_sheets_with_limits as read_xlsx;
+}
+
+use std::io::{self, ErrorKind, IsTerminal, Write};
 use std::path::Path;
+use std::process::ExitCode;
 
+use clap::Parser;
 use cli::Cli;
 use error::{ConvertError, Result};
 use format::OutputFormat;
@@ -24,8 +51,27 @@ use images::{EmbeddedImages, ImageExport, Images};
 use input::{InputKind, ReadSeek, Source};
 use writers::JsonValues;
 
+/// The `officeconv` command: parses the arguments, converts, and reports any error.
+///
+/// The binary is all `main.rs` holds, so this is the library's only public item. It's hidden
+/// from the docs because it isn't an API to build on: see the crate docs.
+#[doc(hidden)]
+pub fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match run(&cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        // The reader went away (e.g. `officeconv big.xlsx --to csv | head`); that's not a failure.
+        Err(ConvertError::Write(err)) if err.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(err) => {
+            // Each error message already includes its cause, so print just that one line.
+            eprintln!("Error: {err}");
+            ExitCode::from(err.exit_code())
+        }
+    }
+}
+
 /// Validates the request and runs the matching converter.
-pub fn run(cli: &Cli) -> Result<()> {
+fn run(cli: &Cli) -> Result<()> {
     // Checks that don't depend on the input come first, so a slow pipe on stdin doesn't
     // have to finish before a simple usage mistake is reported.
     if cli.typed && cli.to != OutputFormat::Json {

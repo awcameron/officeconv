@@ -7,6 +7,7 @@ why, and when to reconsider it.
 | --- | --- | --- | --- |
 | [0001](0001-pdf-rendering.md) | How officeconv renders PDF | Accepted | 2026-10-03 |
 | [0002](0002-untrusted-input.md) | officeconv supports untrusted input, within limits | Accepted | 2026-10-05 |
+| [0003](0003-binary-only.md) | officeconv is a binary, with no public library API | Accepted | 2026-10-06 |
 
 ## Adding one
 

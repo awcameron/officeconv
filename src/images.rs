@@ -39,10 +39,6 @@ impl ImageExport {
         })
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// How many images have been written.
     pub fn count(&self) -> usize {
         self.links.len()
@@ -209,6 +205,7 @@ impl EmbeddedImages {
     }
 
     /// The bytes of the image that [`EmbeddedImages::add`] returned `key` for.
+    #[cfg(any(feature = "pdf", test))]
     pub fn get(&self, key: &str) -> Option<&[u8]> {
         self.bytes.get(key).map(Vec::as_slice)
     }

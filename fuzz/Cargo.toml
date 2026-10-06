@@ -10,7 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-officeconv = { path = ".." }
+officeconv = { path = "..", features = ["fuzzing"] }
 
 [[bin]]
 name = "archive"

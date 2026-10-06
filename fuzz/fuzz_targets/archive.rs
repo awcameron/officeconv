@@ -5,7 +5,7 @@
 use std::io::Cursor;
 
 use libfuzzer_sys::fuzz_target;
-use officeconv::opc::{self, Archive};
+use officeconv::fuzzing::{Archive, parse_relationships};
 use officeconv_fuzz::LIMITS;
 
 fuzz_target!(|data: &[u8]| {
@@ -21,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     // than its name, so this gives the relationships parser all kinds of XML.
     for name in ["[Content_Types].xml", "_rels/.rels", "word/document.xml"] {
         if let Ok(Some(xml)) = archive.read_part(name) {
-            let _ = opc::parse_relationships(&xml);
+            let _ = parse_relationships(&xml);
         }
     }
 });

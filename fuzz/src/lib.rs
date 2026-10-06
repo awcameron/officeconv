@@ -1,9 +1,6 @@
 //! What the fuzz targets share.
 
-use officeconv::document::{self, Block};
-use officeconv::images::EmbeddedImages;
-use officeconv::opc::Limits;
-use officeconv::pdf::{self, layout::PageSetup};
+use officeconv::fuzzing::{Block, EmbeddedImages, Limits, PageSetup, render_markdown, render_pdf};
 
 /// Small enough that a size bug fails fast with an error, instead of using gigabytes or
 /// minutes; large enough for any seed in the corpus.
@@ -19,6 +16,6 @@ pub const LIMITS: Limits = Limits {
 /// Renders blocks a reader returned as Markdown and as PDF, as `--to md` and `--to pdf` would.
 /// The results are thrown away: rendering may fail with an error, but must not panic.
 pub fn render(blocks: &[Block], images: &EmbeddedImages, setup: PageSetup) {
-    let _ = document::markdown::render(blocks);
-    let _ = pdf::render(blocks, images, setup);
+    let _ = render_markdown(blocks);
+    let _ = render_pdf(blocks, images, setup);
 }

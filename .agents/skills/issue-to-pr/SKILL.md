@@ -2,7 +2,7 @@
 name: issue-to-pr
 description: 'Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.'
 compatibility: Requires git, an authenticated GitHub CLI (gh), a Rust toolchain, and Python 3 for tools/compare.
-allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git describe *) Bash(git switch *) Bash(git pull *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *) Bash(.claude/skills/issue-to-pr/scripts/after-merge.sh *)'
+allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git describe *) Bash(git switch *) Bash(git pull *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *) Bash(.agents/skills/issue-to-pr/scripts/after-merge.sh *)'
 ---
 
 # Issue to merged PR
@@ -60,7 +60,7 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
      see.
    - Body: why the change was needed, what changed, and how it was checked. Use plain prose and
      wrap at 72 columns.
-   - End the body with `Closes #N`, then any attribution lines Claude Code asks for.
+   - End the body with `Closes #N`, then any attribution lines your agent adds.
 7. Report, then ask whether to push and open the PR:
    - the branch and commit;
    - what changed;
@@ -80,7 +80,7 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
      - Anything decided along the way, and any behavior change, stated plainly.
      - The acceptance criteria and how each is met.
      - `## Checks`: what was run.
-     - Any footer Claude Code asks for.
+     - Any footer your agent adds.
 3. Wait for CI: `gh pr checks <PR> --watch --interval 20`. A PR that changes
    `.github/workflows/release.yml` also runs that workflow's test build of every platform.
 4. Report the PR link and the check results. If a check fails, read its log
@@ -91,7 +91,7 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 1. Clean up:
 
    ```sh
-   .claude/skills/issue-to-pr/scripts/after-merge.sh <PR>
+   .agents/skills/issue-to-pr/scripts/after-merge.sh <PR>
    ```
 
    It refuses to touch anything until the PR is merged. If the user spoke a moment before the

@@ -9,10 +9,9 @@ all-features = true
 # Fails on any advisory for a crate in Cargo.lock, including unmaintained and yanked crates.
 # To accept one, add its ID here with the reason.
 ignore = [
-    # rustybuzz and ttf-parser are unmaintained, with no known vulnerability. The PDF feature
-    # needs them until krilla moves off them (krilla 0.8.2 hasn't). Tracked in #76.
-    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: needed by krilla; replace with harfrust, #76" },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: comes with rustybuzz; #76" },
+    # ttf-parser is unmaintained, with no known vulnerability. It's only in the tests, through
+    # pdf-extract's lopdf (0.12.1 is the latest), and never in the binary.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: dev-only, via pdf-extract; #76" },
 ]
 
 [licenses]

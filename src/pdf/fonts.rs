@@ -12,8 +12,11 @@ use std::sync::OnceLock;
 
 use flate2::read::DeflateDecoder;
 use fontdb::{Database, Style, Weight};
+use harfrust::{Direction, ShapeOptions, ShaperData, UnicodeBuffer};
 use krilla::text::{Font, GlyphId, KrillaGlyph};
-use rustybuzz::{Direction, UnicodeBuffer};
+use skrifa::charmap::Charmap;
+use skrifa::instance::{LocationRef, Size};
+use skrifa::{FontRef, MetadataProvider};
 
 use crate::document::RunStyle;
 
@@ -55,22 +58,27 @@ const NEVER_FALLBACKS: &[&str] = &["LastResort", "Last Resort", ".LastResort"];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontId(usize);
 
-/// One font, ready for both shaping (rustybuzz) and embedding (krilla).
+/// One font, ready for both shaping (harfrust) and embedding (krilla).
 struct LoadedFont {
-    face: rustybuzz::Face<'static>,
+    font: FontRef<'static>,
+    charmap: Charmap<'static>,
+    shaper: ShaperData,
     pdf: Font,
 }
 
 impl LoadedFont {
     fn new(data: &'static [u8], index: u32) -> Option<Self> {
+        let font = FontRef::from_index(data, index).ok()?;
         Some(LoadedFont {
-            face: rustybuzz::Face::from_slice(data, index)?,
+            charmap: font.charmap(),
+            shaper: ShaperData::new(&font),
             pdf: Font::new(data.into(), index)?,
+            font,
         })
     }
 
     fn has(&self, c: char) -> bool {
-        self.face.glyph_index(c).is_some()
+        charmap_has(&self.charmap, c)
     }
 }
 
@@ -128,10 +136,12 @@ impl Fonts {
     /// Distance from the top of a line to its baseline, and the line's height, as fractions of
     /// the font size. Taken from Noto Sans, so lines are evenly spaced whatever the fallback.
     pub fn line_metrics(&self) -> (f32, f32) {
-        let face = &self.loaded[0].face;
-        let em = face.units_per_em() as f32;
-        let ascent = f32::from(face.ascender()) / em;
-        let descent = -f32::from(face.descender()) / em;
+        let metrics = self.loaded[0]
+            .font
+            .metrics(Size::unscaled(), LocationRef::default());
+        let em = f32::from(metrics.units_per_em);
+        let ascent = metrics.ascent / em;
+        let descent = -metrics.descent / em;
         let height = 1.4_f32.max(ascent + descent);
         (ascent + (height - ascent - descent) / 2.0, height)
     }
@@ -141,8 +151,9 @@ impl Fonts {
     /// Each glyph's `text_range` is a range of `text` (not of the slice), and its advance and
     /// offsets are fractions of the font size, which is what krilla expects.
     pub fn shape(&self, id: FontId, text: &str, range: Range<usize>) -> Vec<KrillaGlyph> {
-        let face = &self.loaded[id.0].face;
-        let em = face.units_per_em() as f32;
+        let loaded = &self.loaded[id.0];
+        let shaper = loaded.shaper.shaper(&loaded.font).build();
+        let em = shaper.units_per_em() as f32;
 
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(&text[range.clone()]);
@@ -150,7 +161,7 @@ impl Fonts {
         // Lines are laid out left to right, and the glyph slicing in `layout` relies on
         // clusters only going forward.
         buffer.set_direction(Direction::LeftToRight);
-        let shaped = rustybuzz::shape(face, &[], buffer);
+        let shaped = shaper.shape(buffer, ShapeOptions::new());
 
         let infos = shaped.glyph_infos();
         let positions = shaped.glyph_positions();
@@ -207,7 +218,7 @@ impl Fonts {
             if !has_c {
                 continue;
             }
-            // krilla and rustybuzz both borrow the font's bytes for as long as the PDF is being
+            // krilla and harfrust both borrow the font's bytes for as long as the PDF is being
             // built, which is the rest of the run. Leaking the (usually one) fallback font is
             // simpler than tying every glyph to its owner, and the OS frees it on exit.
             let Some((data, index)) =
@@ -252,7 +263,12 @@ fn style_index(style: RunStyle) -> usize {
 
 /// True if the font in `data` has a glyph for `c`.
 fn ttf_has(data: &[u8], index: u32, c: char) -> bool {
-    rustybuzz::ttf_parser::Face::parse(data, index).is_ok_and(|face| face.glyph_index(c).is_some())
+    FontRef::from_index(data, index).is_ok_and(|font| charmap_has(&font.charmap(), c))
+}
+
+/// True if `charmap` maps `c` to a real glyph. Glyph 0 is `.notdef`, which draws a box.
+fn charmap_has(charmap: &Charmap, c: char) -> bool {
+    charmap.map(c).is_some_and(|glyph| glyph.to_u32() != 0)
 }
 
 /// Installed fonts in the order to try them: the preferred families first, then regular
@@ -302,6 +318,14 @@ mod tests {
         };
         assert_eq!(fonts.font_for('a', bold_italic), FontId(3));
         assert!(fonts.missing().is_empty());
+    }
+
+    #[test]
+    fn a_font_has_only_the_characters_it_maps() {
+        let noto = &noto_sans()[0];
+        assert!(ttf_has(noto, 0, 'a'));
+        assert!(!ttf_has(noto, 0, '中'));
+        assert!(!ttf_has(b"not a font", 0, 'a'));
     }
 
     #[test]

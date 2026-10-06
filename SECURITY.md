@@ -31,11 +31,7 @@ output format; see [Fuzzing](README.md#fuzzing).
 
 ## Known gaps
 
-These are open, and a fix for each is welcome:
-
-- **Unmaintained font crates** ([#76](https://github.com/awcameron/officeconv/issues/76)): the PDF
-  feature depends on `rustybuzz` and `ttf-parser`, which won't get fixes. Neither has a known
-  vulnerability.
+None are open right now.
 
 ## Out of scope
 

@@ -10,7 +10,7 @@ use zip::result::ZipError;
 use calamine::{Data, ExcelDateTime, Reader, Xlsx};
 
 use crate::error::{ConvertError, Result};
-use crate::opc::{self, Archive, attr};
+use crate::opc::{self, Archive, Limits, attr};
 use crate::table::{Cell, Table};
 
 const WORKBOOK: &str = "xl/workbook.xml";
@@ -27,9 +27,19 @@ pub struct Sheet {
 /// Reads one sheet from a workbook.
 ///
 /// With `sheet: None`, reads the first sheet in the workbook.
-pub fn read_sheet<R: Read + Seek>(mut reader: R, sheet: Option<&str>) -> Result<Sheet> {
-    check_sizes(&mut reader)?;
-    let mut parts = read_sheet_parts(&mut reader)?;
+pub fn read_sheet<R: Read + Seek>(reader: R, sheet: Option<&str>) -> Result<Sheet> {
+    read_sheet_with_limits(reader, sheet, Limits::DEFAULT)
+}
+
+/// [`read_sheet`], refusing a workbook that decompresses to more than `limits` instead of
+/// [`Limits::DEFAULT`]. The fuzz targets use this to pass smaller limits.
+pub fn read_sheet_with_limits<R: Read + Seek>(
+    mut reader: R,
+    sheet: Option<&str>,
+    limits: Limits,
+) -> Result<Sheet> {
+    check_sizes(&mut reader, limits)?;
+    let mut parts = read_sheet_parts(&mut reader, limits)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
 
@@ -54,9 +64,18 @@ pub fn read_sheet<R: Read + Seek>(mut reader: R, sheet: Option<&str>) -> Result<
 /// A worksheet is read once, under the first name that points at it. Excel never gives one
 /// worksheet two names, and the size limits count bytes read, not work: listing one worksheet
 /// thousands of times would otherwise write it to thousands of files.
-pub fn read_all_sheets<R: Read + Seek>(mut reader: R) -> Result<Vec<Sheet>> {
-    check_sizes(&mut reader)?;
-    let mut parts = read_sheet_parts(&mut reader)?;
+pub fn read_all_sheets<R: Read + Seek>(reader: R) -> Result<Vec<Sheet>> {
+    read_all_sheets_with_limits(reader, Limits::DEFAULT)
+}
+
+/// [`read_all_sheets`], refusing a workbook that decompresses to more than `limits` instead of
+/// [`Limits::DEFAULT`]. The fuzz targets use this to pass smaller limits.
+pub fn read_all_sheets_with_limits<R: Read + Seek>(
+    mut reader: R,
+    limits: Limits,
+) -> Result<Vec<Sheet>> {
+    check_sizes(&mut reader, limits)?;
+    let mut parts = read_sheet_parts(&mut reader, limits)?;
     let mut workbook = Xlsx::new(reader)?;
     let names = workbook.sheet_names();
     if names.is_empty() {
@@ -110,8 +129,11 @@ pub fn sheet_parts<R: Read + Seek>(archive: &mut Archive<R>) -> Result<HashMap<S
 
 /// [`sheet_parts`] for the package `reader` holds, then rewinds `reader`. A file that isn't a
 /// zip archive has none, and is left for calamine to report.
-fn read_sheet_parts<R: Read + Seek>(reader: &mut R) -> Result<HashMap<String, String>> {
-    let parts = match Archive::open(&mut *reader) {
+fn read_sheet_parts<R: Read + Seek>(
+    reader: &mut R,
+    limits: Limits,
+) -> Result<HashMap<String, String>> {
+    let parts = match Archive::with_limits(&mut *reader, limits) {
         Ok(mut archive) => sheet_parts(&mut archive)?,
         Err(_) => HashMap::new(),
     };
@@ -119,13 +141,12 @@ fn read_sheet_parts<R: Read + Seek>(reader: &mut R) -> Result<HashMap<String, St
     Ok(parts)
 }
 
-/// Checks every part of the workbook decompresses to within [`Limits`](crate::opc::Limits),
-/// then rewinds `reader`.
+/// Checks every part of the workbook decompresses to within `limits`, then rewinds `reader`.
 ///
 /// calamine has no size limit of its own, so a small workbook could otherwise make it use
 /// gigabytes. A file that isn't a zip archive is left for calamine to report.
-fn check_sizes<R: Read + Seek>(reader: &mut R) -> Result<()> {
-    if let Ok(mut archive) = Archive::open(&mut *reader) {
+fn check_sizes<R: Read + Seek>(reader: &mut R, limits: Limits) -> Result<()> {
+    if let Ok(mut archive) = Archive::with_limits(&mut *reader, limits) {
         archive.check_part_sizes()?;
     }
     reader.rewind().map_err(ZipError::from)?;

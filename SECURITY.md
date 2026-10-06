@@ -26,14 +26,13 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Text that turns into Markdown or HTML | Text, table cells and link targets are escaped, so the Markdown shows what the document holds instead of new formatting, raw HTML or a different link. | `writers::escape_markdown_text`, `document::markdown::escape_url` |
 
 CI also runs [`cargo deny`](deny.toml) to check every dependency against the RustSec advisory
-database.
+database. The zip reader and the three readers are fuzzed, with what they read rendered in every
+output format; see [Fuzzing](README.md#fuzzing).
 
 ## Known gaps
 
 These are open, and a fix for each is welcome:
 
-- **No fuzzing yet** ([#50](https://github.com/awcameron/officeconv/issues/50)): the protections
-  above are tested with hand-written cases only.
 - **Unmaintained font crates** ([#76](https://github.com/awcameron/officeconv/issues/76)): the PDF
   feature depends on `rustybuzz` and `ttf-parser`, which won't get fixes. Neither has a known
   vulnerability.

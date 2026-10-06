@@ -9,6 +9,12 @@ repository = "https://github.com/awcameron/officeconv"
 keywords = ["xlsx", "docx", "pptx", "markdown", "converter"]
 categories = ["command-line-utilities", "text-processing"]
 
+# fuzz/ shares this workspace so it shares Cargo.lock: the fuzzer builds against exactly the
+# dependency versions that ship, and `cargo deny` checks its own. Commands run here without
+# `--workspace` still cover only officeconv.
+[workspace]
+members = [".", "fuzz"]
+
 [dependencies]
 calamine = "0.36.1"
 clap = { version = "4.6.7", features = ["derive"] }

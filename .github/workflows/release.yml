@@ -33,7 +33,7 @@ jobs:
       - name: Tag matches Cargo.toml
         if: github.event_name == 'push'
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "officeconv") | .version')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
             exit 1

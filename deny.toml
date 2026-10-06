@@ -32,6 +32,8 @@ allow = [
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"
+# fuzz/ depends on officeconv by path alone. It isn't published, so that's fine.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

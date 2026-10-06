@@ -2,6 +2,7 @@
 name: issue-to-pr
 description: 'Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.'
 compatibility: Requires git, an authenticated GitHub CLI (gh), a Rust toolchain, and Python 3 for tools/compare.
+allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git switch *) Bash(git pull *) Bash(git fetch *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(git branch -D *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *)'
 ---
 
 # Issue to merged PR

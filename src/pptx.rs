@@ -28,7 +28,7 @@ use crate::document::{
 };
 use crate::error::Result;
 use crate::images::{self, Images};
-use crate::opc::{self, XmlHandler, attr};
+use crate::opc::{self, Limits, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
 
@@ -65,7 +65,17 @@ pub fn read_blocks<R: Read + Seek>(
     notes: Notes,
     images: Images<'_>,
 ) -> Result<Vec<Block>> {
-    let mut archive = opc::Archive::open(reader)?;
+    read_blocks_with_limits(reader, notes, images, Limits::DEFAULT)
+}
+
+/// [`read_blocks`], decompressing at most `limits`.
+pub fn read_blocks_with_limits<R: Read + Seek>(
+    reader: R,
+    notes: Notes,
+    images: Images<'_>,
+    limits: Limits,
+) -> Result<Vec<Block>> {
+    let mut archive = opc::Archive::with_limits(reader, limits)?;
     let presentation = archive.read_required_part(PRESENTATION)?;
     let relationships = match archive.read_part(&opc::rels_path(PRESENTATION))? {
         Some(xml) => opc::parse_relationships(&xml)?,

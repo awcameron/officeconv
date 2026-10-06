@@ -299,6 +299,26 @@ cargo run -- sales.xlsx --to md              # run without installing
 The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so the repo
 doesn't need to contain any binary test files.
 
+### Fuzzing
+
+[`fuzz/`](fuzz/) feeds random bytes through the zip reader and the DOCX, PPTX and XLSX
+readers, then renders whatever they read as Markdown, PDF, CSV, TSV and JSON. Any panic,
+hang or out-of-memory error is a bug. The readers run with small size limits (1 MB per part,
+4 MB in total), so a size bug fails fast instead of using gigabytes. Fuzzing needs a nightly
+toolchain and [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz), and works on Linux and
+macOS:
+
+```sh
+rustup toolchain install nightly
+cargo install cargo-fuzz
+cd fuzz
+./make-seeds.sh                                  # a small .docx, .pptx and .xlsx to start from
+cargo +nightly fuzz run docx -- -max_len=65536   # or archive, pptx, xlsx; Ctrl-C to stop
+```
+
+`-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
+`fuzz/artifacts/<target>/`, and `cargo +nightly fuzz run <target> <file>` replays it.
+
 Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 [how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
 
@@ -332,6 +352,7 @@ src/
     package.rs       numbering and style lookups from the rest of the .docx
   pptx.rs            reads slides in presentation order, with their notes, into Blocks
 tests/cli/           end-to-end tests that run the real binary
+fuzz/                fuzz targets for the zip reader and the three readers (cargo-fuzz)
 assets/fonts/        Noto Sans, built into the binary for PDF output
 ```
 

@@ -1,0 +1,44 @@
+[package]
+name = "officeconv-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+officeconv = { path = ".." }
+
+# Its own workspace, so the main crate's builds, tests and dependency checks leave it out.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "archive"
+path = "fuzz_targets/archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx"
+path = "fuzz_targets/docx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pptx"
+path = "fuzz_targets/pptx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlsx"
+path = "fuzz_targets/xlsx.rs"
+test = false
+doc = false
+bench = false

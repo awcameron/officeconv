@@ -25,7 +25,7 @@ use crate::document::{
 };
 use crate::error::Result;
 use crate::images::{self, Images};
-use crate::opc::{self, XmlHandler, attr};
+use crate::opc::{self, Limits, XmlHandler, attr};
 use package::Package;
 
 const DOCUMENT: &str = "word/document.xml";
@@ -34,7 +34,16 @@ const DOCUMENT: &str = "word/document.xml";
 ///
 /// `images` says whether pictures are saved, embedded, or left out.
 pub fn read_blocks<R: Read + Seek>(reader: R, images: Images<'_>) -> Result<Vec<Block>> {
-    let mut archive = opc::Archive::open(reader)?;
+    read_blocks_with_limits(reader, images, Limits::DEFAULT)
+}
+
+/// [`read_blocks`], decompressing at most `limits`.
+pub fn read_blocks_with_limits<R: Read + Seek>(
+    reader: R,
+    images: Images<'_>,
+    limits: Limits,
+) -> Result<Vec<Block>> {
+    let mut archive = opc::Archive::with_limits(reader, limits)?;
     let document = archive.read_required_part(DOCUMENT)?;
 
     let mut package = Package::default();

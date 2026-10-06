@@ -1,9 +1,23 @@
-//! Bad input and option combinations: each fails with a clear message.
+//! Bad input and option combinations: each fails with a clear message and its exit code.
+//!
+//! The codes are written as numbers, not taken from `officeconv::error::exit_code`, because
+//! scripts rely on the numbers: changing a constant should fail these tests.
 
 use predicates::str::contains;
 use tempfile::TempDir;
 
 use crate::common::*;
+
+#[test]
+fn leaves_argument_errors_to_clap() {
+    // clap's own exit code for arguments it can't parse, distinct from the codes for usage
+    // mistakes it can't see, such as --typed without --to json.
+    officeconv()
+        .args(["sales.xlsx", "--to", "xml"])
+        .assert()
+        .code(2)
+        .stderr(contains("invalid value 'xml'"));
+}
 
 #[test]
 fn rejects_unknown_extension() {
@@ -12,7 +26,7 @@ fn rejects_unknown_extension() {
         .arg(&path)
         .args(["--to", "csv"])
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains("unsupported input file"));
 }
 
@@ -23,7 +37,7 @@ fn rejects_docx_to_csv() {
         .arg(&path)
         .args(["--to", "csv"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("cannot convert docx to csv"));
 }
 
@@ -34,7 +48,7 @@ fn rejects_sheet_option_on_docx() {
         .arg(&path)
         .args(["--to", "md", "--sheet", "Sales"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("only apply to .xlsx"));
 }
 
@@ -43,7 +57,7 @@ fn reports_missing_input() {
     officeconv()
         .args(["does-not-exist.xlsx", "--to", "csv"])
         .assert()
-        .failure()
+        .code(66)
         .stderr(contains("input file not found"));
 }
 
@@ -55,7 +69,7 @@ fn reports_corrupt_workbook() {
         .arg(&path)
         .args(["--to", "csv"])
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains("could not read workbook"));
 }
 
@@ -69,7 +83,7 @@ fn reports_unwritable_output() {
         .args(["--to", "csv", "-o"])
         .arg(&out)
         .assert()
-        .failure()
+        .code(74)
         .stderr(contains("could not create"));
 }
 
@@ -80,7 +94,7 @@ fn reports_unknown_sheet() {
         .arg(&path)
         .args(["--to", "csv", "--sheet", "Nope"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains(
             "sheet \"Nope\" not found; available sheets: Sheet1",
         ));
@@ -100,7 +114,7 @@ fn reports_docx_without_document_xml() {
         .arg(&path)
         .args(["--to", "md"])
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains("could not read document"));
 }
 
@@ -111,7 +125,7 @@ fn rejects_pptx_to_csv_and_sheet_options() {
         .arg(&path)
         .args(["--to", "csv"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains(
             "cannot convert pptx to csv; pptx supports: md, pdf",
         ));
@@ -119,7 +133,7 @@ fn rejects_pptx_to_csv_and_sheet_options() {
         .arg(&path)
         .args(["--to", "md", "--all-sheets"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("only apply to .xlsx"));
 }
 
@@ -130,7 +144,7 @@ fn rejects_no_notes_on_other_inputs() {
         .arg(&path)
         .args(["--to", "md", "--no-notes"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("--no-notes only applies to .pptx"));
 }
 
@@ -141,7 +155,7 @@ fn rejects_typed_without_json() {
         .arg(&path)
         .args(["--to", "csv", "--typed"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("--typed only applies to --to json"));
 }
 
@@ -157,7 +171,7 @@ fn reports_a_directory_as_not_found_with_or_without_from() {
             .args(["--to", "csv"])
             .args(extra)
             .assert()
-            .failure()
+            .code(66)
             .stderr(contains("input file not found"));
     }
 }
@@ -184,7 +198,7 @@ fn reports_a_file_that_cannot_be_opened() {
         .arg(&path)
         .args(["--to", "csv"])
         .assert()
-        .failure()
+        .code(66)
         .stderr(contains("could not open").and(contains("ermission denied")));
 }
 
@@ -196,6 +210,6 @@ fn says_when_pdf_output_is_not_built_in() {
         .arg(&path)
         .args(["--to", "pdf", "-o", "out.pdf"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("doesn't include PDF output"));
 }

@@ -110,12 +110,23 @@ officeconv sales.xlsx --to md -o sales.md --images sales_images
 officeconv sales.xlsx --to csv | head -5
 ```
 
-Errors go to stderr and exit with status 1:
+Errors go to stderr:
 
 ```text
 $ officeconv notes.docx --to csv
 Error: cannot convert docx to csv; docx supports: md, pdf
 ```
+
+The exit status says what kind of error it was, using the codes from BSD's `sysexits.h`:
+
+| Code | Meaning | Examples |
+|---|---|---|
+| 0 | Success | Also when the reader of a pipe stops early, as with `\| head` |
+| 2 | Arguments that can't be parsed | An unknown option, `--to xml` |
+| 64 | Options that don't fit together or the input | `--typed` without `--to json`, `--to csv` for a `.docx`, an unknown `--sheet` |
+| 65 | Input officeconv can't read | A corrupt or unsupported file, `--from` that doesn't match, a file over the size limits |
+| 66 | No input | A missing or unreadable file, empty stdin |
+| 74 | Reading stdin or writing the output failed | An `-o` path in a folder that doesn't exist, a full disk |
 
 ### Size limits
 

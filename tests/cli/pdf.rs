@@ -291,7 +291,7 @@ fn rejects_pdf_for_spreadsheets() {
         .arg(&path)
         .args(["--to", "pdf", "-o", "out.pdf"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains(
             "cannot convert xlsx to pdf; xlsx supports: csv, tsv, json, md",
         ));
@@ -306,6 +306,6 @@ fn rejects_images_flag_with_pdf() {
         .arg(dir.path().join("out.pdf"))
         .args(["--images", "img"])
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("--images doesn't apply to --to pdf"));
 }

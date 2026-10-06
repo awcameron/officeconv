@@ -15,7 +15,7 @@ use krilla::text::KrillaGlyph;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
-use crate::document::{Block, Cell, ListKind, Run, RunStyle};
+use crate::document::{Block, CellRuns, ListKind, Run, RunStyle};
 use crate::images::{EmbeddedImages, ImageFormat};
 
 /// Page size, margins, and text size for one kind of document.
@@ -360,7 +360,7 @@ impl<'a> Layout<'a> {
     /// fits, and otherwise share the page so that words aren't broken unless they have to be
     /// (the way browsers size tables). The header row is bold, shaded, and repeated on each
     /// page the table continues onto.
-    fn place_table(&mut self, rows: &[Vec<Cell>]) {
+    fn place_table(&mut self, rows: &[Vec<CellRuns>]) {
         let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
         if columns == 0 {
             return;
@@ -412,7 +412,7 @@ impl<'a> Layout<'a> {
     /// inside its cell.
     fn layout_row(
         &mut self,
-        row: &[Cell],
+        row: &[CellRuns],
         header: bool,
         widths: &[f32],
         padding: f32,
@@ -501,7 +501,7 @@ impl<'a> Layout<'a> {
         self.y = bottom;
     }
 
-    fn layout_cell(&mut self, cell: &Cell, header: bool, width: f32) -> Vec<LineBox> {
+    fn layout_cell(&mut self, cell: &CellRuns, header: bool, width: f32) -> Vec<LineBox> {
         let runs = cell_runs(cell, header);
         self.layout_runs(&runs, self.setup.body_size, width)
     }
@@ -831,7 +831,7 @@ fn column_widths(narrowest: &[f32], natural: &[f32], available: f32) -> Vec<f32>
 }
 
 /// A cell's runs, made bold in the header row.
-fn cell_runs(cell: &Cell, header: bool) -> Vec<Run> {
+fn cell_runs(cell: &CellRuns, header: bool) -> Vec<Run> {
     if header { all_bold(cell) } else { cell.clone() }
 }
 

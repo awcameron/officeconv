@@ -1,6 +1,6 @@
 //! Rendering [`Block`]s as Markdown.
 
-use super::{Block, Cell, ListKind, Run, RunStyle, append_run};
+use super::{Block, CellRuns, ListKind, Run, RunStyle, append_run};
 use crate::table::Table;
 use crate::writers::{MarkdownCells, escape_markdown_text, write_markdown};
 
@@ -58,7 +58,7 @@ fn render_list_item(kind: ListKind, level: u8, runs: &[Run]) -> String {
 }
 
 /// Renders a table with the same Markdown writer the XLSX converter uses.
-fn render_table(rows: &[Vec<Cell>]) -> String {
+fn render_table(rows: &[Vec<CellRuns>]) -> String {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {

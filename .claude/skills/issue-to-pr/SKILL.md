@@ -2,7 +2,7 @@
 name: issue-to-pr
 description: 'Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.'
 compatibility: Requires git, an authenticated GitHub CLI (gh), a Rust toolchain, and Python 3 for tools/compare.
-allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git switch *) Bash(git pull *) Bash(git fetch *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(git branch -D *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *)'
+allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git describe *) Bash(git switch *) Bash(git pull *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *) Bash(.claude/skills/issue-to-pr/scripts/after-merge.sh *)'
 ---
 
 # Issue to merged PR
@@ -88,26 +88,19 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 
 ## 3. After the merge ("#N merged now")
 
-1. Confirm the merge **on its own**, before anything else:
+1. Clean up:
 
    ```sh
-   gh pr view <PR> --json state --jq .state
+   .claude/skills/issue-to-pr/scripts/after-merge.sh <PR>
    ```
 
-   Go on only if it prints `MERGED`. Printing `OPEN` doesn't fail a chain of commands, so
-   never chain this with the steps below. If it's still open, say so and stop. The user may
-   have spoken a moment before the merge landed.
-2. Clean up:
-
-   ```sh
-   git switch main && git pull --quiet
-   git branch -D <branch>
-   git fetch --quiet --prune
-   ```
-
-3. Check that the issue closed: `gh issue view N --json state --jq .state`. If it didn't,
-   check that the PR body said `Closes #N`, and tell the user.
-4. Report: `main` synced to which commit, the branch deleted, the issue closed. Then suggest
+   It refuses to touch anything until the PR is merged. If the user spoke a moment before the
+   merge landed, say so and try again shortly. Then it:
+   - syncs `main`;
+   - deletes the PR's local branch and prunes remote branches;
+   - says whether each issue the PR closes is closed, and fails if one isn't. Then check that
+     the PR body said `Closes #N`, and tell the user.
+2. Report: `main` synced to which commit, the branch deleted, the issue closed. Then suggest
    what's next from `gh issue list --state open`. Recommend one item; don't start it unasked.
    - If `main` has user-visible changes since the last tag (`git log $(git describe --tags --abbrev=0)..main`),
      mention that a release could go out. The `cut-release` skill covers it.

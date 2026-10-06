@@ -2,7 +2,7 @@
 name: cut-release
 description: 'Cuts an officeconv release through a version-bump PR, then checks what the Release workflow published. Use when the user says "cut the X.Y.Z release", asks what''s next for a release, or says a release PR merged.'
 compatibility: Requires git, an authenticated GitHub CLI (gh) and a Rust toolchain.
-allowed-tools: 'Read Edit Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git describe *) Bash(git rev-parse *) Bash(git switch *) Bash(git pull *) Bash(git fetch *) Bash(git add Cargo.toml Cargo.lock) Bash(git commit *) Bash(git push -u origin chore/release-*) Bash(git branch -D chore/release-*) Bash(grep *) Bash(cargo update -w --offline) Bash(cargo test *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run list *) Bash(gh run watch *) Bash(gh run view *) Bash(gh release view *)'
+allowed-tools: 'Read Bash(git status) Bash(git log *) Bash(git describe *) Bash(git diff *) Bash(git add Cargo.toml Cargo.lock) Bash(git commit *) Bash(git push -u origin chore/release-*) Bash(gh pr create *) Bash(gh pr checks *) Bash(.claude/skills/cut-release/scripts/bump-version.sh *) Bash(.claude/skills/cut-release/scripts/verify-release.sh *) Bash(.claude/skills/issue-to-pr/scripts/after-merge.sh *)'
 ---
 
 # Cutting a release
@@ -43,16 +43,22 @@ If the user named a version, use it, but point out if the log suggests otherwise
 ## 2. Open the release PR
 
 ```sh
-git switch main && git pull --quiet
-git switch -c chore/release-X.Y.Z
-# Edit `version = "..."` under [package] in Cargo.toml, then:
-cargo update -w --offline
-git diff --stat            # exactly Cargo.toml and Cargo.lock, one line each
-cargo test --locked
+.claude/skills/cut-release/scripts/bump-version.sh X.Y.Z
 ```
 
-- **Commit subject:** `chore: release X.Y.Z`.
-- **Commit body:** the user-visible changes with their PR numbers. Call out breaking ones.
+The script:
+- refuses if there are uncommitted changes (untracked files are fine), if X.Y.Z isn't newer
+  than the current version, or if `vX.Y.Z` or the branch already exists;
+- creates `chore/release-X.Y.Z` from an up-to-date `main`;
+- sets the version in `Cargo.toml` and `Cargo.lock`, and fails unless exactly one line in each
+  changed;
+- runs the tests.
+
+It commits nothing. Then:
+
+- **Commit** `Cargo.toml` and `Cargo.lock`:
+  - subject: `chore: release X.Y.Z`;
+  - body: the user-visible changes with their PR numbers. Call out breaking ones.
 - **PR:** push, then open it with the same title.
 - **PR body:**
   - the version bump;
@@ -63,37 +69,27 @@ cargo test --locked
 
 ## 3. After the merge
 
-1. Confirm the merge **on its own**, with `gh pr view <PR> --json state --jq .state`. Go on only
-   if it prints `MERGED`, and never chain it with the cleanup: printing `OPEN` doesn't stop a
-   chain.
-2. Sync `main`, then check that it has the new version:
+1. Check what was published:
 
    ```sh
-   git switch main && git pull --quiet
-   git branch -D chore/release-X.Y.Z
-   git fetch --quiet --prune
-   grep -m1 '^version' Cargo.toml
+   .claude/skills/cut-release/scripts/verify-release.sh <PR>
    ```
 
-3. Find the Release run for the merge commit and watch it:
+   It refuses until the PR is merged: if the user spoke a moment before the merge landed, say
+   so and try again shortly. Then it:
+   - waits for the Release run on the merge commit and checks that every job passed;
+   - checks that `vX.Y.Z` points at the merge commit;
+   - checks that the release has an archive and a `.sha256` for each of the five platforms, and
+     nothing else.
+
+   It exits with an error that names what failed. For a failed run, see below.
+2. Clean up with the `issue-to-pr` skill's script, which syncs `main` and deletes the branch:
 
    ```sh
-   gh run list --workflow Release --branch main --limit 1 --json databaseId,headSha,status
-   gh run watch <run> --interval 30 --exit-status
-   gh run view <run> --json jobs --jq '.jobs[] | "\(.name): \(.conclusion)"'
+   .claude/skills/issue-to-pr/scripts/after-merge.sh <PR>
    ```
 
-4. Check what was published:
-   - The tag points at the merge commit: `git fetch --tags --quiet && git rev-parse --short 'vX.Y.Z^{commit}'`.
-   - The release has ten files: an archive and a `.sha256` for each of
-     - `x86_64-unknown-linux-gnu`;
-     - `aarch64-unknown-linux-gnu`;
-     - `aarch64-apple-darwin`;
-     - `x86_64-apple-darwin`;
-     - `x86_64-pc-windows-msvc` (a `.zip`; the rest are `.tar.gz`).
-
-     Check with `gh release view vX.Y.Z --json url,assets --jq '.url, (.assets[] | .name)'`.
-5. Report the release link, the tag commit and the files.
+3. Report the release link, the tag commit and the files.
 
 ## When the run fails
 

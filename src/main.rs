@@ -14,7 +14,7 @@ fn main() -> ExitCode {
         Err(err) => {
             // Each error message already includes its cause, so print just that one line.
             eprintln!("Error: {err}");
-            ExitCode::FAILURE
+            ExitCode::from(err.exit_code())
         }
     }
 }

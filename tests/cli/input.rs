@@ -57,14 +57,14 @@ fn reports_empty_or_unrecognized_stdin() {
         .args(["-", "--to", "md"])
         .write_stdin("")
         .assert()
-        .failure()
+        .code(66)
         .stderr(contains("stdin is empty"));
 
     officeconv()
         .args(["-", "--to", "md"])
         .write_stdin("just some text")
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains("could not tell what kind of file is on stdin"));
 }
 
@@ -75,7 +75,7 @@ fn rejects_typed_before_reading_stdin() {
         .args(["-", "--to", "csv", "--typed"])
         .write_stdin("not an office file")
         .assert()
-        .failure()
+        .code(64)
         .stderr(contains("--typed only applies to --to json"));
 }
 
@@ -107,7 +107,7 @@ fn from_overrides_a_misleading_extension() {
         .arg(&misnamed)
         .args(["--to", "md"])
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains("could not read document"));
     officeconv()
         .arg(&misnamed)
@@ -124,7 +124,7 @@ fn rejects_a_from_that_does_not_match() {
         .args(["-", "--to", "md", "--from", "docx"])
         .write_stdin(std::fs::read(&path).unwrap())
         .assert()
-        .failure()
+        .code(65)
         .stderr(contains(
             "the input isn't a .docx file (it looks like a .xlsx)",
         ));

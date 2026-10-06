@@ -1,5 +1,5 @@
 ---
-name: release
+name: cut-release
 description: 'Cuts an officeconv release through a version-bump PR, then checks what the Release workflow published. Use when the user says "cut the X.Y.Z release", asks what''s next for a release, or says a release PR merged.'
 compatibility: Requires git, an authenticated GitHub CLI (gh) and a Rust toolchain.
 allowed-tools: 'Read Edit Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git describe *) Bash(git rev-parse *) Bash(git switch *) Bash(git pull *) Bash(git fetch *) Bash(git add Cargo.toml Cargo.lock) Bash(git commit *) Bash(git push -u origin chore/release-*) Bash(git branch -D chore/release-*) Bash(grep *) Bash(cargo update -w --offline) Bash(cargo test *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run list *) Bash(gh run watch *) Bash(gh run view *) Bash(gh release view *)'

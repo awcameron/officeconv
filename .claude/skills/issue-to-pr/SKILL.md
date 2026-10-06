@@ -110,4 +110,4 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 4. Report: `main` synced to which commit, the branch deleted, the issue closed. Then suggest
    what's next from `gh issue list --state open`. Recommend one item; don't start it unasked.
    - If `main` has user-visible changes since the last tag (`git log $(git describe --tags --abbrev=0)..main`),
-     mention that a release could go out. The `release` skill covers it.
+     mention that a release could go out. The `cut-release` skill covers it.

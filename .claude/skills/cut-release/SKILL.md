@@ -49,12 +49,14 @@ If the user named a version, use it, but point out if the log suggests otherwise
 The script:
 - refuses if there are uncommitted changes (untracked files are fine), if X.Y.Z isn't newer
   than the current version, or if `vX.Y.Z` or the branch already exists;
-- creates `chore/release-X.Y.Z` from an up-to-date `main`;
+- creates `chore/release-X.Y.Z` from `origin/main`, so unpushed local commits stay out;
 - sets the version in `Cargo.toml` and `Cargo.lock`, and fails unless exactly one line in each
   changed;
-- runs the tests.
+- runs the tests, printing their output if they fail.
 
-It commits nothing. Then:
+It commits nothing. If it fails after creating the branch, it leaves the bump uncommitted there
+and prints the command that undoes it. Report the failure; don't undo it or retry unasked.
+Then:
 
 - **Commit** `Cargo.toml` and `Cargo.lock`:
   - subject: `chore: release X.Y.Z`;

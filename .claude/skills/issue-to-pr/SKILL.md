@@ -97,7 +97,10 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    It refuses to touch anything until the PR is merged. If the user spoke a moment before the
    merge landed, say so and try again shortly. Then it:
    - syncs `main`;
-   - deletes the PR's local branch and prunes remote branches;
+   - deletes the PR's local branch, unless it has commits that aren't in the PR. Then it keeps
+     the branch and fails: tell the user what's on it (`git log origin/main..<branch>`) and
+     leave it;
+   - prunes remote branches;
    - says whether each issue the PR closes is closed, and fails if one isn't. Then check that
      the PR body said `Closes #N`, and tell the user.
 2. Report: `main` synced to which commit, the branch deleted, the issue closed. Then suggest

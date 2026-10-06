@@ -33,6 +33,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [features]
 default = ["pdf"]
+# Re-exports the internals the fuzz targets in fuzz/ call. Not a public API.
+fuzzing = []
 # `--to pdf`. Without it the binary is smaller, and `--to pdf` says it isn't built in.
 pdf = [
     "dep:flate2",

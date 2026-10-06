@@ -77,7 +77,8 @@ impl Run {
         }
     }
 
-    /// The same run, pointing at `url`.
+    /// The same run, pointing at `url`. The readers set links field by field; tests use this.
+    #[cfg(test)]
     pub fn linked(self, url: impl Into<String>) -> Self {
         Run {
             link: Some(url.into()),

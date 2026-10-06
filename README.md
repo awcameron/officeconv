@@ -300,12 +300,15 @@ Our chart: ![Sales by region](notes_images/image1.png)
 ## Development
 
 ```sh
-cargo test                                   # unit and end-to-end tests
-cargo clippy --all-targets -- -D warnings    # lints
-cargo fmt                                    # formatting
-cargo doc --no-deps --open                   # browse the code's documentation
-cargo run -- sales.xlsx --to md              # run without installing
+cargo test                                            # unit and end-to-end tests
+cargo clippy --all-targets -- -D warnings             # lints
+cargo fmt                                             # formatting
+cargo doc --no-deps --document-private-items --open   # browse the code's documentation
+cargo run -- sales.xlsx --to md                       # run without installing
 ```
+
+`officeconv` is a binary: its library has no public API, so internals can change in any release.
+See [ADR 0003](docs/adr/0003-binary-only.md).
 
 The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so the repo
 doesn't need to contain any binary test files.
@@ -339,8 +342,8 @@ Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 
 ```text
 src/
-  main.rs            entry point: parse arguments, run, print errors
-  lib.rs             run(): validate, then hand off to a converter
+  main.rs            entry point: calls officeconv::main()
+  lib.rs             main() and run(): parse, validate, hand off to a converter, report errors
   cli.rs             command-line options (clap)
   format.rs          OutputFormat: csv, tsv, json, md
   error.rs           ConvertError, with one variant per kind of failure

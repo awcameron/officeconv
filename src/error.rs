@@ -100,6 +100,7 @@ pub enum ConvertError {
     #[error("stdin has more than {}, the most officeconv reads", megabytes(*.limit))]
     StdinTooLarge { limit: u64 },
 
+    #[cfg(feature = "pdf")]
     #[error("could not write PDF: {0}")]
     Pdf(String),
 
@@ -144,8 +145,7 @@ impl ConvertError {
             | PdfNotBuilt
             | SheetNotFound { .. } => exit_code::USAGE,
 
-            // The input is there but isn't something officeconv can convert. A PDF that can't
-            // be written is here too: krilla rejects it because of what the document holds.
+            // The input is there but isn't something officeconv can convert.
             UnsupportedInput(_)
             | UnrecognizedStdin
             | WrongKind { .. }
@@ -155,8 +155,10 @@ impl ConvertError {
             | DocxXml(_)
             | PartTooLarge { .. }
             | InputTooLarge { .. }
-            | StdinTooLarge { .. }
-            | Pdf(_) => exit_code::DATA,
+            | StdinTooLarge { .. } => exit_code::DATA,
+            // krilla rejects a PDF because of what the document holds, so it's bad input too.
+            #[cfg(feature = "pdf")]
+            Pdf(_) => exit_code::DATA,
 
             InputNotFound(_) | OpenInput { .. } | StdinIsTerminal | EmptyStdin => {
                 exit_code::NO_INPUT

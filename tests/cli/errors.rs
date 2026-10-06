@@ -1,7 +1,8 @@
 //! Bad input and option combinations: each fails with a clear message and its exit code.
 //!
-//! The codes are written as numbers, not taken from `officeconv::error::exit_code`, because
-//! scripts rely on the numbers: changing a constant should fail these tests.
+//! The codes are written as numbers, not taken from the `exit_code` constants in
+//! `src/error.rs`, because scripts rely on the numbers: changing a constant should fail these
+//! tests.
 
 use predicates::str::contains;
 use tempfile::TempDir;

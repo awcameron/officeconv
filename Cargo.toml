@@ -1,6 +1,6 @@
 [package]
 name = "officeconv"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
 description = "Convert XLSX spreadsheets to CSV, TSV, JSON, or Markdown, and DOCX and PPTX files to Markdown"
 readme = "README.md"

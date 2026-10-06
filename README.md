@@ -387,6 +387,7 @@ tests/cli/           end-to-end tests that run the real binary
 fuzz/                fuzz targets for the zip reader and the three readers (cargo-fuzz)
 tools/compare/       compares the output of two builds on generated files
 assets/fonts/        Noto Sans, built into the binary for PDF output
+.claude/skills/      Claude Code skills for this repo's workflows: issue to PR, and releasing
 ```
 
 ### Releasing

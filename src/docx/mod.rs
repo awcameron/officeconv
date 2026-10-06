@@ -37,7 +37,8 @@ pub fn read_blocks<R: Read + Seek>(reader: R, images: Images<'_>) -> Result<Vec<
     read_blocks_with_limits(reader, images, Limits::DEFAULT)
 }
 
-/// [`read_blocks`], decompressing at most `limits`.
+/// [`read_blocks`], decompressing at most `limits` instead of [`Limits::DEFAULT`]. The fuzz
+/// targets use this to pass smaller limits.
 pub fn read_blocks_with_limits<R: Read + Seek>(
     reader: R,
     images: Images<'_>,

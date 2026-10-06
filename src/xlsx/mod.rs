@@ -31,7 +31,8 @@ pub fn read_sheet<R: Read + Seek>(reader: R, sheet: Option<&str>) -> Result<Shee
     read_sheet_with_limits(reader, sheet, Limits::DEFAULT)
 }
 
-/// [`read_sheet`], refusing a workbook that decompresses to more than `limits`.
+/// [`read_sheet`], refusing a workbook that decompresses to more than `limits` instead of
+/// [`Limits::DEFAULT`]. The fuzz targets use this to pass smaller limits.
 pub fn read_sheet_with_limits<R: Read + Seek>(
     mut reader: R,
     sheet: Option<&str>,
@@ -67,7 +68,8 @@ pub fn read_all_sheets<R: Read + Seek>(reader: R) -> Result<Vec<Sheet>> {
     read_all_sheets_with_limits(reader, Limits::DEFAULT)
 }
 
-/// [`read_all_sheets`], refusing a workbook that decompresses to more than `limits`.
+/// [`read_all_sheets`], refusing a workbook that decompresses to more than `limits` instead of
+/// [`Limits::DEFAULT`]. The fuzz targets use this to pass smaller limits.
 pub fn read_all_sheets_with_limits<R: Read + Seek>(
     mut reader: R,
     limits: Limits,

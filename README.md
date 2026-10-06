@@ -374,15 +374,17 @@ assets/fonts/        Noto Sans, built into the binary for PDF output
 
 ### Releasing
 
-Bump `version` in `Cargo.toml` in a PR, merge it, then tag that commit on `main`:
+Bump `version` in `Cargo.toml` (and `Cargo.lock`, with `cargo update -w`) in a PR, and merge
+it. That's all: there's no tag to push.
 
-```sh
-git tag v0.2.0 && git push origin v0.2.0
-```
+On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, tags the
+commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64, arm64), macOS
+(Apple Silicon, Intel) and Windows, each with a SHA-256 checksum. A merge that changes
+`Cargo.toml` but not the version finds the tag already there and publishes nothing. Existing
+tags are never moved, and a ruleset blocks moving or deleting them by hand.
 
-The [release workflow](.github/workflows/release.yml) checks that the tag matches
-`Cargo.toml`, runs the tests, and publishes a GitHub Release with a binary for Linux (x86_64,
-arm64), macOS (Apple Silicon, Intel) and Windows, each with a SHA-256 checksum.
+Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
+in the Actions tab: re-running every job would find the tag already there and stop.
 
 ## License
 

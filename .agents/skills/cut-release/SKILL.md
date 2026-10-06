@@ -2,7 +2,7 @@
 name: cut-release
 description: 'Cuts an officeconv release through a version-bump PR, then checks what the Release workflow published. Use when the user says "cut the X.Y.Z release", asks what''s next for a release, or says a release PR merged.'
 compatibility: Requires git, an authenticated GitHub CLI (gh) and a Rust toolchain.
-allowed-tools: 'Read Bash(git status) Bash(git log *) Bash(git describe *) Bash(git diff *) Bash(git add Cargo.toml Cargo.lock) Bash(git commit *) Bash(git push -u origin chore/release-*) Bash(gh pr create *) Bash(gh pr checks *) Bash(.claude/skills/cut-release/scripts/bump-version.sh *) Bash(.claude/skills/cut-release/scripts/verify-release.sh *) Bash(.claude/skills/issue-to-pr/scripts/after-merge.sh *)'
+allowed-tools: 'Read Bash(git status) Bash(git log *) Bash(git describe *) Bash(git diff *) Bash(git add Cargo.toml Cargo.lock) Bash(git commit *) Bash(git push -u origin chore/release-*) Bash(gh pr create *) Bash(gh pr checks *) Bash(.agents/skills/cut-release/scripts/bump-version.sh *) Bash(.agents/skills/cut-release/scripts/verify-release.sh *) Bash(.agents/skills/issue-to-pr/scripts/after-merge.sh *)'
 ---
 
 # Cutting a release
@@ -43,7 +43,7 @@ If the user named a version, use it, but point out if the log suggests otherwise
 ## 2. Open the release PR
 
 ```sh
-.claude/skills/cut-release/scripts/bump-version.sh X.Y.Z
+.agents/skills/cut-release/scripts/bump-version.sh X.Y.Z
 ```
 
 The script:
@@ -74,7 +74,7 @@ Then:
 1. Check what was published:
 
    ```sh
-   .claude/skills/cut-release/scripts/verify-release.sh <PR>
+   .agents/skills/cut-release/scripts/verify-release.sh <PR>
    ```
 
    It refuses until the PR is merged: if the user spoke a moment before the merge landed, say
@@ -88,7 +88,7 @@ Then:
 2. Clean up with the `issue-to-pr` skill's script, which syncs `main` and deletes the branch:
 
    ```sh
-   .claude/skills/issue-to-pr/scripts/after-merge.sh <PR>
+   .agents/skills/issue-to-pr/scripts/after-merge.sh <PR>
    ```
 
 3. Report the release link, the tag commit and the files.

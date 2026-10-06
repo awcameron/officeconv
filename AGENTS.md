@@ -83,5 +83,7 @@ an allowed license and no open advisories.
 - **Fuzzing** needs nightly and cargo-fuzz, and runs from `fuzz/`; see
   [Fuzzing](README.md#fuzzing).
 
-Claude Code also has skills for this repo's two main workflows in `.claude/skills/`: taking an
-issue to a merged PR, and cutting a release.
+Skills for this repo's two main workflows live in `.agents/skills/`: taking an issue to a merged
+PR, and cutting a release. Codex, Cursor and other agents that support
+[Agent Skills](https://agentskills.io) read them from there; `.claude/skills` is a symlink to
+the same directory for Claude Code.

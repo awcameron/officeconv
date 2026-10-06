@@ -23,13 +23,14 @@ pub enum Block {
         runs: Vec<Run>,
     },
     /// Rows of cells. The first row is treated as the header row.
-    Table(Vec<Vec<Cell>>),
+    Table(Vec<Vec<CellRuns>>),
     /// A horizontal rule, such as the break between two slides.
     Rule,
 }
 
-/// The text of one table cell. Paragraphs inside the cell are separated by `"\n"`.
-pub type Cell = Vec<Run>;
+/// The formatted text of one document table cell. Paragraphs inside the cell are separated by
+/// `"\n"`. Not to be confused with [`crate::table::Cell`], a typed spreadsheet value.
+pub type CellRuns = Vec<Run>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListKind {
@@ -108,7 +109,7 @@ pub fn append_run(runs: &mut Vec<Run>, run: Run) {
 }
 
 /// Adds a paragraph's runs to a table cell, on a new line if the cell already has text.
-pub fn append_paragraph(cell: &mut Cell, runs: Vec<Run>) {
+pub fn append_paragraph(cell: &mut CellRuns, runs: Vec<Run>) {
     if is_blank(&runs) {
         return;
     }
@@ -177,10 +178,10 @@ fn resolve_runs(
 /// Collects a table's cells as a reader walks through its rows.
 #[derive(Debug, Default)]
 pub struct TableBuilder {
-    pub rows: Vec<Vec<Cell>>,
-    row: Vec<Cell>,
+    pub rows: Vec<Vec<CellRuns>>,
+    row: Vec<CellRuns>,
     /// The cell being filled in; add paragraphs to it with [`append_paragraph`].
-    pub cell: Cell,
+    pub cell: CellRuns,
 }
 
 impl TableBuilder {

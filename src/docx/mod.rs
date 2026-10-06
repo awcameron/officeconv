@@ -21,7 +21,7 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::{
-    Block, Cell, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
+    Block, CellRuns, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
 };
 use crate::error::Result;
 use crate::images::{self, Images};
@@ -298,7 +298,7 @@ impl<'p> Parser<'p> {
         }
     }
 
-    fn finish_table(&mut self, rows: Vec<Vec<Cell>>) {
+    fn finish_table(&mut self, rows: Vec<Vec<CellRuns>>) {
         if rows.is_empty() {
             return;
         }

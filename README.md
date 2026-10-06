@@ -335,6 +335,22 @@ the release profile's LTO and symbol stripping, which make fuzz builds slow and 
 unreadable, and Cargo only reads it there. `-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
 `fuzz/artifacts/<target>/`, and `cargo +nightly fuzz run <target> <file>` replays it.
 
+### Comparing two builds
+
+Before merging a change to a reader, check that its output changes only where you meant it to:
+
+```sh
+tools/compare/compare.sh            # the working tree against main
+tools/compare/compare.sh v0.3.0     # or against any commit, branch or tag
+```
+
+It builds both versions (with LTO off, so each build takes about a minute), generates 2,000
+`.docx`, `.pptx` and `.xlsx` files whose XML nests elements at random, converts each with both
+builds in parallel, and lists every file whose Markdown, saved images, messages or exit status
+differ. For each one, `diff -r` on the two folders it prints shows what changed. It needs
+Python 3, and takes a few minutes. `COUNT`, `SEED`, `CORPUS` and `JOBS` change what it runs; see
+the top of the script.
+
 Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 [how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
 
@@ -369,6 +385,7 @@ src/
   pptx.rs            reads slides in presentation order, with their notes, into Blocks
 tests/cli/           end-to-end tests that run the real binary
 fuzz/                fuzz targets for the zip reader and the three readers (cargo-fuzz)
+tools/compare/       compares the output of two builds on generated files
 assets/fonts/        Noto Sans, built into the binary for PDF output
 ```
 

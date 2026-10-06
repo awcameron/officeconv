@@ -20,15 +20,16 @@ cd "$(git rev-parse --show-toplevel)"
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
     die "there are uncommitted changes; commit or stash them first"
 
-# The `version` line in Cargo.toml's [package] section, not a dependency's or the workspace's.
+# The `version` line in a Cargo.toml's [package] section, not a dependency's or the workspace's.
 package_version() {
     awk '/^\[/ { in_package = ($0 == "[package]") }
-         in_package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }' Cargo.toml
+         in_package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }'
 }
 
-git switch --quiet main
-git pull --quiet --ff-only
-current=$(package_version)
+# Every check runs against origin/main before anything changes, so a refusal leaves the
+# checkout where it was.
+git fetch --quiet origin main
+current=$(git show origin/main:Cargo.toml | package_version)
 [ -n "$current" ] || die "couldn't find the version in Cargo.toml"
 
 newest=$(printf '%s\n%s\n' "$current" "$new" | sort -V | tail -n 1)
@@ -44,6 +45,8 @@ if git rev-parse --verify --quiet "refs/heads/$branch" > /dev/null ||
     die "$branch already exists"
 fi
 
+git switch --quiet main
+git pull --quiet --ff-only
 git switch --quiet -c "$branch"
 awk -v new="$new" '/^\[/ { in_package = ($0 == "[package]") }
      in_package && !done && /^version = "/ { $0 = "version = \"" new "\""; done = 1 }

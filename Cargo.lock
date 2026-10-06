@@ -717,7 +717,6 @@ dependencies = [
  "pdf-writer",
  "png",
  "rustc-hash",
- "rustybuzz",
  "siphasher",
  "skrifa",
  "smallvec",

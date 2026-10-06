@@ -22,7 +22,7 @@ csv = "1.4.0"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"], optional = true }
 fontdb = { version = "0.24.0", optional = true }
 imagesize = { version = "0.14.0", optional = true }
-krilla = { version = "0.8.2", optional = true }
+krilla = { version = "0.8.2", default-features = false, features = ["raster-images"], optional = true }
 quick-xml = "0.42.0"
 rustybuzz = { version = "0.20", optional = true }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }

@@ -242,27 +242,108 @@ pub fn image_parts(
         .collect()
 }
 
+/// The elements open at a point in [`walk`], by local name (`<w:r>` -> `"r"`).
+///
+/// Readers decide what an element or piece of text means from where it is, such as "text
+/// inside `t`" or "`b` inside `r`", instead of keeping a flag for each element they're inside.
+#[derive(Debug, Default)]
+pub struct Open {
+    /// Every open element, outermost first, as an index into `names` and `counts`.
+    stack: Vec<usize>,
+    /// Each local name seen so far.
+    names: Vec<Box<str>>,
+    /// How many elements of each name are open, so [`Open::inside`] doesn't have to search the
+    /// stack: a hostile file can nest elements a million deep.
+    counts: Vec<usize>,
+    /// Name -> index into `names` and `counts`.
+    ids: HashMap<Box<str>, usize>,
+}
+
+impl Open {
+    /// True if an element named `name` is open, at any depth.
+    pub fn inside(&self, name: &str) -> bool {
+        self.ids.get(name).is_some_and(|&id| self.counts[id] > 0)
+    }
+
+    /// The innermost open element.
+    pub fn current(&self) -> Option<&str> {
+        self.stack.last().map(|&id| &*self.names[id])
+    }
+
+    fn push(&mut self, name: &str) {
+        let id = match self.ids.get(name) {
+            Some(&id) => id,
+            None => {
+                let id = self.names.len();
+                self.names.push(name.into());
+                self.counts.push(0);
+                self.ids.insert(name.into(), id);
+                id
+            }
+        };
+        self.counts[id] += 1;
+        self.stack.push(id);
+    }
+
+    fn pop(&mut self) {
+        if let Some(id) = self.stack.pop() {
+            self.counts[id] -= 1;
+        }
+    }
+}
+
 /// Something that reacts to XML as it streams past. See [`walk`].
+///
+/// `start` and `text` get the elements open around them. For `start` that leaves out the
+/// element itself: its parent is [`Open::current`].
 pub trait XmlHandler {
+    /// Elements whose contents are ignored, such as the `Fallback` copy of content stored twice.
+    /// The handler sees nothing from the start of one to its end.
+    const SKIP: &'static [&'static str] = &[];
+
     /// An opening tag, or a self-closing one when `is_empty` is true (no matching `end` follows).
-    fn start(&mut self, e: &BytesStart, is_empty: bool);
+    fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open);
     /// A closing tag, by local name (`</w:p>` -> `"p"`).
     fn end(&mut self, name: &str);
     /// Text between tags, with entities such as `&amp;` already resolved.
-    fn text(&mut self, text: &str);
+    fn text(&mut self, text: &str, open: &Open);
 }
 
 /// Streams through `xml`, calling `handler` for each tag and piece of text.
-pub fn walk(xml: &str, handler: &mut impl XmlHandler) -> Result<()> {
+pub fn walk<H: XmlHandler>(xml: &str, handler: &mut H) -> Result<()> {
     let mut reader = Reader::from_str(xml);
+    let mut open = Open::default();
+    // While above 0, we're inside one of `H::SKIP`: this many elements deep.
+    let mut skip_depth = 0usize;
     loop {
         match reader.read_event()? {
             Event::Eof => return Ok(()),
-            Event::Start(e) => handler.start(&e, false),
-            Event::Empty(e) => handler.start(&e, true),
-            Event::End(e) => handler.end(e.local_name().as_ref()),
-            Event::Text(t) => handler.text(&t),
-            Event::GeneralRef(r) => {
+            Event::Start(e) => {
+                let name = e.local_name();
+                let name: &str = name.as_ref();
+                if skip_depth > 0 || H::SKIP.contains(&name) {
+                    skip_depth += 1;
+                } else {
+                    handler.start(&e, false, &open);
+                    open.push(name);
+                }
+            }
+            Event::Empty(e) => {
+                if skip_depth == 0 && !H::SKIP.contains(&e.local_name().as_ref()) {
+                    handler.start(&e, true, &open);
+                }
+            }
+            Event::End(e) => {
+                if skip_depth > 0 {
+                    skip_depth -= 1;
+                } else {
+                    // quick-xml has already checked that the end tag matches the open one.
+                    open.pop();
+                    handler.end(e.local_name().as_ref());
+                }
+            }
+            Event::Text(t) if skip_depth == 0 => handler.text(&t, &open),
+            Event::GeneralRef(r) if skip_depth == 0 => {
                 // `&amp;` and `&#233;` arrive as their own events.
                 let resolved = match r.resolve_char_ref()? {
                     Some(c) => c.to_string(),
@@ -270,7 +351,7 @@ pub fn walk(xml: &str, handler: &mut impl XmlHandler) -> Result<()> {
                         .unwrap_or_default()
                         .to_string(),
                 };
-                handler.text(&resolved);
+                handler.text(&resolved, &open);
             }
             _ => {}
         }
@@ -446,6 +527,81 @@ mod tests {
         let images = image_parts(&relationships, "ppt/slides/slide1.xml");
         assert_eq!(images.len(), 1);
         assert_eq!(images["rId2"], "ppt/media/image1.png");
+    }
+
+    /// Records what a handler sees, and where.
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<String>,
+    }
+
+    impl XmlHandler for Recorder {
+        const SKIP: &'static [&'static str] = &["Fallback"];
+
+        fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+            let name = e.local_name();
+            let name: &str = name.as_ref();
+            let slash = if is_empty { "/" } else { "" };
+            self.events.push(format!(
+                "<{name}{slash}> in {:?}, inside r: {}",
+                open.current(),
+                open.inside("r")
+            ));
+        }
+
+        fn end(&mut self, name: &str) {
+            self.events.push(format!("</{name}>"));
+        }
+
+        fn text(&mut self, text: &str, open: &Open) {
+            self.events
+                .push(format!("{text:?} in {:?}", open.current()));
+        }
+    }
+
+    #[test]
+    fn walk_passes_the_open_elements_and_skips_their_contents() {
+        let mut recorder = Recorder::default();
+        walk(
+            r#"<w:p><w:r><w:t>a&amp;b</w:t><w:br/></w:r><mc:Fallback><w:r><w:t>old</w:t></w:r></mc:Fallback></w:p>"#,
+            &mut recorder,
+        )
+        .unwrap();
+        assert_eq!(
+            recorder.events,
+            [
+                "<p> in None, inside r: false",
+                "<r> in Some(\"p\"), inside r: false",
+                "<t> in Some(\"r\"), inside r: true",
+                "\"a\" in Some(\"t\")",
+                "\"&\" in Some(\"t\")",
+                "\"b\" in Some(\"t\")",
+                "</t>",
+                "<br/> in Some(\"r\"), inside r: true",
+                "</r>",
+                "</p>",
+            ]
+        );
+    }
+
+    #[test]
+    fn inside_stays_fast_however_deep_the_nesting() {
+        /// Asks whether it's inside `r` at every element, as the readers do.
+        struct Asker(usize);
+        impl XmlHandler for Asker {
+            fn start(&mut self, _: &BytesStart, _: bool, open: &Open) {
+                self.0 += usize::from(open.inside("r"));
+            }
+            fn end(&mut self, _: &str) {}
+            fn text(&mut self, _: &str, _: &Open) {}
+        }
+
+        // Searching the stack each time would take about 10^10 steps here.
+        let depth = 200_000;
+        let xml = format!("<r>{}{}</r>", "<a>".repeat(depth), "</a>".repeat(depth));
+        let mut asker = Asker(0);
+        walk(&xml, &mut asker).unwrap();
+        assert_eq!(asker.0, depth);
     }
 
     #[test]

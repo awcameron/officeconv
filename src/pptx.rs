@@ -28,7 +28,7 @@ use crate::document::{
 };
 use crate::error::Result;
 use crate::images::{self, Images};
-use crate::opc::{self, Limits, XmlHandler, attr};
+use crate::opc::{self, Limits, Open, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
 
@@ -266,9 +266,6 @@ struct SlideParser<'a> {
     tables: Vec<TableBuilder>,
     style: RunStyle,
     link: Option<String>,
-    in_run: bool,
-    in_text: bool,
-    skip_depth: usize,
 }
 
 impl<'a> SlideParser<'a> {
@@ -285,9 +282,6 @@ impl<'a> SlideParser<'a> {
             tables: Vec::new(),
             style: RunStyle::default(),
             link: None,
-            in_run: false,
-            in_text: false,
-            skip_depth: 0,
         }
     }
 
@@ -375,17 +369,11 @@ impl<'a> SlideParser<'a> {
 }
 
 impl XmlHandler for SlideParser<'_> {
-    fn start(&mut self, e: &BytesStart, is_empty: bool) {
-        if self.skip_depth > 0 {
-            if !is_empty {
-                self.skip_depth += 1;
-            }
-            return;
-        }
+    // Some content is stored twice (a modern version and a fallback); keep one.
+    const SKIP: &'static [&'static str] = &["Fallback"];
 
+    fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
         match e.local_name().as_ref() {
-            // Some content is stored twice (a modern version and a fallback); keep one.
-            "Fallback" if !is_empty => self.skip_depth = 1,
             "sld" => self.hidden = attr(e, "show").as_deref() == Some("0"),
             "sp" if !is_empty => self.shape = Some(Shape::default()),
             "pic" if !is_empty && !self.notes => self.picture = Some(Picture::default()),
@@ -401,7 +389,7 @@ impl XmlHandler for SlideParser<'_> {
                 }
             }
             // Clicking a picture can open a link.
-            "hlinkClick" if self.picture.is_some() && !self.in_run => {
+            "hlinkClick" if self.picture.is_some() && !in_run(open) => {
                 let link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
                 if let Some(picture) = self.picture.as_mut() {
                     picture.link = link;
@@ -430,18 +418,16 @@ impl XmlHandler for SlideParser<'_> {
             }
             // A text field (slide number, date) holds text just like a run.
             "r" | "fld" if !is_empty => {
-                self.in_run = true;
                 self.style = RunStyle::default();
                 self.link = None;
             }
-            "rPr" if self.in_run => {
+            "rPr" if in_run(open) => {
                 self.style.bold = is_on(attr(e, "b"));
                 self.style.italic = is_on(attr(e, "i"));
             }
-            "hlinkClick" if self.in_run => {
+            "hlinkClick" if in_run(open) => {
                 self.link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
             }
-            "t" if !is_empty => self.in_text = true,
             "br" => self.push_text("\n"),
             "tbl" if !is_empty => self.tables.push(TableBuilder::default()),
             _ => {}
@@ -449,16 +435,9 @@ impl XmlHandler for SlideParser<'_> {
     }
 
     fn end(&mut self, name: &str) {
-        if self.skip_depth > 0 {
-            self.skip_depth -= 1;
-            return;
-        }
-
         match name {
-            "t" => self.in_text = false,
             "r" | "fld" => {
                 // Line breaks sit between runs, so they mustn't inherit the last run's formatting.
-                self.in_run = false;
                 self.style = RunStyle::default();
                 self.link = None;
             }
@@ -486,11 +465,16 @@ impl XmlHandler for SlideParser<'_> {
         }
     }
 
-    fn text(&mut self, text: &str) {
-        if self.in_text && self.skip_depth == 0 {
+    fn text(&mut self, text: &str, open: &Open) {
+        if open.inside("t") {
             self.push_text(text);
         }
     }
+}
+
+/// Inside a run, or a text field (slide number, date), which holds text just like one.
+fn in_run(open: &Open) -> bool {
+    open.inside("r") || open.inside("fld")
 }
 
 /// DrawingML writes on/off attributes as `"1"`/`"0"` or `"true"`/`"false"`.

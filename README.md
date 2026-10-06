@@ -316,7 +316,9 @@ cd fuzz
 cargo +nightly fuzz run docx -- -max_len=65536   # or archive, pptx, xlsx; Ctrl-C to stop
 ```
 
-`-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
+Run `cargo fuzz` from `fuzz/`: [`fuzz/.cargo/config.toml`](fuzz/.cargo/config.toml) turns off
+the release profile's LTO and symbol stripping, which make fuzz builds slow and crash reports
+unreadable, and Cargo only reads it there. `-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
 `fuzz/artifacts/<target>/`, and `cargo +nightly fuzz run <target> <file>` replays it.
 
 Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with

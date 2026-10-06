@@ -1,0 +1,9 @@
+# The workspace's release profile makes small, slow-to-build binaries for shipping: fat LTO,
+# and symbols stripped. cargo fuzz always builds with that profile, so these undo the parts
+# that hurt fuzzing. Stripped symbols would leave crash reports without function names, and
+# fat LTO makes every build of the four targets take many minutes.
+#
+# Cargo reads this file only when it runs from fuzz/ or below, so run cargo fuzz from here.
+[profile.release]
+lto = false
+strip = false

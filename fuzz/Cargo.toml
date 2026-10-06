@@ -2,6 +2,7 @@
 name = "officeconv-fuzz"
 version = "0.0.0"
 publish = false
+license = "MIT"
 edition = "2024"
 
 [package.metadata]
@@ -10,10 +11,6 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 officeconv = { path = ".." }
-
-# Its own workspace, so the main crate's builds, tests and dependency checks leave it out.
-[workspace]
-members = ["."]
 
 [[bin]]
 name = "archive"

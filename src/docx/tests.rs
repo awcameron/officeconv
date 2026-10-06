@@ -265,6 +265,33 @@ fn reads_pictures_with_alt_text() {
 }
 
 #[test]
+fn reads_a_picture_grouped_with_a_text_box() {
+    // The text box's runs sit inside the run that holds the drawing. The picture after them is
+    // still in that outer run, so it isn't lost when the first inner run ends.
+    let mut package = Package::default();
+    package
+        .images
+        .insert("rId7".into(), "word/media/image1.png".into());
+    let blocks = parse_with(
+        r#"<w:p><w:r><w:drawing><wp:anchor>
+                 <wp:docPr id="1" name="Group 1" descr="Team photo"/>
+                 <a:graphic><a:graphicData><wpg:wgp>
+                   <wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Caption</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp>
+                   <pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic>
+                 </wpg:wgp></a:graphicData></a:graphic>
+               </wp:anchor></w:drawing></w:r></w:p>"#,
+        &package,
+    );
+    assert_eq!(
+        blocks,
+        [
+            Block::Paragraph(vec![Run::new("Caption", PLAIN)]),
+            Block::Paragraph(vec![Run::image("word/media/image1.png", "Team photo")]),
+        ]
+    );
+}
+
+#[test]
 fn maps_heading_styles() {
     assert_eq!(heading_level("Heading1"), Some(1));
     assert_eq!(heading_level("heading 3"), Some(3));

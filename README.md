@@ -349,7 +349,7 @@ src/
   error.rs           ConvertError, with one variant per kind of failure
   images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
   input.rs           the input (a file or stdin), its type, and which outputs each supports
-  opc.rs             zip parts, relationships, and the XmlHandler event loop
+  opc.rs             zip parts, relationships, and the XmlHandler event loop with its element stack
   output.rs          stdout, a file, or one file per sheet
   pdf/
     mod.rs           Blocks to PDF: paints the laid-out pages with krilla

@@ -25,7 +25,7 @@ use crate::document::{
 };
 use crate::error::Result;
 use crate::images::{self, Images};
-use crate::opc::{self, Limits, XmlHandler, attr};
+use crate::opc::{self, Limits, Open, XmlHandler, attr};
 use package::Package;
 
 const DOCUMENT: &str = "word/document.xml";
@@ -88,10 +88,6 @@ struct Parser<'p> {
     link: Option<String>,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
-    in_run: bool,
-    in_text: bool,
-    /// While above 0, we're inside an element whose contents we ignore.
-    skip_depth: usize,
 }
 
 #[derive(Default)]
@@ -103,18 +99,13 @@ struct ParagraphBuilder {
 }
 
 impl XmlHandler for Parser<'_> {
-    fn start(&mut self, e: &BytesStart, is_empty: bool) {
-        if self.skip_depth > 0 {
-            if !is_empty {
-                self.skip_depth += 1;
-            }
-            return;
-        }
+    // Word stores some content twice (a modern version and a fallback), and tracked changes
+    // keep the old formatting around. We only want the current version.
+    const SKIP: &'static [&'static str] = &["Fallback", "pPrChange", "rPrChange"];
 
+    fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+        let in_run = open.inside("r");
         match e.local_name().as_ref() {
-            // Word stores some content twice (a modern version and a fallback), and tracked
-            // changes keep the old formatting around. We only want the current version.
-            "Fallback" | "pPrChange" | "rPrChange" if !is_empty => self.skip_depth = 1,
             "p" if !is_empty => self.paragraphs.push(ParagraphBuilder::default()),
             "pStyle" => {
                 if let Some(paragraph) = self.paragraphs.last_mut() {
@@ -135,28 +126,24 @@ impl XmlHandler for Parser<'_> {
                 // External links have an `r:id`; links to bookmarks inside the document don't.
                 self.link = attr(e, "id").and_then(|id| self.package.links.get(&id).cloned());
             }
-            "r" if !is_empty => {
-                self.in_run = true;
-                self.style = RunStyle::default();
-            }
-            "b" if self.in_run => self.style.bold = is_on(e),
-            "i" if self.in_run => self.style.italic = is_on(e),
-            "t" if !is_empty => self.in_text = true,
+            "r" if !is_empty => self.style = RunStyle::default(),
+            "b" if in_run => self.style.bold = is_on(e),
+            "i" if in_run => self.style.italic = is_on(e),
             // A picture: `wp:docPr` carries its alt text, then `a:blip` points at the image.
-            "docPr" if self.in_run => {
+            "docPr" if in_run => {
                 self.image_alt = attr(e, "descr").or_else(|| attr(e, "title"));
             }
-            "blip" if self.in_run => {
+            "blip" if in_run => {
                 let alt = self.image_alt.take().unwrap_or_default();
                 self.push_image(attr(e, "embed"), alt);
             }
             // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
-            "imagedata" if self.in_run => {
+            "imagedata" if in_run => {
                 let alt = attr(e, "title").unwrap_or_default();
                 self.push_image(attr(e, "id"), alt);
             }
-            "tab" if self.in_run => self.push_text(" "),
-            "br" | "cr" if self.in_run => {
+            "tab" if in_run => self.push_text(" "),
+            "br" | "cr" if in_run => {
                 // Page and column breaks don't mean anything in Markdown.
                 if !matches!(attr(e, "type").as_deref(), Some("page" | "column")) {
                     self.push_text("\n");
@@ -168,14 +155,7 @@ impl XmlHandler for Parser<'_> {
     }
 
     fn end(&mut self, name: &str) {
-        if self.skip_depth > 0 {
-            self.skip_depth -= 1;
-            return;
-        }
-
         match name {
-            "t" => self.in_text = false,
-            "r" => self.in_run = false,
             "hyperlink" => self.link = None,
             "p" => {
                 if let Some(paragraph) = self.paragraphs.pop() {
@@ -201,8 +181,8 @@ impl XmlHandler for Parser<'_> {
         }
     }
 
-    fn text(&mut self, text: &str) {
-        if self.in_text && self.skip_depth == 0 {
+    fn text(&mut self, text: &str, open: &Open) {
+        if open.inside("t") {
             self.push_text(text);
         }
     }
@@ -218,9 +198,6 @@ impl<'p> Parser<'p> {
             style: RunStyle::default(),
             link: None,
             image_alt: None,
-            in_run: false,
-            in_text: false,
-            skip_depth: 0,
         }
     }
 

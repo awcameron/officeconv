@@ -20,7 +20,7 @@ use quick_xml::events::BytesStart;
 use crate::document::{Block, Run};
 use crate::error::Result;
 use crate::images::{self, ImageExport, Images};
-use crate::opc::{self, Archive, XmlHandler, attr};
+use crate::opc::{self, Archive, Open, XmlHandler, attr};
 
 /// One picture on a sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,8 +99,6 @@ pub fn parse_drawing(xml: &str, images: &HashMap<String, String>) -> Result<Vec<
         images,
         pictures: Vec::new(),
         anchor: None,
-        in_from: false,
-        reading: None,
         picture: None,
     };
     opc::walk(xml, &mut parser)?;
@@ -120,32 +118,19 @@ struct PictureBuilder {
     part: Option<String>,
 }
 
-#[derive(Clone, Copy)]
-enum Coordinate {
-    Row,
-    Col,
-}
-
 struct DrawingParser<'a> {
     images: &'a HashMap<String, String>,
     pictures: Vec<Picture>,
     anchor: Option<Anchor>,
-    /// Inside `<xdr:from>`, the anchor's top-left corner (not `<xdr:to>`, its bottom-right).
-    in_from: bool,
-    /// Inside `<xdr:row>` or `<xdr:col>`, whose text is the number.
-    reading: Option<Coordinate>,
     picture: Option<PictureBuilder>,
 }
 
 impl XmlHandler for DrawingParser<'_> {
-    fn start(&mut self, e: &BytesStart, is_empty: bool) {
+    fn start(&mut self, e: &BytesStart, is_empty: bool, _open: &Open) {
         match e.local_name().as_ref() {
             "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor" if !is_empty => {
                 self.anchor = Some(Anchor::default());
             }
-            "from" if !is_empty => self.in_from = true,
-            "row" if self.in_from && !is_empty => self.reading = Some(Coordinate::Row),
-            "col" if self.in_from && !is_empty => self.reading = Some(Coordinate::Col),
             "pic" if !is_empty => self.picture = Some(PictureBuilder::default()),
             "cNvPr" => {
                 if let Some(picture) = self.picture.as_mut() {
@@ -164,8 +149,6 @@ impl XmlHandler for DrawingParser<'_> {
 
     fn end(&mut self, name: &str) {
         match name {
-            "row" | "col" => self.reading = None,
-            "from" => self.in_from = false,
             "pic" => {
                 let Some(PictureBuilder {
                     alt,
@@ -187,14 +170,20 @@ impl XmlHandler for DrawingParser<'_> {
         }
     }
 
-    fn text(&mut self, text: &str) {
-        let (Some(coordinate), Some(anchor)) = (self.reading, self.anchor.as_mut()) else {
+    fn text(&mut self, text: &str, open: &Open) {
+        // `<xdr:from>` is the anchor's top-left corner (`<xdr:to>` is its bottom-right), and the
+        // text of its `<xdr:row>` and `<xdr:col>` is the cell.
+        let Some(anchor) = self.anchor.as_mut() else {
             return;
         };
+        if !open.inside("from") {
+            return;
+        }
         let value = text.trim().parse().ok();
-        match coordinate {
-            Coordinate::Row => anchor.row = value,
-            Coordinate::Col => anchor.col = value,
+        match open.current() {
+            Some("row") => anchor.row = value,
+            Some("col") => anchor.col = value,
+            _ => {}
         }
     }
 }

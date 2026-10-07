@@ -119,8 +119,9 @@ Bump `version` in `Cargo.toml` (and `Cargo.lock`, with `cargo update -w`) in a P
 it. That's all: there's no tag to push.
 
 On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, tags the
-commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64, arm64), macOS
-(Apple Silicon, Intel) and Windows, each with a SHA-256 checksum. The archives' names have no
+commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64 and arm64, each
+linked against glibc and statically with musl), macOS (Apple Silicon, Intel) and Windows (x86_64,
+arm64), each with a SHA-256 checksum. The archives' names have no
 version, so the `releases/latest/download/` links in the README's
 [Install](README.md#download-a-binary) section always get the newest release. A merge that
 changes `Cargo.toml` but not the version finds the tag already there and publishes nothing.

@@ -1,0 +1,18 @@
+# How GitHub groups the notes it writes for each release. The release workflow
+# (workflows/release.yml) creates releases with `gh release create --generate-notes`, which
+# reads this file. GitHub groups by PR label only, not by title, so the issue-to-pr skill labels
+# each PR by its commit type, and the cut-release skill labels the release PR.
+changelog:
+  exclude:
+    # The version-bump PR itself: it says nothing a reader needs.
+    labels: [release]
+  categories:
+    - title: Features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Documentation
+      labels: [documentation]
+    # Everything else: ci, test, refactor and chore PRs, which have no label.
+    - title: Other changes
+      labels: ["*"]

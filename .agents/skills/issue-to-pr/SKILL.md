@@ -73,6 +73,9 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 1. Push: `git push -u origin <branch>`.
 2. Open the PR with `gh pr create`:
    - The title is the commit subject.
+   - The label comes from the commit type, so the release notes group the PR (see
+     `.github/release.yml`): `feat` → `--label enhancement`, `fix` → `--label bug`, `docs` →
+     `--label documentation`. Other types get no label and are listed under "Other changes".
    - The body has these parts, in this order:
      - `Closes #N.`
      - Why the change was needed.

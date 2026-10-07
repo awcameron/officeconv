@@ -505,6 +505,10 @@ newest release. A merge that changes `Cargo.toml` but not the version finds the 
 and publishes nothing. Existing tags are never moved, and a ruleset blocks moving or deleting
 them by hand.
 
+The release notes are GitHub's generated list of PRs, grouped by label as
+[`.github/release.yml`](.github/release.yml) sets out: features, fixes, documentation, then other
+changes. The version-bump PR, labeled `release`, is left out.
+
 Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
 in the Actions tab: re-running every job would find the tag already there and stop. One
 platform failing doesn't cancel the others.

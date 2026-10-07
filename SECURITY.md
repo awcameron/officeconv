@@ -18,6 +18,7 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Threat | How it's handled | Where |
 | --- | --- | --- |
 | Using all memory: a small file that decompresses to gigabytes ("zip bomb"), or an endless stdin | Each part may decompress to 256 MB and a file to 1 GB in total, counted from the bytes actually read rather than the zip's headers. Every part of an `.xlsx` is checked before the workbook is read. Stdin stops at 1 GB. | `opc::Limits`, `xlsx::check_sizes`, `input::read_at_most` |
+| Using all memory with a CSV or TSV file: one very wide row and many short ones pad out to a huge table | A CSV or TSV file may hold 256 MB, and its table 32 million cells, counting short rows as padded to the widest. The cell count is checked as rows are read. | `delimited::Limits` |
 | Using all memory by decoding an image: a few bytes can declare any size | For PDF output, an image's dimensions are read from its header before it's decoded, and images over 50 megapixels are left out with a warning. That keeps one decode under about 800 MB. | `pdf::layout::decode_image`, `MAX_IMAGE_PIXELS` |
 | Repeating work: many entries in a small file pointing at the same large part | A slide, a slide's notes, a worksheet, or a sheet's drawing is read once, however many entries point at it. A `.pptx` that lists one slide 500,000 times converts it once, and `--all-sheets` writes a worksheet listed under 20,000 names to one file. | `pptx::read_blocks`, `xlsx::read_all_sheets`, `xlsx::pictures::related_parts` |
 | Writing outside the output folder | Saved images use only the last segment of their name inside the package, with unsafe characters replaced, so `../../x` can't leave the folder. The same goes for sheet names with `--all-sheets`. | `ImageExport::export`, `output::safe_file_name` |
@@ -26,7 +27,7 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Text that turns into Markdown or HTML | Text, table cells and link targets are escaped, so the Markdown shows what the document holds instead of new formatting, raw HTML or a different link. | `writers::escape_markdown_text`, `document::markdown::escape_url` |
 
 CI also runs [`cargo deny`](deny.toml) to check every dependency against the RustSec advisory
-database. The zip reader and the three readers are fuzzed, with what they read rendered in every
+database. The zip reader and the four readers are fuzzed, with what they read rendered in every
 output format; see [Fuzzing](README.md#fuzzing).
 
 ## Known gaps

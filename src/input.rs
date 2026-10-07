@@ -56,14 +56,20 @@ impl Source {
     }
 
     /// Works out the input kind. In order: `from` when given; a file's extension when it's
-    /// one we know; otherwise the parts inside the archive (always the case for stdin).
+    /// one we know; otherwise the parts inside the archive (always the case for stdin). CSV
+    /// and TSV are plain text with nothing to recognize them by, so on stdin they need `from`.
     ///
     /// A `from` that doesn't match the contents is an error, so a wrong `--from` gets a clear
-    /// message instead of a confusing one about a missing part.
+    /// message instead of a confusing one about a missing part. For CSV and TSV, that means
+    /// anything but an Office file.
     pub fn kind(&self, from: Option<InputKind>) -> Result<InputKind> {
         if let Some(expected) = from {
             let found = InputKind::from_contents(self.reader()?);
-            if found != Some(expected) {
+            let matches = match expected {
+                InputKind::Csv | InputKind::Tsv => found.is_none(),
+                _ => found == Some(expected),
+            };
+            if !matches {
                 return Err(ConvertError::WrongKind { expected, found });
             }
             return Ok(expected);
@@ -128,6 +134,8 @@ pub enum InputKind {
     Xlsx,
     Docx,
     Pptx,
+    Csv,
+    Tsv,
 }
 
 impl InputKind {
@@ -142,6 +150,8 @@ impl InputKind {
             Some("xlsx") => Ok(InputKind::Xlsx),
             Some("docx") => Ok(InputKind::Docx),
             Some("pptx") => Ok(InputKind::Pptx),
+            Some("csv") => Ok(InputKind::Csv),
+            Some("tsv") => Ok(InputKind::Tsv),
             _ => Err(ConvertError::UnsupportedInput(path.to_path_buf())),
         }
     }
@@ -169,11 +179,11 @@ impl InputKind {
     /// Returns an error if this input can't be converted to `to`.
     pub fn check_output(self, to: OutputFormat) -> Result<()> {
         let supported = match self {
-            InputKind::Xlsx => "csv, tsv, json, md",
+            InputKind::Xlsx | InputKind::Csv | InputKind::Tsv => "csv, tsv, json, md",
             InputKind::Docx | InputKind::Pptx => "md, pdf",
         };
         let ok = match self {
-            InputKind::Xlsx => to != OutputFormat::Pdf,
+            InputKind::Xlsx | InputKind::Csv | InputKind::Tsv => to != OutputFormat::Pdf,
             InputKind::Docx | InputKind::Pptx => {
                 matches!(to, OutputFormat::Markdown | OutputFormat::Pdf)
             }
@@ -196,6 +206,8 @@ impl fmt::Display for InputKind {
             InputKind::Xlsx => "xlsx",
             InputKind::Docx => "docx",
             InputKind::Pptx => "pptx",
+            InputKind::Csv => "csv",
+            InputKind::Tsv => "tsv",
         };
         f.write_str(name)
     }
@@ -218,6 +230,14 @@ mod tests {
         assert_eq!(
             InputKind::from_path(Path::new("deck.Pptx")).unwrap(),
             InputKind::Pptx
+        );
+        assert_eq!(
+            InputKind::from_path(Path::new("contacts.CSV")).unwrap(),
+            InputKind::Csv
+        );
+        assert_eq!(
+            InputKind::from_path(Path::new("export.tsv")).unwrap(),
+            InputKind::Tsv
         );
     }
 
@@ -311,6 +331,19 @@ mod tests {
     }
 
     #[test]
+    fn csv_and_tsv_on_stdin_need_from_and_must_not_be_office_files() {
+        let text = Source::Stdin(b"a,b\n1,2\n".to_vec());
+        assert_eq!(text.kind(Some(InputKind::Csv)).unwrap(), InputKind::Csv);
+        assert_eq!(text.kind(Some(InputKind::Tsv)).unwrap(), InputKind::Tsv);
+
+        let workbook = Source::Stdin(zip_with(&["xl/workbook.xml"]));
+        assert_eq!(
+            workbook.kind(Some(InputKind::Csv)).unwrap_err().to_string(),
+            "the input isn't a .csv file (it looks like a .xlsx)"
+        );
+    }
+
+    #[test]
     fn names_per_sheet_files_after_the_input() {
         assert_eq!(
             Source::File(PathBuf::from("data/sales.xlsx")).stem(),
@@ -347,6 +380,15 @@ mod tests {
         assert!(InputKind::Pptx.check_output(OutputFormat::Pdf).is_ok());
         assert!(InputKind::Pptx.check_output(OutputFormat::Json).is_err());
         assert!(InputKind::Xlsx.check_output(OutputFormat::Json).is_ok());
+        assert!(InputKind::Csv.check_output(OutputFormat::Markdown).is_ok());
+        assert!(InputKind::Tsv.check_output(OutputFormat::Csv).is_ok());
+        assert_eq!(
+            InputKind::Csv
+                .check_output(OutputFormat::Pdf)
+                .unwrap_err()
+                .to_string(),
+            "cannot convert csv to pdf; csv supports: csv, tsv, json, md"
+        );
         assert_eq!(
             InputKind::Xlsx
                 .check_output(OutputFormat::Pdf)

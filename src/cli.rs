@@ -7,14 +7,15 @@ use clap::Parser;
 use crate::format::OutputFormat;
 use crate::input::InputKind;
 
-/// Convert Office files (XLSX, DOCX, PPTX) to plain-text formats or PDF.
+/// Convert Office files (XLSX, DOCX, PPTX) and CSV or TSV files to plain-text formats or PDF.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
-    /// Input file (.xlsx, .docx, or .pptx), or - to read from stdin
+    /// Input file (.xlsx, .docx, .pptx, .csv, or .tsv), or - to read from stdin
     pub input: PathBuf,
 
-    /// Input type, instead of working it out from the extension (or, for stdin, the contents)
+    /// Input type, instead of working it out from the extension (or, for stdin, the contents;
+    /// CSV and TSV on stdin need it)
     #[arg(long, value_enum, value_name = "TYPE")]
     pub from: Option<InputKind>,
 
@@ -34,7 +35,8 @@ pub struct Cli {
     #[arg(long)]
     pub all_sheets: bool,
 
-    /// Write numbers, booleans and empty cells as JSON values instead of strings (JSON only)
+    /// Write numbers, booleans and empty cells as JSON values instead of strings (JSON only;
+    /// not for CSV or TSV input)
     #[arg(long)]
     pub typed: bool,
 

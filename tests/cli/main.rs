@@ -4,6 +4,7 @@
 //! would be compiled and linked as its own program, so keeping one program keeps builds fast.
 
 mod common;
+mod delimited;
 mod docx;
 mod errors;
 mod images;

@@ -13,7 +13,9 @@ tagged yet, it:
 
 1. runs the tests;
 2. creates the GitHub Release and its tag on the merge commit;
-3. uploads five archives, each with a `.sha256`.
+3. uploads five archives, each with a `.sha256`. Their names have no version
+   (`officeconv-<target>.tar.gz`), so the README's `releases/latest/download/` links get the
+   newest release.
 
 **Never push, move or delete a `v*` tag by hand.** A pushed tag starts nothing, and a ruleset
 blocks moving or deleting one, so a wrong tag can't be fixed without the repo owner.
@@ -82,7 +84,8 @@ Then:
    - waits for the Release run on the merge commit and checks that every job passed;
    - checks that `vX.Y.Z` points at the merge commit;
    - checks that the release has an archive and a `.sha256` for each of the five platforms, and
-     nothing else.
+     nothing else;
+   - checks that each `releases/latest/download/` link reaches this release.
 
    It exits with an error that names what failed. For a failed run, see below.
 2. Clean up with the `issue-to-pr` skill's script, which syncs `main` and deletes the branch:

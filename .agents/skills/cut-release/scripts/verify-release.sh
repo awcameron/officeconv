@@ -1,8 +1,8 @@
 #!/bin/sh
 # Checks what merging a release PR published: waits for the Release run on the merge commit,
-# then checks that every job passed, that vX.Y.Z points at the merge commit, and that the
-# release has an archive and a .sha256 for each platform. Refuses to start until the PR is
-# merged.
+# then checks that every job passed, that vX.Y.Z points at the merge commit, that the release
+# has an archive and a .sha256 for each platform, and that the README's
+# releases/latest/download links reach it. Refuses to start until the PR is merged.
 #
 # Usage, from anywhere in the repo: verify-release.sh PR_NUMBER
 set -eu
@@ -50,17 +50,37 @@ tagged=$(git rev-parse --verify --quiet "$tag^{commit}") || die "$tag doesn't ex
 echo "$tag points at $short"
 
 assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
+targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin
+    x86_64-apple-darwin x86_64-pc-windows-msvc"
 missing=
-for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin \
-    x86_64-apple-darwin x86_64-pc-windows-msvc; do
-    archive=officeconv-$tag-$target.tar.gz
-    [ "$target" = x86_64-pc-windows-msvc ] && archive=officeconv-$tag-$target.zip
-    for name in "$archive" "officeconv-$tag-$target.sha256"; do
+for target in $targets; do
+    archive=officeconv-$target.tar.gz
+    [ "$target" = x86_64-pc-windows-msvc ] && archive=officeconv-$target.zip
+    for name in "$archive" "officeconv-$target.sha256"; do
         echo "$assets" | grep -qxF "$name" || missing="$missing $name"
     done
 done
 [ -z "$missing" ] || die "the release is missing:$missing"
 count=$(echo "$assets" | grep -c .)
 [ "$count" -eq 10 ] || die "expected 10 files in the release, found $count"
+
+# The names have no version, so the README's releases/latest/download links must now reach
+# this release. GitHub redirects such a link to the release's own link, then to its storage.
+checksums=$(mktemp -d)
+trap 'rm -rf "$checksums"' EXIT
+gh release download "$tag" --dir "$checksums" --pattern '*.sha256'
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+for target in $targets; do
+    url=https://github.com/$repo/releases/latest/download/officeconv-$target.sha256
+    reached=$(curl -sSI "$url" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+    case $reached in
+        */download/$tag/*) ;;
+        *) die "$url redirects to '$reached', not to $tag" ;;
+    esac
+    latest=$(curl -sSfL "$url") || die "$url doesn't download"
+    [ "$latest" = "$(cat "$checksums/officeconv-$target.sha256")" ] ||
+        die "$url doesn't hold $tag's checksum"
+done
+echo "the latest links reach $tag"
 
 echo "all 10 files published: $(gh release view "$tag" --json url --jq .url)"

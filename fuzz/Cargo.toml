@@ -39,3 +39,10 @@ path = "fuzz_targets/xlsx.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "delimited"
+path = "fuzz_targets/delimited.rs"
+test = false
+doc = false
+bench = false

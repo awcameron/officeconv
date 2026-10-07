@@ -1,7 +1,8 @@
 #!/bin/sh
-# Writes a small document, deck and workbook into corpus/<target>/, as starting points for the
-# fuzzer. Between them they use headings, lists, tables, links, images, notes, several sheets
-# and a sheet picture, so the fuzzer starts from inputs that reach each part of the readers.
+# Writes a small document, deck, workbook and CSV file into corpus/<target>/, as starting points
+# for the fuzzer. Between them they use headings, lists, tables, links, images, notes, several
+# sheets, a sheet picture and CSV quoting, so the fuzzer starts from inputs that reach each part
+# of the readers.
 #
 # Run from fuzz/: ./make-seeds.sh
 set -eu
@@ -120,6 +121,11 @@ put "$x" xl/drawings/drawing1.xml "<xdr:wsDr xmlns:xdr=\"$XDR\" xmlns:a=\"$A\" x
 put "$x" xl/drawings/_rels/drawing1.xml.rels "$(rels "$(relationship rId1 image ../media/image1.png)")"
 png "$x/xl/media/image1.png"
 pack "$x" "$here/corpus/xlsx/seed.xlsx"
+
+# A CSV file with the quoting a reader has to get right, read as TSV too.
+mkdir -p corpus/delimited
+printf '\357\273\277Name,Note,Size\r\nAda,"Hello, world",5" screen\r\n"Alan ""AT"" Turing","two\nlines"\r\nTab\there,,,extra\n' \
+    > corpus/delimited/seed.csv
 
 # The archive target gets all three.
 mkdir -p corpus/archive

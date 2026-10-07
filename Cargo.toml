@@ -2,7 +2,7 @@
 name = "officeconv"
 version = "0.3.2"
 edition = "2024"
-description = "Convert XLSX spreadsheets to CSV, TSV, JSON, or Markdown, and DOCX and PPTX files to Markdown"
+description = "Convert XLSX, CSV and TSV files to CSV, TSV, JSON or Markdown, and DOCX and PPTX files to Markdown or PDF"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/awcameron/officeconv"

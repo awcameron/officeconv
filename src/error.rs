@@ -19,7 +19,8 @@ pub enum ConvertError {
     },
 
     #[error(
-        "unsupported input file {} (expected .xlsx, .docx, or .pptx; use --from to set the type)",
+        "unsupported input file {} (expected .xlsx, .docx, .pptx, .csv, or .tsv; use --from to set \
+         the type)",
         .0.display()
     )]
     UnsupportedInput(PathBuf),
@@ -33,9 +34,12 @@ pub enum ConvertError {
     #[error("could not read stdin: {0}")]
     ReadStdin(std::io::Error),
 
+    #[error("could not read the input: {0}")]
+    ReadInput(std::io::Error),
+
     #[error(
         "could not tell what kind of file is on stdin (expected .xlsx, .docx, or .pptx); \
-         use --from to set the type"
+         use --from to set the type, such as --from csv for CSV"
     )]
     UnrecognizedStdin,
 
@@ -60,6 +64,12 @@ pub enum ConvertError {
 
     #[error("--no-notes only applies to .pptx input")]
     NotesOptionOnlyForPptx,
+
+    #[error("{option} doesn't apply to .csv or .tsv input: {reason}")]
+    OptionNotForDelimited {
+        option: &'static str,
+        reason: &'static str,
+    },
 
     #[error("--images doesn't apply to --to pdf: the PDF holds its images itself")]
     ImagesWithPdf,
@@ -99,6 +109,25 @@ pub enum ConvertError {
 
     #[error("stdin has more than {}, the most officeconv reads", megabytes(*.limit))]
     StdinTooLarge { limit: u64 },
+
+    #[error("could not read the {kind} input: line {line}: {problem}")]
+    Delimited {
+        kind: InputKind,
+        line: u64,
+        problem: &'static str,
+    },
+
+    #[error(
+        "the input has more than {}, the most officeconv reads from a CSV or TSV file",
+        megabytes(*.limit)
+    )]
+    DelimitedTooLarge { limit: u64 },
+
+    #[error(
+        "the table has more than {limit} cells, counting short rows as padded to the widest; \
+         that's the most officeconv reads from a CSV or TSV file"
+    )]
+    DelimitedTooManyCells { limit: u64 },
 
     #[cfg(feature = "pdf")]
     #[error("could not write PDF: {0}")]
@@ -140,6 +169,7 @@ impl ConvertError {
             | SheetOptionOnlyForXlsx
             | TypedOnlyForJson
             | NotesOptionOnlyForPptx
+            | OptionNotForDelimited { .. }
             | ImagesWithPdf
             | PdfToTerminal
             | PdfNotBuilt
@@ -155,7 +185,10 @@ impl ConvertError {
             | DocxXml(_)
             | PartTooLarge { .. }
             | InputTooLarge { .. }
-            | StdinTooLarge { .. } => exit_code::DATA,
+            | StdinTooLarge { .. }
+            | Delimited { .. }
+            | DelimitedTooLarge { .. }
+            | DelimitedTooManyCells { .. } => exit_code::DATA,
             // krilla rejects a PDF because of what the document holds, so it's bad input too.
             #[cfg(feature = "pdf")]
             Pdf(_) => exit_code::DATA,
@@ -164,7 +197,7 @@ impl ConvertError {
                 exit_code::NO_INPUT
             }
 
-            ReadStdin(_) | CreateOutput { .. } | Write(_) => exit_code::IO,
+            ReadStdin(_) | ReadInput(_) | CreateOutput { .. } | Write(_) => exit_code::IO,
         }
     }
 }

@@ -5,6 +5,7 @@
 //! in any release. See `docs/adr/0003-binary-only.md`.
 
 mod cli;
+mod delimited;
 mod document;
 mod docx;
 mod error;
@@ -25,11 +26,15 @@ mod xlsx;
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub mod fuzzing {
+    pub use crate::delimited::{
+        Limits as DelimitedLimits, read_table_with_limits as read_delimited,
+    };
     pub use crate::document::Block;
     pub use crate::document::markdown::render as render_markdown;
     pub use crate::docx::read_blocks_with_limits as read_docx;
     pub use crate::format::OutputFormat;
     pub use crate::images::{EmbeddedImages, Images};
+    pub use crate::input::InputKind;
     pub use crate::opc::{Archive, Limits, parse_relationships};
     #[cfg(feature = "pdf")]
     pub use crate::pdf::{layout::PageSetup, render as render_pdf};
@@ -91,6 +96,21 @@ fn run(cli: &Cli) -> Result<()> {
     if kind != InputKind::Pptx && cli.no_notes {
         return Err(ConvertError::NotesOptionOnlyForPptx);
     }
+    if matches!(kind, InputKind::Csv | InputKind::Tsv) {
+        // Reading types from text would guess wrong too often: `00123` would lose its zeros.
+        if cli.typed {
+            return Err(ConvertError::OptionNotForDelimited {
+                option: "--typed",
+                reason: "it holds only text, with no numbers or booleans to keep",
+            });
+        }
+        if cli.images.is_some() {
+            return Err(ConvertError::OptionNotForDelimited {
+                option: "--images",
+                reason: "it has no images",
+            });
+        }
+    }
     if cli.to == OutputFormat::Pdf {
         if cli.images.is_some() {
             return Err(ConvertError::ImagesWithPdf);
@@ -104,7 +124,17 @@ fn run(cli: &Cli) -> Result<()> {
         InputKind::Xlsx if cli.all_sheets => convert_all_sheets(cli, &source),
         InputKind::Xlsx => convert_one_sheet(cli, &source),
         InputKind::Docx | InputKind::Pptx => convert_document(cli, &source, kind),
+        InputKind::Csv | InputKind::Tsv => convert_delimited(cli, &source, kind),
     }
+}
+
+/// Converts a CSV or TSV file, as one table, to stdout or the `-o` file.
+fn convert_delimited(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
+    let table = delimited::read_table(source.reader()?, kind)?;
+    let mut out = output::open_output(cli.output.as_deref())?;
+    writers::write_table(&table, cli.to, JsonValues::Text, &mut out)?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Converts a Word or PowerPoint file to Markdown (saving its images if asked to) or to PDF.

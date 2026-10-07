@@ -3,6 +3,7 @@
 A small command-line tool that converts Office files to plain-text formats and PDF:
 
 - **XLSX** spreadsheets to **CSV**, **TSV**, **JSON**, or a **Markdown table**
+- **CSV** and **TSV** files to the same four
 - **DOCX** documents to **Markdown** or **PDF**
 - **PPTX** presentations to **Markdown** or **PDF**
 
@@ -27,20 +28,22 @@ PDF output is included by default. To leave it out for a smaller binary, add
 officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --all-sheets] [--typed] [--no-notes] [--images DIR]
 ```
 
-| Option              | Meaning                                                                  |
-| ------------------- | ------------------------------------------------------------------------ |
-| `-t, --to <FORMAT>` | `csv`, `tsv`, `json`, `md` (`markdown` also works), or `pdf`             |
-| `--from <TYPE>`     | `xlsx`, `docx`, or `pptx`: the input type, instead of detecting it       |
-| `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory      |
-| `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one             |
-| `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`      |
-| `--typed`           | JSON only: write numbers, booleans and empty cells as JSON values        |
-| `--no-notes`        | PPTX only: leave out speaker notes                                       |
-| `--images DIR`      | Save images into `DIR` and link them from the Markdown (not for `pdf`)   |
+| Option              | Meaning                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| `-t, --to <FORMAT>` | `csv`, `tsv`, `json`, `md` (`markdown` also works), or `pdf`                                |
+| `--from <TYPE>`     | `xlsx`, `docx`, `pptx`, `csv`, or `tsv`: the input type, instead of detecting it            |
+| `-o, --output PATH` | Write to a file instead of stdout. With `--all-sheets`, a directory                         |
+| `--sheet NAME`      | XLSX only: which sheet to convert. Defaults to the first one                                |
+| `--all-sheets`      | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`                         |
+| `--typed`           | JSON only: write numbers, booleans and empty cells as JSON values. Not for CSV or TSV input |
+| `--no-notes`        | PPTX only: leave out speaker notes                                                          |
+| `--images DIR`      | Save images into `DIR` and link them from the Markdown (not for `pdf`)                      |
 
-The input type comes from the file extension. If the extension isn't one of these three (for
-example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file instead. DOCX and PPTX
-files convert to `md` or `pdf`; XLSX files convert to everything except `pdf`.
+The input type comes from the file extension. If the extension isn't one of these five (for
+example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file for an Office file
+instead. A CSV or TSV file with another extension, such as `.txt`, needs `--from csv` or
+`--from tsv`. DOCX and PPTX files convert to `md` or `pdf`; XLSX, CSV and TSV files convert to
+everything except `pdf`.
 
 ### Reading from stdin
 
@@ -51,9 +54,11 @@ cat report.xlsx | officeconv - --to csv
 curl -s https://example.com/deck.pptx | officeconv - --to md
 ```
 
-- Stdin has no file name, so its type is worked out from its contents. All three formats are zip
-  files, so `officeconv` looks for `xl/workbook.xml`, `word/document.xml`, or
+- Stdin has no file name, so its type is worked out from its contents. The three Office formats
+  are zip files, so `officeconv` looks for `xl/workbook.xml`, `word/document.xml`, or
   `ppt/presentation.xml` inside.
+- CSV and TSV are plain text, with nothing to recognize them by, so they need `--from`:
+  `cat contacts.csv | officeconv - --to md --from csv`.
 - Every option works with stdin. With `--all-sheets`, files are named `stdin-<sheet>.<ext>`.
 - Stdin is read into memory first, because zip files need random access. Files given by path are
   read from disk.
@@ -106,6 +111,10 @@ officeconv notes.docx --to md -o notes.md --images notes_images
 # A sheet's pictures, listed under its Markdown table
 officeconv sales.xlsx --to md -o sales.md --images sales_images
 
+# A CSV file as a Markdown table, or as JSON
+officeconv contacts.csv --to md
+officeconv contacts.csv --to json -o contacts.json
+
 # Stdout works with other tools
 officeconv sales.xlsx --to csv | head -5
 ```
@@ -136,12 +145,16 @@ it decompresses, `officeconv` stops with an error when:
 - one part of the file (such as `word/document.xml` or an image) decompresses to more than 256 MB
 - everything it reads from one file decompresses to more than 1 GB in total, images included
 - stdin has more than 1 GB
+- a CSV or TSV file has more than 256 MB, the same as one part of an Office file, or would make a
+  table of more than 32 million cells. Short rows count as padded to the widest one, so a small
+  file with one very wide row can't turn into a huge table.
 
 The sizes are counted as the file is read, not taken from the zip's headers, which can be faked.
 For `.xlsx` files, every part is checked before the workbook is read, so files it doesn't convert,
 such as embedded media, count toward the total too.
 
-These limits bound how much is decompressed, not how much memory or output that turns into. A
+Apart from the cell count, these limits bound how much is read or decompressed, not how much
+memory or output that turns into. A
 file within them can still use a few times as much memory as it decompresses to, such as when PDF
 output decodes its pictures.
 
@@ -185,6 +198,24 @@ vulnerability.
 - With `--images DIR`, pictures placed on the sheet are saved. Markdown lists them after the table,
   top to bottom and then left to right. CSV, TSV and JSON can't refer to images, so their data is
   unchanged and the files are only saved. See [Images](#images).
+
+### CSV and TSV
+
+- The first row becomes the header row, as it does for a sheet. Every value is text.
+- Fields can be quoted with `"`, so a field can hold the delimiter, a line break, or a quote
+  written twice (`""`). TSV follows the same rules with a tab, as Excel's "Text (Tab delimited)"
+  does. A quote inside an unquoted field, as in `5" screen`, is kept as it is.
+- The file must be UTF-8. A leading byte-order mark, which Excel writes when it saves "CSV UTF-8",
+  is skipped. Other encodings, such as Latin-1, stop with an error that names the line.
+- A quoted field that's never closed, or text right after a closing quote (`"x"y`), stops with an
+  error that names the line, instead of quietly running fields together.
+- Short rows are padded with empty cells. A row longer than the header widens the table instead of
+  losing values: the extra columns get blank headers, which JSON names `column_N`.
+- Output is the same as for a sheet: see [XLSX](#xlsx) for how CSV, TSV, JSON and Markdown are
+  written. Line endings become `\n`.
+- `--typed` isn't allowed: the file holds only text, and guessing types from it would turn
+  `00123` into `123`. `--sheet`, `--all-sheets`, `--no-notes` and `--images` don't apply either.
+- The whole table is held in memory. See [Size limits](#size-limits).
 
 ### DOCX
 
@@ -315,10 +346,10 @@ doesn't need to contain any binary test files.
 
 ### Fuzzing
 
-[`fuzz/`](fuzz/) feeds random bytes through the zip reader and the DOCX, PPTX and XLSX
+[`fuzz/`](fuzz/) feeds random bytes through the zip reader and the DOCX, PPTX, XLSX and CSV
 readers, then renders whatever they read as Markdown, PDF, CSV, TSV and JSON. Any panic,
 hang or out-of-memory error is a bug. The readers run with small size limits (1 MB per part,
-4 MB in total), so a size bug fails fast instead of using gigabytes. Fuzzing needs a nightly
+4 MB in total, and 65,536 cells for CSV), so a size bug fails fast instead of using gigabytes. Fuzzing needs a nightly
 toolchain and [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz), and works on Linux and
 macOS:
 
@@ -326,8 +357,8 @@ macOS:
 rustup toolchain install nightly
 cargo install cargo-fuzz
 cd fuzz
-./make-seeds.sh                                  # a small .docx, .pptx and .xlsx to start from
-cargo +nightly fuzz run docx -- -max_len=65536   # or archive, pptx, xlsx; Ctrl-C to stop
+./make-seeds.sh                                  # a small .docx, .pptx, .xlsx and .csv to start from
+cargo +nightly fuzz run docx -- -max_len=65536   # or archive, delimited, pptx, xlsx; Ctrl-C to stop
 ```
 
 Run `cargo fuzz` from `fuzz/`: [`fuzz/.cargo/config.toml`](fuzz/.cargo/config.toml) turns off
@@ -365,6 +396,7 @@ src/
   error.rs           ConvertError, with one variant per kind of failure
   images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
   input.rs           the input (a file or stdin), its type, and which outputs each supports
+  delimited.rs       CSV and TSV files to Table (csv)
   opc.rs             zip parts, relationships, and the XmlHandler event loop with its element stack
   output.rs          stdout, a file, or one file per sheet
   pdf/
@@ -384,7 +416,7 @@ src/
     package.rs       numbering and style lookups from the rest of the .docx
   pptx.rs            reads slides in presentation order, with their notes, into Blocks
 tests/cli/           end-to-end tests that run the real binary
-fuzz/                fuzz targets for the zip reader and the three readers (cargo-fuzz)
+fuzz/                fuzz targets for the zip reader and the four readers (cargo-fuzz)
 tools/compare/       compares the output of two builds on generated files
 assets/fonts/        Noto Sans, built into the binary for PDF output
 .agents/skills/      agent skills for this repo's workflows: issue to PR, and releasing

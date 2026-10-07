@@ -3,6 +3,9 @@
 # contributors only, not for running officeconv. CONTRIBUTING.md says how to use it.
 
 # Exactly the rust-version in Cargo.toml, which releases build with. CI fails if the two differ.
+# Debian rather than Alpine: CI and the main Linux releases use glibc, so tests here build what
+# CI builds, and the compiler doesn't run with musl's slower allocator. Nearly all of the
+# image's size is the toolchains, so Alpine's smaller base would save little.
 FROM rust:1.92.0-slim-bookworm@sha256:f1f73538ebe623fd3673a35aff3df358ae1084c64c55646516e5b17b321b6c9b
 
 ARG CARGO_FUZZ_VERSION=0.13.2

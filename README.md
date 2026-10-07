@@ -117,8 +117,10 @@ built it with Cargo.
 ## Usage
 
 ```text
-officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --all-sheets] [--typed] [--no-notes] [--images DIR]
+officeconv [OPTIONS] --to <FORMAT> <INPUT>
 ```
+
+`<INPUT>` is the file to convert, or `-` to read from [stdin](#reading-from-stdin).
 
 | Option              | Meaning                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------- |
@@ -130,6 +132,8 @@ officeconv <INPUT | -> --to <FORMAT> [--from TYPE] [-o PATH] [--sheet NAME | --a
 | `--typed`           | JSON only: write numbers, booleans and empty cells as JSON values. Not for CSV or TSV input |
 | `--no-notes`        | PPTX only: leave out speaker notes                                                          |
 | `--images DIR`      | Save images into `DIR` and link them from the Markdown (not for `pdf`)                      |
+| `-h, --help`        | Print help                                                                                  |
+| `-V, --version`     | Print the version                                                                           |
 
 The input type comes from the file extension. If the extension isn't one of these five (for
 example `.zip`, `.xlsm`, or none at all), `officeconv` looks inside the file for an Office file
@@ -152,8 +156,9 @@ curl -s https://example.com/deck.pptx | officeconv - --to md
 - CSV and TSV are plain text, with nothing to recognize them by, so they need `--from`:
   `cat contacts.csv | officeconv - --to md --from csv`.
 - Every option works with stdin. With `--all-sheets`, files are named `stdin-<sheet>.<ext>`.
-- Stdin is read into memory first, because zip files need random access. Files given by path are
-  read from disk.
+- Stdin is read into memory first, because zip files need random access. Office files given by
+  path are read from disk as they're needed; CSV and TSV files are read into memory whole, from
+  stdin or not.
 - If nothing is piped in, `officeconv -` stops with an error instead of waiting for input.
 - To read a file that's actually named `-`, write it as `./-`.
 
@@ -220,14 +225,14 @@ Error: cannot convert docx to csv; docx supports: md, pdf
 
 The exit status says what kind of error it was, using the codes from BSD's `sysexits.h`:
 
-| Code | Meaning | Examples |
-|---|---|---|
-| 0 | Success | Also when the reader of a pipe stops early, as with `\| head` |
-| 2 | Arguments that can't be parsed | An unknown option, `--to xml` |
-| 64 | Options that don't fit together or the input | `--typed` without `--to json`, `--to csv` for a `.docx`, an unknown `--sheet` |
-| 65 | Input officeconv can't read | A corrupt or unsupported file, `--from` that doesn't match, a file over the size limits |
-| 66 | No input | A missing or unreadable file, empty stdin |
-| 74 | Reading stdin or writing the output failed | An `-o` path in a folder that doesn't exist, a full disk |
+| Code | Meaning                                      | Examples                                                                                |
+| ---- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 0    | Success                                      | Also when the reader of a pipe stops early, as with `\| head`                           |
+| 2    | Arguments that can't be parsed               | An unknown option, `--to xml`                                                           |
+| 64   | Options that don't fit together or the input | `--typed` without `--to json`, `--to csv` for a `.docx`, an unknown `--sheet`           |
+| 65   | Input officeconv can't read                  | A corrupt or unsupported file, `--from` that doesn't match, a file over the size limits |
+| 66   | No input                                     | A missing or unreadable file, empty stdin                                               |
+| 74   | Reading stdin or writing the output failed   | An `-o` path in a folder that doesn't exist, a full disk                                |
 
 ### Size limits
 
@@ -246,21 +251,20 @@ For `.xlsx` files, every part is checked before the workbook is read, so files i
 such as embedded media, count toward the total too.
 
 Apart from the cell count, these limits bound how much is read or decompressed, not how much
-memory or output that turns into. A
-file within them can still use a few times as much memory as it decompresses to, such as when PDF
-output decodes its pictures.
+memory or output that turns into. A file within them can still use a few times as much memory as
+it decompresses to, such as when PDF output decodes its pictures.
 
 These limits are part of what makes `officeconv` safe to run on files from people you don't
-trust. See [SECURITY.md](SECURITY.md) for the full list, the known gaps, and how to report a
-vulnerability.
+trust. See [SECURITY.md](SECURITY.md) for the full list, what's out of scope, and how to report
+a vulnerability.
 
 ## What gets converted
 
 ### XLSX
 
 - The first row of the sheet becomes the header row. Short rows are padded with empty cells.
-- Whole numbers have no trailing `.0`. Dates become ISO 8601 (`2026-10-01`, or `2026-10-01T09:30:00`),
-  times become `HH:MM:SS`, and durations become `H:MM:SS`.
+- Whole numbers have no trailing `.0`. Dates become ISO 8601 (`2026-10-01`, or
+  `2026-10-01T09:30:00`), times become `HH:MM:SS`, and durations become `H:MM:SS`.
 - Error cells keep their Excel text, such as `#DIV/0!`.
 - CSV and TSV quote fields when needed.
 - JSON is an array of objects keyed by header, in column order. Blank headers become `column_N`,
@@ -279,9 +283,9 @@ vulnerability.
   Excel stores `12` as `12.0`, so whole numbers are written as integers. Numbers of 2^53 or more
   stay floats, since JavaScript can't hold larger integers exactly. A formula is written as the
   result Excel last calculated. If the file has none saved, the cell is empty.
-- In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
-  Text that Markdown would read as formatting or HTML is escaped too, so a cell shows exactly what
-  it holds.
+- In Markdown tables, columns are padded, `|` is escaped, and line breaks inside a cell become
+  `<br>`. Text that Markdown would read as formatting or HTML is escaped too, so a cell shows
+  exactly what it holds.
 - With `--all-sheets`, each file is named after its sheet. Characters a file name can't hold, such
   as `|`, become `_`, and trailing dots are dropped. If two sheets end up with the same file name,
   the later one gets a number added, such as `sales-a_b-2.csv`. Names count as the same when they

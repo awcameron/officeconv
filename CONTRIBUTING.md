@@ -28,8 +28,8 @@ Run `scripts/check.sh` before committing: a change that passes it passes CI's ch
 `officeconv` is a binary: its library has no public API, so internals can change in any release.
 See [ADR 0003](docs/adr/0003-binary-only.md).
 
-The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so the repo
-doesn't need to contain any binary test files.
+The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so
+the repo doesn't need to contain any binary test files.
 
 Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 [how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
@@ -37,11 +37,11 @@ Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 ## Fuzzing
 
 [`fuzz/`](fuzz/) feeds random bytes through the zip reader and the DOCX, PPTX, XLSX and CSV
-readers, then renders whatever they read as Markdown, PDF, CSV, TSV and JSON. Any panic,
-hang or out-of-memory error is a bug. The readers run with small size limits (1 MB per part,
-4 MB in total, and 65,536 cells for CSV), so a size bug fails fast instead of using gigabytes. Fuzzing needs a nightly
-toolchain and [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz), and works on Linux and
-macOS:
+readers, then renders whatever they read as Markdown, PDF, CSV, TSV and JSON. Any panic, hang
+or out-of-memory error is a bug. The readers run with small size limits (1 MB per part, 4 MB in
+total, and 65,536 cells for CSV), so a size bug fails fast instead of using gigabytes. Fuzzing
+needs a nightly toolchain and [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz), and works
+on Linux and macOS:
 
 ```sh
 rustup toolchain install nightly
@@ -53,8 +53,19 @@ cargo +nightly fuzz run docx -- -max_len=65536   # or archive, delimited, pptx, 
 
 Run `cargo fuzz` from `fuzz/`: [`fuzz/.cargo/config.toml`](fuzz/.cargo/config.toml) turns off
 the release profile's LTO and symbol stripping, which make fuzz builds slow and crash reports
-unreadable, and Cargo only reads it there. `-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
-`fuzz/artifacts/<target>/`, and `cargo +nightly fuzz run <target> <file>` replays it.
+unreadable, and Cargo only reads it there. `-max_total_time=3600` stops a run after an hour. An
+input that crashes is saved under `fuzz/artifacts/<target>/`, and
+`cargo +nightly fuzz run <target> <file>` replays it.
+
+`cargo +nightly` only works when `cargo` is rustup's. If Homebrew's Rust comes first on your
+`PATH` (`which cargo` prints `/opt/homebrew/bin/cargo` or `/usr/local/bin/cargo`), it fails with
+"no such command: `+nightly`". `rustup run nightly cargo fuzz` fails too, with "the option `Z`
+is only accepted on the nightly compiler", because it still finds Homebrew's `cargo`. Put
+nightly's tools first instead, in place of `cargo +nightly`:
+
+```sh
+PATH="$(dirname "$(rustup which --toolchain nightly rustc)"):$PATH" cargo fuzz run docx
+```
 
 ## Comparing two builds
 

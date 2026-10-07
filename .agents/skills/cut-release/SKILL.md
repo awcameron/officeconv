@@ -64,7 +64,8 @@ Then:
 - **Commit** `Cargo.toml` and `Cargo.lock`:
   - subject: `chore: release X.Y.Z`;
   - body: the user-visible changes with their PR numbers. Call out breaking ones.
-- **PR:** push, then open it with the same title.
+- **PR:** push, then open it with the same title and `--label release`, which leaves it out of
+  the release notes GitHub writes (see `.github/release.yml`).
 - **PR body:**
   - the version bump;
   - the changes since the last tag, grouped as breaking changes, fixes, then other changes, with

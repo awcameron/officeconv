@@ -2,8 +2,8 @@
 name = "officeconv"
 version = "0.3.5"
 edition = "2024"
-# krilla 0.8 needs 1.92.
-rust-version = "1.92"
+# krilla 0.8 needs 1.92. Releases build with exactly this version, and CI tests it.
+rust-version = "1.92.0"
 description = "Convert XLSX, CSV and TSV files to CSV, TSV, JSON or Markdown, and DOCX and PPTX files to Markdown or PDF"
 readme = "README.md"
 license = "MIT"

@@ -494,7 +494,14 @@ and publishes nothing. Existing tags are never moved, and a ruleset blocks movin
 them by hand.
 
 Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
-in the Actions tab: re-running every job would find the tag already there and stop.
+in the Actions tab: re-running every job would find the tag already there and stop. One
+platform failing doesn't cancel the others.
+
+Releases build with exactly the Rust version in `rust-version` in `Cargo.toml`, not whatever
+`stable` is that day, so the same commit always builds the same way. CI's `msrv` job runs the
+tests with that version too, so a dependency that needs a newer Rust fails there. To move to a
+newer Rust, change `rust-version` in a PR; the Install section's "Rust 1.92 or later" changes with
+it.
 
 ## License
 

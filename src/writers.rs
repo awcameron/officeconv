@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use serde_json::{Map, Number, Value};
+use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 
 use crate::format::OutputFormat;
 use crate::table::{Cell, Table};
@@ -50,37 +50,66 @@ fn write_delimited<W: Write>(table: &Table, delimiter: u8, out: W) -> io::Result
 }
 
 /// A JSON array with one object per row, keyed by header.
+///
+/// Rows are written one at a time as they're serialized, so the output never exists in memory
+/// all at once: only the table does, as it does for every format.
 fn write_json<W: Write>(table: &Table, values: JsonValues, mut out: W) -> io::Result<()> {
     let keys = json_keys(&table.headers);
-    let records: Vec<Value> = table
-        .rows
-        .iter()
-        .map(|row| {
-            let object: Map<String, Value> = keys
-                .iter()
-                .cloned()
-                .zip(row.iter().map(|cell| json_value(cell, values)))
-                .collect();
-            Value::Object(object)
-        })
-        .collect();
-
-    serde_json::to_writer_pretty(&mut out, &records)?;
+    {
+        let mut serializer = serde_json::Serializer::pretty(&mut out);
+        let mut array = serializer.serialize_seq(Some(table.rows.len()))?;
+        for row in &table.rows {
+            array.serialize_element(&JsonRow {
+                keys: &keys,
+                cells: row,
+                values,
+            })?;
+        }
+        SerializeSeq::end(array)?;
+    }
     writeln!(out)
 }
 
-/// One cell as a JSON value.
-fn json_value(cell: &Cell, values: JsonValues) -> Value {
-    if values == JsonValues::Text {
-        return Value::String(cell.to_string());
-    }
+/// One row as a JSON object, borrowing the keys every row shares.
+struct JsonRow<'a> {
+    keys: &'a [String],
+    cells: &'a [Cell],
+    values: JsonValues,
+}
 
-    match cell {
-        Cell::Empty => Value::Null,
-        Cell::Text(text) => Value::String(text.clone()),
-        Cell::Int(i) => Value::from(*i),
-        Cell::Float(x) => float_value(*x),
-        Cell::Bool(b) => Value::Bool(*b),
+impl Serialize for JsonRow<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut object = serializer.serialize_map(Some(self.keys.len()))?;
+        for (key, cell) in self.keys.iter().zip(self.cells) {
+            object.serialize_entry(
+                key,
+                &JsonCell {
+                    cell,
+                    values: self.values,
+                },
+            )?;
+        }
+        object.end()
+    }
+}
+
+/// One cell as a JSON value.
+struct JsonCell<'a> {
+    cell: &'a Cell,
+    values: JsonValues,
+}
+
+impl Serialize for JsonCell<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match (self.values, self.cell) {
+            (_, Cell::Text(text)) => serializer.serialize_str(text),
+            // The cell's text, written without building a String first.
+            (JsonValues::Text, cell) => serializer.collect_str(cell),
+            (JsonValues::Typed, Cell::Empty) => serializer.serialize_unit(),
+            (JsonValues::Typed, Cell::Int(i)) => serializer.serialize_i64(*i),
+            (JsonValues::Typed, Cell::Float(x)) => serialize_float(*x, serializer),
+            (JsonValues::Typed, Cell::Bool(b)) => serializer.serialize_bool(*b),
+        }
     }
 }
 
@@ -88,14 +117,16 @@ fn json_value(cell: &Cell, values: JsonValues) -> Value {
 ///
 /// Whole numbers from 2^53 up stay floats: past that, not every integer can be stored exactly,
 /// and JavaScript (where most JSON ends up) can't tell neighboring ones apart.
-fn float_value(x: f64) -> Value {
+fn serialize_float<S: Serializer>(x: f64, serializer: S) -> Result<S::Ok, S::Error> {
     const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0; // 2^53
 
     if x.fract() == 0.0 && x.abs() < EXACT_INTEGER_LIMIT {
-        Value::from(x as i64)
+        serializer.serialize_i64(x as i64)
+    } else if x.is_finite() {
+        serializer.serialize_f64(x)
     } else {
         // Excel can't store NaN or infinity, but JSON can't either, so fall back to null.
-        Number::from_f64(x).map_or(Value::Null, Value::Number)
+        serializer.serialize_unit()
     }
 }
 
@@ -211,6 +242,7 @@ fn escape_markdown_cell(cell: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     fn table(rows: &[&[&str]]) -> Table {
         Table::from_rows(
@@ -301,13 +333,20 @@ mod tests {
 
     #[test]
     fn huge_whole_numbers_stay_floats() {
+        let typed = |x: f64| {
+            serde_json::to_value(JsonCell {
+                cell: &Cell::Float(x),
+                values: JsonValues::Typed,
+            })
+            .unwrap()
+        };
         assert_eq!(
-            float_value(9_007_199_254_740_991.0),
+            typed(9_007_199_254_740_991.0),
             Value::from(9_007_199_254_740_991_i64)
         );
-        assert!(float_value(9_007_199_254_740_992.0).is_f64());
-        assert_eq!(float_value(-3.0), Value::from(-3));
-        assert_eq!(float_value(f64::NAN), Value::Null);
+        assert!(typed(9_007_199_254_740_992.0).is_f64());
+        assert_eq!(typed(-3.0), Value::from(-3));
+        assert_eq!(typed(f64::NAN), Value::Null);
     }
 
     #[test]

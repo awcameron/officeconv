@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Notes for coding agents working on officeconv. The [README](README.md) is the full guide to
-using and developing it; this file holds what an agent needs to know before changing anything.
+Notes for coding agents working on officeconv. The [README](README.md) is the guide to using
+it, and [CONTRIBUTING.md](CONTRIBUTING.md) to developing it; this file holds what an agent needs
+to know before changing anything.
 
 ## What this is
 
@@ -10,7 +11,8 @@ A Rust command-line tool that converts Office files: `.xlsx` to CSV, TSV, JSON o
 targets can link against it, and nothing in it is a public API
 ([ADR 0003](docs/adr/0003-binary-only.md)). Edition 2024, on stable Rust.
 
-The [Layout](README.md#layout) section of the README says what each file does. In short:
+[CONTRIBUTING.md](CONTRIBUTING.md#layout) lists every top-level file and directory. The main
+modules:
 
 - `src/lib.rs`: `main()` and `run()`, which check the options and pick a converter.
 - `src/opc.rs`: the zip reader and its size limits, plus `walk()`, the XML event loop every
@@ -53,7 +55,7 @@ installed.
 - **Tests.** Tests build their own fixtures in temporary directories; don't commit binary test
   files. A behavior change needs a test, in `tests/cli/` if a user would see it.
 - **Releases.** CI tags and publishes a release when a PR changing `version` in `Cargo.toml`
-  merges ([Releasing](README.md#releasing)). Never push, move or delete a `v*` tag.
+  merges ([Releasing](CONTRIBUTING.md#releasing)). Never push, move or delete a `v*` tag.
 - **Git.**
   - Commit only files you changed. The repo root can hold untracked local files that aren't
     part of the project, so never `git add -A` or `git add .`.
@@ -70,10 +72,11 @@ installed.
 - **PRs:** say what changed and why, call out any behavior change, and list how it was checked.
 - **Code:** match the surrounding code's naming, idioms and comment density. Comments explain
   why, not what.
-- **Docs:** update the README for anything a user sees. Record a design decision with real
+- **Docs:** update the README for anything a user sees, and CONTRIBUTING.md for anything a
+  contributor does. Record a design decision with real
   alternatives as an ADR in [`docs/adr/`](docs/adr/README.md).
 - **Fuzzing** needs nightly and cargo-fuzz, and runs from `fuzz/`; see
-  [Fuzzing](README.md#fuzzing).
+  [Fuzzing](CONTRIBUTING.md#fuzzing).
 
 Skills for this repo's two main workflows live in `.agents/skills/`: taking an issue to a merged
 PR, and cutting a release. Codex, Cursor and other agents that support

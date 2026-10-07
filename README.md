@@ -1,5 +1,9 @@
 # officeconv
 
+[![CI](https://github.com/awcameron/officeconv/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/awcameron/officeconv/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/awcameron/officeconv)](https://github.com/awcameron/officeconv/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/awcameron/officeconv)](LICENSE)
+
 A small command-line tool that converts Office files to plain-text formats and PDF:
 
 - **XLSX** spreadsheets to **CSV**, **TSV**, **JSON**, or a **Markdown table**
@@ -7,7 +11,31 @@ A small command-line tool that converts Office files to plain-text formats and P
 - **DOCX** documents to **Markdown** or **PDF**
 - **PPTX** presentations to **Markdown** or **PDF**
 
-It's written in Rust as a learning project.
+It's meant to be safe to run on files from people you don't trust: it bounds how much a file
+can make it decompress, writes only the files you ask for, and keeps links and text in the
+output from running code or turning into new formatting. [SECURITY.md](SECURITY.md) lists what
+it protects against. It's written in Rust as a learning project.
+
+- [Limitations](#limitations)
+- [Install](#install)
+- [Usage](#usage): [stdin](#reading-from-stdin), [examples](#examples),
+  [size limits](#size-limits)
+- [What gets converted](#what-gets-converted): [XLSX](#xlsx), [CSV and TSV](#csv-and-tsv),
+  [DOCX](#docx), [PPTX](#pptx), [PDF](#pdf), [images](#images)
+- [Contributing](#contributing)
+
+## Limitations
+
+- **Content, not layout.** Markdown and PDF output keep the text, tables, lists, links and
+  pictures, but not Word's or PowerPoint's fonts, colors, margins, columns or slide designs. See
+  [PDF](#pdf).
+- **Right-to-left text** in PDF output, such as Arabic or Hebrew, comes out in the wrong order.
+  See [PDF](#pdf).
+- **Formulas aren't calculated.** A spreadsheet cell shows the result Excel last saved, or
+  nothing if there isn't one. See [XLSX](#xlsx).
+- **Not converted yet:** footnotes, comments, and headers and footers in DOCX
+  ([DOCX](#docx)); charts, SmartArt, and anything from the slide master or layout in PPTX
+  ([PPTX](#pptx)); charts, shapes and in-cell pictures as images ([Images](#images)).
 
 ## Install
 
@@ -396,131 +424,10 @@ Our chart: ![Sales by region](notes_images/image1.png)
 - Not saved: charts, shapes, and Excel's in-cell pictures ("Place in Cell" or `IMAGE()`), which
   are stored differently.
 
-## Development
+## Contributing
 
-```sh
-scripts/check.sh                                      # every check CI runs, and a few more
-cargo fmt                                             # fix formatting
-cargo doc --no-deps --document-private-items --open   # browse the code's documentation
-cargo run -- sales.xlsx --to md                       # run without installing
-```
-
-Run `scripts/check.sh` before committing: a change that passes it passes CI's checks. It runs
-`cargo deny` too if [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) is installed.
-
-`officeconv` is a binary: its library has no public API, so internals can change in any release.
-See [ADR 0003](docs/adr/0003-binary-only.md).
-
-The tests build their own `.xlsx`, `.docx`, and `.pptx` fixtures in temporary directories, so the repo
-doesn't need to contain any binary test files.
-
-### Fuzzing
-
-[`fuzz/`](fuzz/) feeds random bytes through the zip reader and the DOCX, PPTX, XLSX and CSV
-readers, then renders whatever they read as Markdown, PDF, CSV, TSV and JSON. Any panic,
-hang or out-of-memory error is a bug. The readers run with small size limits (1 MB per part,
-4 MB in total, and 65,536 cells for CSV), so a size bug fails fast instead of using gigabytes. Fuzzing needs a nightly
-toolchain and [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz), and works on Linux and
-macOS:
-
-```sh
-rustup toolchain install nightly
-cargo install cargo-fuzz
-cd fuzz
-./make-seeds.sh                                  # a small .docx, .pptx, .xlsx and .csv to start from
-cargo +nightly fuzz run docx -- -max_len=65536   # or archive, delimited, pptx, xlsx; Ctrl-C to stop
-```
-
-Run `cargo fuzz` from `fuzz/`: [`fuzz/.cargo/config.toml`](fuzz/.cargo/config.toml) turns off
-the release profile's LTO and symbol stripping, which make fuzz builds slow and crash reports
-unreadable, and Cargo only reads it there. `-max_total_time=3600` stops a run after an hour. An input that crashes is saved under
-`fuzz/artifacts/<target>/`, and `cargo +nightly fuzz run <target> <file>` replays it.
-
-### Comparing two builds
-
-Before merging a change to a reader, check that its output changes only where you meant it to:
-
-```sh
-tools/compare/compare.sh            # the working tree against main
-tools/compare/compare.sh v0.3.0     # or against any commit, branch or tag
-```
-
-It builds both versions (with LTO off, so each build takes about a minute), generates 2,000
-`.docx`, `.pptx` and `.xlsx` files whose XML nests elements at random, converts each with both
-builds in parallel, and lists every file whose Markdown, saved images, messages or exit status
-differ. For each one, `diff -r` on the two folders it prints shows what changed. It needs
-Python 3, and takes a few minutes. `COUNT`, `SEED`, `CORPUS` and `JOBS` change what it runs; see
-the top of the script.
-
-Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
-[how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
-
-### Layout
-
-```text
-src/
-  main.rs            entry point: calls officeconv::main()
-  lib.rs             main() and run(): parse, validate, hand off to a converter, report errors
-  cli.rs             command-line options (clap)
-  format.rs          OutputFormat: csv, tsv, json, md
-  error.rs           ConvertError, with one variant per kind of failure
-  images.rs          saves pictures from a .docx, .pptx or .xlsx and works out their links
-  input.rs           the input (a file or stdin), its type, and which outputs each supports
-  delimited.rs       CSV and TSV files to Table (csv)
-  opc.rs             zip parts, relationships, and the XmlHandler event loop with its element stack
-  output.rs          stdout, a file, or one file per sheet
-  pdf/
-    mod.rs           Blocks to PDF: paints the laid-out pages with krilla
-    layout.rs        line wrapping, list numbering, tables, images, and page breaks
-    fonts.rs         the built-in Noto Sans, and installed fonts for what it lacks
-  table.rs           Table and Cell: the grid every writer works from
-  xlsx/
-    mod.rs           XLSX sheets to Table (calamine)
-    pictures.rs      finds the pictures on a sheet through its drawing part
-  writers.rs         Table to CSV, TSV, JSON, or Markdown
-  document/
-    mod.rs           Block, Run, ListKind: the model DOCX and PPTX both produce
-    markdown.rs      Blocks to Markdown (tables reuse the Markdown table writer)
-  docx/
-    mod.rs           streams word/document.xml into Blocks (quick-xml)
-    package.rs       numbering and style lookups from the rest of the .docx
-  pptx.rs            reads slides in presentation order, with their notes, into Blocks
-tests/cli/           end-to-end tests that run the real binary
-fuzz/                fuzz targets for the zip reader and the four readers (cargo-fuzz)
-tools/compare/       compares the output of two builds on generated files
-scripts/check.sh     the checks to run before committing
-assets/fonts/        Noto Sans, built into the binary for PDF output
-.agents/skills/      agent skills for this repo's workflows: issue to PR, and releasing
-.claude/skills       a symlink to .agents/skills, so Claude Code finds them too
-AGENTS.md            the rules and checks for coding agents (CLAUDE.md imports it)
-```
-
-### Releasing
-
-Bump `version` in `Cargo.toml` (and `Cargo.lock`, with `cargo update -w`) in a PR, and merge
-it. That's all: there's no tag to push.
-
-On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, tags the
-commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64, arm64), macOS
-(Apple Silicon, Intel) and Windows, each with a SHA-256 checksum. The archives' names have no
-version, so the `releases/latest/download/` links in [Install](#download-a-binary) always get the
-newest release. A merge that changes `Cargo.toml` but not the version finds the tag already there
-and publishes nothing. Existing tags are never moved, and a ruleset blocks moving or deleting
-them by hand.
-
-The release notes are GitHub's generated list of PRs, grouped by label as
-[`.github/release.yml`](.github/release.yml) sets out: features, fixes, documentation, then other
-changes. The version-bump PR, labeled `release`, is left out.
-
-Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
-in the Actions tab: re-running every job would find the tag already there and stop. One
-platform failing doesn't cancel the others.
-
-Releases build with exactly the Rust version in `rust-version` in `Cargo.toml`, not whatever
-`stable` is that day, so the same commit always builds the same way. CI's `msrv` job runs the
-tests with that version too, so a dependency that needs a newer Rust fails there. To move to a
-newer Rust, change `rust-version` in a PR; the Install section's "Rust 1.92 or later" changes with
-it.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers building and testing officeconv, fuzzing, comparing
+two builds, how the repository is laid out, and releasing.
 
 ## License
 

@@ -28,7 +28,7 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 
 CI also runs [`cargo deny`](deny.toml) to check every dependency against the RustSec advisory
 database. The zip reader and the four readers are fuzzed, with what they read rendered in every
-output format; see [Fuzzing](README.md#fuzzing).
+output format; see [Fuzzing](CONTRIBUTING.md#fuzzing).
 
 ## Verifying a download
 

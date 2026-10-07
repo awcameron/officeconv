@@ -430,6 +430,13 @@ impl XmlHandler for SlideParser<'_> {
             }
             "br" => self.push_text("\n"),
             "tbl" if !is_empty => self.tables.push(TableBuilder::default()),
+            // A merged cell keeps the cells it covers in the XML, each marked `hMerge` or
+            // `vMerge`, so every row already has all its columns; only their text is hidden.
+            "tc" if !is_empty => {
+                if let Some(table) = self.tables.last_mut() {
+                    table.covered = is_on(attr(e, "hMerge")) || is_on(attr(e, "vMerge"));
+                }
+            }
             _ => {}
         }
     }
@@ -625,6 +632,34 @@ mod tests {
             [Block::Table(vec![
                 vec![runs("Region"), runs("Growth")],
                 vec![runs("EMEA"), runs("18%")],
+            ])]
+        );
+    }
+
+    #[test]
+    fn a_merged_cell_hides_the_cells_it_covers() {
+        let cell = |attrs: &str, text: &str| {
+            format!(
+                "<a:tc{attrs}><a:txBody><a:bodyPr/>{}</a:txBody><a:tcPr/></a:tc>",
+                para(text)
+            )
+        };
+        let table = format!(
+            r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="1"/><a:gridCol w="1"/></a:tblGrid><a:tr h="1">{}{}</a:tr><a:tr h="1">{}{}</a:tr><a:tr h="1">{}{}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+            cell(r#" gridSpan="2""#, "Sales 2026"),
+            cell(r#" hMerge="1""#, "hidden"),
+            cell(r#" rowSpan="2""#, "Q1"),
+            cell("", "Q2"),
+            cell(r#" vMerge="1""#, "hidden"),
+            cell("", "140"),
+        );
+        let slide = parse(&table);
+        assert_eq!(
+            slide.body,
+            [Block::Table(vec![
+                vec![runs("Sales 2026"), Vec::new()],
+                vec![runs("Q1"), runs("Q2")],
+                vec![Vec::new(), runs("140")],
             ])]
         );
     }

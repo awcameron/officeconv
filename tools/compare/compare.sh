@@ -73,18 +73,21 @@ cleanup
 # The release profile with LTO off: a build takes about a minute instead of several, and the
 # output is the same. These variables work for any ref, even one older than this script.
 export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+# Each build gets its own target directory. In a shared one, cargo takes the second build for
+# up to date, because what it recorded about the first one points at the base checkout's files,
+# which haven't changed, and both binaries come out the same.
 target=$WORK/target
 
 echo "building $base_ref"
 git -C "$root" worktree add --quiet --detach "$base_src" "$base_ref"
 cargo build --quiet --release --locked --bin officeconv \
-    --manifest-path "$base_src/Cargo.toml" --target-dir "$target"
-cp "$target/release/officeconv" "$WORK/officeconv-base"
+    --manifest-path "$base_src/Cargo.toml" --target-dir "$target/base"
+cp "$target/base/release/officeconv" "$WORK/officeconv-base"
 
 echo "building the working tree"
 cargo build --quiet --release --locked --bin officeconv \
-    --manifest-path "$root/Cargo.toml" --target-dir "$target"
-cp "$target/release/officeconv" "$WORK/officeconv-new"
+    --manifest-path "$root/Cargo.toml" --target-dir "$target/new"
+cp "$target/new/release/officeconv" "$WORK/officeconv-new"
 
 echo "generating $count files of each kind (seed $seed)"
 python3 "$root/tools/compare/gen-nesting.py" "$WORK/generated" "$count" "$seed"

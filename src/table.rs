@@ -49,15 +49,17 @@ pub struct Table {
 impl Table {
     /// Builds a table from rows of cells, treating the first row as headers.
     ///
-    /// Short rows are padded with empty cells so the table is rectangular.
+    /// The table is as wide as its longest row, headers included. Shorter rows are padded with
+    /// empty cells, and so are the headers, so no row loses cells.
     pub fn from_cells(rows: Vec<Vec<Cell>>) -> Self {
+        let width = rows.iter().map(Vec::len).max().unwrap_or(0);
         let mut rows = rows.into_iter();
         let Some(headers) = rows.next() else {
             return Table::default();
         };
 
-        let headers: Vec<String> = headers.iter().map(Cell::to_string).collect();
-        let width = headers.len();
+        let mut headers: Vec<String> = headers.iter().map(Cell::to_string).collect();
+        headers.resize(width, String::new());
         let rows = rows
             .map(|mut row| {
                 row.resize(width, Cell::Empty);
@@ -106,6 +108,20 @@ mod tests {
         assert_eq!(
             table.rows,
             vec![vec![Cell::Text("1".into()), Cell::Empty, Cell::Empty]]
+        );
+    }
+
+    #[test]
+    fn widens_to_the_longest_row_instead_of_cutting_it() {
+        let table = Table::from_rows(vec![strings(&["title"]), strings(&["1", "2", "3"])]);
+        assert_eq!(table.headers, strings(&["title", "", ""]));
+        assert_eq!(
+            table.rows,
+            vec![vec![
+                Cell::Text("1".into()),
+                Cell::Text("2".into()),
+                Cell::Text("3".into())
+            ]]
         );
     }
 

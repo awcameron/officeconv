@@ -121,3 +121,33 @@ fn reads_notes_shared_by_two_slides_once() {
         "## Slide 1: Intro\n\n### Notes\n\nSay hello.\n\n---\n\n## Slide 2: Thanks\n"
     );
 }
+
+#[test]
+fn keeps_every_column_of_a_table_with_merged_cells() {
+    let cell = |attrs: &str, text: &str| {
+        format!(
+            "<a:tc{attrs}><a:txBody><a:bodyPr/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"
+        )
+    };
+    let table = format!(
+        r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="1"/><a:gridCol w="1"/></a:tblGrid><a:tr h="1">{}{}</a:tr><a:tr h="1">{}{}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+        cell(r#" gridSpan="2""#, "Sales 2026"),
+        cell(r#" hMerge="1""#, ""),
+        cell("", "Q1"),
+        cell("", "Q2"),
+    );
+    let mut parts = presentation(&["slides/slide1.xml"]).to_vec();
+    parts.push(part("ppt/slides/slide1.xml", slide(&table)));
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+## Slide 1
+
+| Sales 2026 |     |
+| ---------- | --- |
+| Q1         | Q2  |
+"
+    );
+}

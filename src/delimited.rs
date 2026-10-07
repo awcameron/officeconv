@@ -89,9 +89,6 @@ pub fn read_table_with_limits(reader: impl Read, kind: InputKind, limits: Limits
 
     // A row longer than the header widens the table instead of losing its last values. The
     // extra headers are blank, and JSON names them column_N as it does any blank header.
-    if let Some(headers) = rows.first_mut() {
-        headers.resize(width, String::new());
-    }
     Ok(Table::from_rows(rows))
 }
 

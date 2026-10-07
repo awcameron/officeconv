@@ -238,9 +238,12 @@ Links are kept when they're `http`, `https` or `mailto`, or relative, such as `o
 other kind, such as `javascript:` or `file:`, could run code or open local files when clicked, so
 its text is kept without the link, in Markdown and PDF.
 
-Not converted yet: footnotes, comments, headers and footers, and merged table cells
-(they become empty cells). Headings that use custom style names aren't detected. Every numbered
-item is written as `1.` because Markdown renumbers lists when it renders them.
+Markdown has no merged cells, so a cell merged across columns keeps its text in the first one and
+leaves the others empty. Every row keeps all its columns.
+
+Not converted yet: footnotes, comments, and headers and footers. Headings that use custom style
+names aren't detected. Every numbered item is written as `1.` because Markdown renumbers lists
+when it renders them.
 
 ### PPTX
 
@@ -266,7 +269,8 @@ Mention the EMEA team.
 - The slide's title placeholder becomes the heading. A slide without a title is just `Slide N`.
 - Content placeholders become bullet lists, keeping their indent levels. Text boxes and subtitles
   become paragraphs. Bullets and numbering set on a paragraph override those defaults.
-- Bold, italic, links, line breaks, and tables convert the same way as in DOCX.
+- Bold, italic, links, line breaks, and tables convert the same way as in DOCX, merged cells
+  included.
 - Speaker notes go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
   `(hidden)`.
 

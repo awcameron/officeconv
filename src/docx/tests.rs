@@ -299,3 +299,38 @@ fn maps_heading_styles() {
     assert_eq!(heading_level("Heading9"), None);
     assert_eq!(heading_level("Normal"), None);
 }
+
+#[test]
+fn a_merged_cell_fills_its_first_column_and_keeps_the_rest() {
+    let cell = |span: u32, text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let row = |cells: &[String]| format!("<w:tr>{}</w:tr>", cells.concat());
+    let body = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid>{}{}{}</w:tbl>"#,
+        row(&[cell(3, "Sales 2026")]),
+        row(&[cell(1, "Q1"), cell(1, "Q2"), cell(1, "Q3")]),
+        row(&[cell(2, "H1"), cell(1, "260")]),
+    );
+
+    let empty = Vec::new;
+    assert_eq!(
+        parse(&body),
+        [Block::Table(vec![
+            vec![text_block("Sales 2026"), empty(), empty()],
+            vec![text_block("Q1"), text_block("Q2"), text_block("Q3")],
+            vec![text_block("H1"), empty(), text_block("260")],
+        ])]
+    );
+}
+
+#[test]
+fn a_merged_cell_never_spans_past_the_grid() {
+    let body = r#"<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/><w:tblGridChange><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="4000000000"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    assert_eq!(
+        parse(body),
+        [Block::Table(vec![vec![text_block("x"), Vec::new()]])]
+    );
+}

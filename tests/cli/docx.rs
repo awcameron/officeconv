@@ -149,3 +149,30 @@ Learn [Rust](https://www.rust-lang.org)
 "
     );
 }
+
+#[test]
+fn keeps_every_column_of_a_table_with_merged_cells() {
+    let cell = |span: u32, text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let (_dir, path) = sample_docx(&format!(
+        "<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}</w:tr><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>",
+        cell(2, "Sales 2026"),
+        cell(1, "Q1"),
+        cell(1, "Q2"),
+        cell(1, "120"),
+        cell(1, "140"),
+    ));
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+| Sales 2026 |     |
+| ---------- | --- |
+| Q1         | Q2  |
+| 120        | 140 |
+"
+    );
+}

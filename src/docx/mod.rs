@@ -100,8 +100,14 @@ struct ParagraphBuilder {
 
 impl XmlHandler for Parser<'_> {
     // Word stores some content twice (a modern version and a fallback), and tracked changes
-    // keep the old formatting around. We only want the current version.
-    const SKIP: &'static [&'static str] = &["Fallback", "pPrChange", "rPrChange"];
+    // keep the old formatting and table grid around. We only want the current version.
+    const SKIP: &'static [&'static str] = &[
+        "Fallback",
+        "pPrChange",
+        "rPrChange",
+        "tblGridChange",
+        "tcPrChange",
+    ];
 
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
         let in_run = open.inside("r");
@@ -150,6 +156,16 @@ impl XmlHandler for Parser<'_> {
                 }
             }
             "tbl" if !is_empty => self.tables.push(TableBuilder::default()),
+            "gridCol" => {
+                if let Some(table) = self.tables.last_mut() {
+                    table.columns += 1;
+                }
+            }
+            "gridSpan" if open.inside("tcPr") => {
+                if let Some(table) = self.tables.last_mut() {
+                    table.span = attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(1);
+                }
+            }
             _ => {}
         }
     }

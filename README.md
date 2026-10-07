@@ -28,13 +28,10 @@ against its SHA-256 checksum, and puts `officeconv` in `~/.local/bin`:
 
 ```sh
 target=aarch64-apple-darwin
-tag=$(curl -sSI https://github.com/awcameron/officeconv/releases/latest |
-    grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r')
-file=officeconv-$tag-$target
-curl -sSLO "https://github.com/awcameron/officeconv/releases/download/$tag/$file.tar.gz"
-curl -sSLO "https://github.com/awcameron/officeconv/releases/download/$tag/$file.sha256"
-shasum -a 256 -c "$file.sha256"    # on Linux: sha256sum -c "$file.sha256"
-mkdir -p ~/.local/bin && tar xzf "$file.tar.gz" -C ~/.local/bin officeconv
+url=https://github.com/awcameron/officeconv/releases/latest/download/officeconv-$target
+curl -fsSLO "$url.tar.gz" && curl -fsSLO "$url.sha256"
+shasum -a 256 -c "officeconv-$target.sha256"    # Linux: sha256sum -c "officeconv-$target.sha256"
+mkdir -p ~/.local/bin && tar xzf "officeconv-$target.tar.gz" -C ~/.local/bin officeconv
 ```
 
 If `~/.local/bin` isn't on your `PATH` (macOS doesn't add it), add
@@ -45,9 +42,12 @@ needed:
 printf 'name,city\nAda,London\n' | officeconv - --from csv --to md
 ```
 
-The [GitHub CLI](https://cli.github.com) can download the same two files in place of the two
-`curl` lines: `gh release download -R awcameron/officeconv -p "*-$target.*"`. On Windows,
-download the `.zip` from the release page and put `officeconv.exe` in a folder on your `PATH`.
+The [GitHub CLI](https://cli.github.com) can download the same two files in place of the `curl`
+line: `gh release download -R awcameron/officeconv -p "officeconv-$target.*"`. On Windows,
+download `officeconv-x86_64-pc-windows-msvc.zip` from the latest release and put
+`officeconv.exe` in a folder on your `PATH`. To get one version instead of the latest, replace
+`latest/download` with `download/<tag>`, such as `download/v0.3.5`. Releases before v0.3.5 have
+the version in their file names too, such as `officeconv-v0.3.4-<target>.tar.gz`.
 
 The binaries aren't signed. A file downloaded in a browser is marked as coming from the internet,
 so macOS refuses to open it and Windows SmartScreen warns about it; `curl` and `gh` downloads
@@ -487,9 +487,11 @@ it. That's all: there's no tag to push.
 
 On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, tags the
 commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64, arm64), macOS
-(Apple Silicon, Intel) and Windows, each with a SHA-256 checksum. A merge that changes
-`Cargo.toml` but not the version finds the tag already there and publishes nothing. Existing
-tags are never moved, and a ruleset blocks moving or deleting them by hand.
+(Apple Silicon, Intel) and Windows, each with a SHA-256 checksum. The archives' names have no
+version, so the `releases/latest/download/` links in [Install](#download-a-binary) always get the
+newest release. A merge that changes `Cargo.toml` but not the version finds the tag already there
+and publishes nothing. Existing tags are never moved, and a ruleset blocks moving or deleting
+them by hand.
 
 Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
 in the Actions tab: re-running every job would find the tag already there and stop.

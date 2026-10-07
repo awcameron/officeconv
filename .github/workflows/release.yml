@@ -106,7 +106,9 @@ jobs:
           bin: officeconv
           target: ${{ matrix.target }}
           build-tool: ${{ matrix.build-tool }}
-          archive: $bin-$tag-$target
+          # No version in the name, so releases/latest/download/<name> always gets the newest
+          # release. A link to one version names its tag in the path instead.
+          archive: $bin-$target
           # The Noto Sans licence has to travel with the fonts built into the binary.
           include: LICENSE,README.md,assets/fonts/OFL.txt
           checksum: sha256

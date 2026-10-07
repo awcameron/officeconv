@@ -5,7 +5,7 @@ use officeconv::fuzzing::{Block, EmbeddedImages, Limits, PageSetup, render_markd
 /// Small enough that a size bug fails fast with an error, instead of using gigabytes or
 /// minutes; large enough for any seed in the corpus.
 ///
-/// Deflate shrinks repeated bytes about 1000 to 1, so a 64 KB input (the `-max_len` the README
+/// Deflate shrinks repeated bytes about 1000 to 1, so a 64 KB input (the `-max_len` CONTRIBUTING.md
 /// suggests) can decompress to about 64 MB. That's well past these limits, so the fuzzer
 /// reaches the code that enforces them.
 pub const LIMITS: Limits = Limits {

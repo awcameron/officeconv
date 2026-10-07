@@ -58,6 +58,16 @@ jobs:
           version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
           [ -n "$version" ] || { echo "no rust-version in Cargo.toml" >&2; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The contributor image (.devcontainer/) has to build with the same Rust. A Dependabot
+      # update to its base image, or a change to rust-version, fails here until the other
+      # matches.
+      - name: Dev container's Rust matches rust-version
+        run: |
+          image=$(sed -n 's/^FROM rust:\([0-9.]*\)-.*/\1/p' .devcontainer/Dockerfile)
+          echo "rust-version is $VERSION; the dev container has $image"
+          [ "$image" = "$VERSION" ]
+        env:
+          VERSION: ${{ steps.toolchain.outputs.version }}
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}

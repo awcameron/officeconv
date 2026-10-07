@@ -10,7 +10,7 @@ updates:
       prefix: ci
   # The contributor image's base is pinned by digest; this keeps the digest current. Its Rust
   # version must stay at rust-version, so only digest and patch updates are opened, and a patch
-  # update fails the Dev container workflow until rust-version matches it.
+  # update fails CI's msrv job until rust-version matches it.
   - package-ecosystem: docker
     directory: /.devcontainer
     schedule:

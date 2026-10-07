@@ -1,24 +1,24 @@
 name: Dev container
 
-# Builds the contributor image (.devcontainer/) and runs the pre-commit checks in it, so it
-# can't quietly stop working. Only when something it depends on changes: building it takes
-# several minutes.
+# Builds the contributor image (.devcontainer/) and checks that each of its tools runs, when
+# the image changes. The full checks aren't repeated here: CI's check job already runs them on
+# every PR. CI's msrv job checks that the image's Rust matches rust-version.
+#
+# Weekly, and on demand, it also builds the fuzz targets in the image. The image takes whichever
+# nightly is current, so that catches a new nightly that breaks fuzzing without slowing any PR.
 on:
   push:
     branches: [main]
     paths:
       - .devcontainer/**
-      - Cargo.toml
-      - Cargo.lock
-      - scripts/check.sh
       - .github/workflows/dev-container.yml
   pull_request:
     paths:
       - .devcontainer/**
-      - Cargo.toml
-      - Cargo.lock
-      - scripts/check.sh
       - .github/workflows/dev-container.yml
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -33,21 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The image has to build with the Rust that releases use. A Dependabot update to the base
-      # image's tag, or a change to rust-version, fails here until the other matches.
-      - name: Image's Rust matches rust-version
-        run: |
-          want=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
-          have=$(sed -n 's/^FROM rust:\([0-9.]*\)-.*/\1/p' .devcontainer/Dockerfile)
-          echo "rust-version is $want; the image has $have"
-          [ -n "$want" ] && [ "$want" = "$have" ]
-
       - name: Build the image
         run: docker build -t officeconv-dev .devcontainer
 
-      # As a contributor on Linux runs it: as their own user, so files the checks write into
-      # the repository aren't owned by root.
-      - name: Checks inside the image
+      # As a contributor on Linux runs it: as their own user, so files it writes into the
+      # repository aren't owned by root. cargo deny check also proves the tool reads deny.toml.
+      - name: Each tool runs
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" officeconv-dev sh -ec '
+          cargo fmt --version; cargo clippy --version; cargo +nightly --version;
+          cargo fuzz --version; python3 --version; git --version; cargo deny check'
+
+      - name: Fuzz targets build
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: >-
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" officeconv-dev
-          sh -c 'scripts/check.sh && cd fuzz && cargo +nightly fuzz build archive'
+          sh -c 'cd fuzz && cargo +nightly fuzz build'

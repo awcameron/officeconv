@@ -67,10 +67,10 @@ on macOS than a native build.
 VS Code's Dev Containers extension and GitHub Codespaces use the same image through
 [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json), with the same volumes.
 
-The [Dev container workflow](.github/workflows/dev-container.yml) builds the image and runs
-`scripts/check.sh` and a fuzz build in it whenever the image, `Cargo.toml`, `Cargo.lock` or the
-script changes. It fails if the image's Rust version differs from `rust-version`, so a change
-to one needs the other.
+The [Dev container workflow](.github/workflows/dev-container.yml) builds the image and checks
+that each of its tools runs whenever the image changes, and also builds the fuzz targets in it
+once a week. CI's `msrv` job fails if the image's Rust version differs from `rust-version`, so a
+change to one needs the other.
 
 ## Fuzzing
 

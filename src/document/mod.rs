@@ -182,13 +182,33 @@ pub struct TableBuilder {
     row: Vec<CellRuns>,
     /// The cell being filled in; add paragraphs to it with [`append_paragraph`].
     pub cell: CellRuns,
+    /// How many columns the table's grid declares (`<w:gridCol>` or `<a:gridCol>`). A merged
+    /// cell never spans past them.
+    pub columns: usize,
+    /// How many grid columns the cell being filled in covers, from Word's `<w:gridSpan>`.
+    /// Reset after each cell.
+    pub span: usize,
+    /// Whether the cell being filled in is covered by a merged neighbor, as PowerPoint marks
+    /// with `hMerge` or `vMerge`. PowerPoint hides its text, so it's read as empty. Reset
+    /// after each cell.
+    pub covered: bool,
 }
 
 impl TableBuilder {
-    /// Moves the finished cell into the current row.
+    /// Moves the finished cell into the current row. A cell merged across columns fills the
+    /// first of them, and the rest stay empty so later cells keep their columns.
     pub fn end_cell(&mut self) {
         let cell = mem::take(&mut self.cell);
-        self.row.push(cell);
+        if mem::take(&mut self.covered) {
+            self.row.push(CellRuns::new());
+        } else {
+            self.row.push(cell);
+        }
+        // Bounded by the grid, which costs the file bytes for every column, so a huge
+        // `gridSpan` value can't make a huge row.
+        let room = self.columns.saturating_sub(self.row.len());
+        let extra = mem::take(&mut self.span).saturating_sub(1).min(room);
+        self.row.resize(self.row.len() + extra, CellRuns::new());
     }
 
     /// Moves the finished row into the table.

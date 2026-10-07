@@ -49,9 +49,21 @@ download `officeconv-x86_64-pc-windows-msvc.zip` from the latest release and put
 `latest/download` with `download/<tag>`, such as `download/v0.3.5`. Releases before v0.3.5 have
 the version in their file names too, such as `officeconv-v0.3.4-<target>.tar.gz`.
 
-The binaries aren't signed. A file downloaded in a browser is marked as coming from the internet,
-so macOS refuses to open it and Windows SmartScreen warns about it; `curl` and `gh` downloads
-aren't marked. On macOS, `xattr -d com.apple.quarantine officeconv` removes the mark.
+The checksum shows the download wasn't damaged, but it sits on the same page as the archive. To
+check that the archive was built by this repository's release workflow, from a commit in it, use
+the GitHub CLI:
+
+```sh
+gh attestation verify "officeconv-$target.tar.gz" -R awcameron/officeconv
+```
+
+It prints the workflow and commit that built the file, and fails for anything else. Releases
+after v0.3.5 are attested; earlier ones aren't.
+
+The binaries aren't code-signed by Apple or Microsoft. A file downloaded in a browser is marked
+as coming from the internet, so macOS refuses to open it and Windows SmartScreen warns about it;
+`curl` and `gh` downloads aren't marked. On macOS, `xattr -d com.apple.quarantine officeconv`
+removes the mark.
 
 ### Build from source
 

@@ -1,8 +1,9 @@
 #!/bin/sh
 # Checks what merging a release PR published: waits for the Release run on the merge commit,
 # then checks that every job passed, that vX.Y.Z points at the merge commit, that the release
-# has an archive and a .sha256 for each platform, and that the README's
-# releases/latest/download links reach it. Refuses to start until the PR is merged.
+# has an archive and a .sha256 for each platform, that each archive is attested by the release
+# workflow for the merge commit, and that the README's releases/latest/download links reach it.
+# Refuses to start until the PR is merged.
 #
 # Usage, from anywhere in the repo: verify-release.sh PR_NUMBER
 set -eu
@@ -64,12 +65,25 @@ done
 count=$(echo "$assets" | grep -c .)
 [ "$count" -eq 10 ] || die "expected 10 files in the release, found $count"
 
+downloads=$(mktemp -d)
+trap 'rm -rf "$downloads"' EXIT
+gh release download "$tag" --dir "$downloads"
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+# Each archive must have an attestation signed by this repo's release workflow, for the merge
+# commit, so `gh attestation verify` in the README works for it.
+for target in $targets; do
+    archive=officeconv-$target.tar.gz
+    [ "$target" = x86_64-pc-windows-msvc ] && archive=officeconv-$target.zip
+    gh attestation verify "$downloads/$archive" --repo "$repo" \
+        --signer-workflow "$repo/.github/workflows/release.yml" --source-digest "$sha" \
+        > /dev/null 2>&1 ||
+        die "$archive has no attestation from release.yml for $short; see gh attestation verify"
+done
+echo "every archive is attested by release.yml at $short"
+
 # The names have no version, so the README's releases/latest/download links must now reach
 # this release. GitHub redirects such a link to the release's own link, then to its storage.
-checksums=$(mktemp -d)
-trap 'rm -rf "$checksums"' EXIT
-gh release download "$tag" --dir "$checksums" --pattern '*.sha256'
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 for target in $targets; do
     url=https://github.com/$repo/releases/latest/download/officeconv-$target.sha256
     reached=$(curl -sSI "$url" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
@@ -78,7 +92,7 @@ for target in $targets; do
         *) die "$url redirects to '$reached', not to $tag" ;;
     esac
     latest=$(curl -sSfL "$url") || die "$url doesn't download"
-    [ "$latest" = "$(cat "$checksums/officeconv-$target.sha256")" ] ||
+    [ "$latest" = "$(cat "$downloads/officeconv-$target.sha256")" ] ||
         die "$url doesn't hold $tag's checksum"
 done
 echo "the latest links reach $tag"

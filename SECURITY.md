@@ -30,6 +30,21 @@ CI also runs [`cargo deny`](deny.toml) to check every dependency against the Rus
 database. The zip reader and the four readers are fuzzed, with what they read rendered in every
 output format; see [Fuzzing](README.md#fuzzing).
 
+## Verifying a download
+
+Each release archive has a SHA-256 checksum and, for releases after v0.3.5, a build provenance
+attestation signed through [Sigstore](https://www.sigstore.dev). The attestation records that the
+release workflow (`.github/workflows/release.yml`) built the archive, and from which commit.
+Check one with the GitHub CLI:
+
+```sh
+gh attestation verify officeconv-<target>.tar.gz -R awcameron/officeconv
+```
+
+The checksum only shows a download wasn't damaged: anyone who could replace an archive on the
+release page could replace its checksum too. The attestation can't be replaced that way:
+`gh attestation verify` only accepts one signed by a workflow run in this repository.
+
 ## Known gaps
 
 None are open right now.

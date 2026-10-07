@@ -2,7 +2,7 @@
 name: issue-to-pr
 description: 'Takes an officeconv GitHub issue to a merged PR in three steps. Use when the user says "start on #N", "push it and open the PR", or "#N merged now" (or "merged"), and for any change made on its own branch in this repo.'
 compatibility: Requires git, an authenticated GitHub CLI (gh), a Rust toolchain, and Python 3 for tools/compare.
-allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git describe *) Bash(git switch *) Bash(git pull *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *) Bash(.agents/skills/issue-to-pr/scripts/after-merge.sh *)'
+allowed-tools: 'Read Edit Write Bash(git status) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git describe *) Bash(git switch *) Bash(git pull *) Bash(git add *) Bash(git commit *) Bash(git push -u origin *) Bash(gh issue view *) Bash(gh issue list *) Bash(gh pr create *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh run view *) Bash(cargo fmt *) Bash(cargo clippy *) Bash(cargo doc *) Bash(cargo test *) Bash(cargo build *) Bash(cargo deny *) Bash(scripts/check.sh) Bash(tools/compare/compare.sh) Bash(tools/compare/compare.sh *) Bash(.agents/skills/issue-to-pr/scripts/after-merge.sh *)'
 ---
 
 # Issue to merged PR
@@ -39,20 +39,15 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    Every difference must be explained in the report. Either it's the intended change, or it's a
    bug to fix. `diff -r FOLDER/a FOLDER/b` shows one. Don't also run the fuzz corpus unless
    there's a reason: most of its inputs never reach the readers.
-5. Run the checks. The first six are what CI runs; the last two catch what CI doesn't build:
+5. Run the checks:
 
    ```sh
-   cargo fmt --check
-   cargo clippy --locked --all-targets -- -D warnings
-   RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
-   cargo test --locked
-   cargo clippy --locked --all-targets --no-default-features -- -D warnings
-   cargo test --locked --no-default-features
-   cargo clippy --locked -p officeconv-fuzz --all-targets -- -D warnings
-   RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
+   scripts/check.sh
    ```
 
-   If `Cargo.toml` or `Cargo.lock` changed, also run `cargo deny check` if it's installed.
+   It runs CI's checks plus the two CI doesn't build, and `cargo deny check` if it's installed,
+   stopping at the first failure. If `Cargo.toml` or `Cargo.lock` changed and `cargo-deny`
+   isn't installed, say so in the report: CI's `deny` job is the first to check them.
 6. Commit only the files you changed. The user keeps untracked files in the repo root that
    aren't part of the project, so never `git add -A` or `git add .` there.
    - Subject: a conventional commit, such as `fix: keep a picture grouped with a text box`.

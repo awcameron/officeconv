@@ -20,28 +20,20 @@ The [Layout](README.md#layout) section of the README says what each file does. I
 - `tests/cli/`: end-to-end tests that run the binary.
 - `fuzz/`: cargo-fuzz targets.
 - `tools/compare/`: compares two builds' output.
+- `scripts/check.sh`: the checks to run before committing.
 
 ## Checks
 
-Run all of these before committing. The first six are what CI runs; the last two cover what CI
-doesn't build.
+Run [`scripts/check.sh`](scripts/check.sh) before committing. It stops at the first check that
+fails and says which. Its first six checks are the steps of CI's `check` job; the other two
+cover what CI doesn't build: the fuzz crate and the private-item docs.
 
-```sh
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
-cargo test --locked
-cargo clippy --locked --all-targets --no-default-features -- -D warnings
-cargo test --locked --no-default-features
-cargo clippy --locked -p officeconv-fuzz --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
-```
-
-`--no-default-features` builds without the `pdf` feature, so code used only by PDF output needs
-`#[cfg(feature = "pdf")]`.
+Two of the checks build without the `pdf` feature (`--no-default-features`), so code used only
+by PDF output needs `#[cfg(feature = "pdf")]`.
 
 CI also runs `cargo deny` ([`deny.toml`](deny.toml)) on every dependency, so a new crate needs
-an allowed license and no open advisories.
+an allowed license and no open advisories. The script runs it too when `cargo-deny` is
+installed.
 
 ## Rules
 

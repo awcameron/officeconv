@@ -399,12 +399,14 @@ Our chart: ![Sales by region](notes_images/image1.png)
 ## Development
 
 ```sh
-cargo test                                            # unit and end-to-end tests
-cargo clippy --all-targets -- -D warnings             # lints
-cargo fmt                                             # formatting
+scripts/check.sh                                      # every check CI runs, and a few more
+cargo fmt                                             # fix formatting
 cargo doc --no-deps --document-private-items --open   # browse the code's documentation
 cargo run -- sales.xlsx --to md                       # run without installing
 ```
+
+Run `scripts/check.sh` before committing: a change that passes it passes CI's checks. It runs
+`cargo deny` too if [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) is installed.
 
 `officeconv` is a binary: its library has no public API, so internals can change in any release.
 See [ADR 0003](docs/adr/0003-binary-only.md).
@@ -486,6 +488,7 @@ src/
 tests/cli/           end-to-end tests that run the real binary
 fuzz/                fuzz targets for the zip reader and the four readers (cargo-fuzz)
 tools/compare/       compares the output of two builds on generated files
+scripts/check.sh     the checks to run before committing
 assets/fonts/        Noto Sans, built into the binary for PDF output
 .agents/skills/      agent skills for this repo's workflows: issue to PR, and releasing
 .claude/skills       a symlink to .agents/skills, so Claude Code finds them too

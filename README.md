@@ -11,16 +11,68 @@ It's written in Rust as a learning project.
 
 ## Install
 
-You need a Rust toolchain ([rustup.rs](https://rustup.rs)). From this directory:
+### Download a binary
+
+Each [release](https://github.com/awcameron/officeconv/releases) has a ready-built binary:
+
+| Platform             | `target`                                |
+| -------------------- | --------------------------------------- |
+| macOS, Apple silicon | `aarch64-apple-darwin`                  |
+| macOS, Intel         | `x86_64-apple-darwin`                   |
+| Linux, x86_64        | `x86_64-unknown-linux-gnu`              |
+| Linux, arm64         | `aarch64-unknown-linux-gnu`             |
+| Windows, x86_64      | `x86_64-pc-windows-msvc` (a `.zip`)     |
+
+On macOS or Linux, set `target` from the table. This downloads the latest release, checks it
+against its SHA-256 checksum, and puts `officeconv` in `~/.local/bin`:
 
 ```sh
-cargo install --path .
+target=aarch64-apple-darwin
+tag=$(curl -sSI https://github.com/awcameron/officeconv/releases/latest |
+    grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r')
+file=officeconv-$tag-$target
+curl -sSLO "https://github.com/awcameron/officeconv/releases/download/$tag/$file.tar.gz"
+curl -sSLO "https://github.com/awcameron/officeconv/releases/download/$tag/$file.sha256"
+shasum -a 256 -c "$file.sha256"    # on Linux: sha256sum -c "$file.sha256"
+mkdir -p ~/.local/bin && tar xzf "$file.tar.gz" -C ~/.local/bin officeconv
 ```
 
-That builds a release binary and puts it in `~/.cargo/bin`, so `officeconv` works from anywhere.
+If `~/.local/bin` isn't on your `PATH` (macOS doesn't add it), add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell's startup file. Then try it, no input file
+needed:
+
+```sh
+printf 'name,city\nAda,London\n' | officeconv - --from csv --to md
+```
+
+The [GitHub CLI](https://cli.github.com) can download the same two files in place of the two
+`curl` lines: `gh release download -R awcameron/officeconv -p "*-$target.*"`. On Windows,
+download the `.zip` from the release page and put `officeconv.exe` in a folder on your `PATH`.
+
+The binaries aren't signed. A file downloaded in a browser is marked as coming from the internet,
+so macOS refuses to open it and Windows SmartScreen warns about it; `curl` and `gh` downloads
+aren't marked. On macOS, `xattr -d com.apple.quarantine officeconv` removes the mark.
+
+### Build from source
+
+You need Rust 1.92 or later ([rustup.rs](https://rustup.rs)):
+
+```sh
+cargo install --locked --git https://github.com/awcameron/officeconv officeconv
+```
+
+Or, from a clone of this repository, `cargo install --locked --path .`. Either one puts
+`officeconv` in `~/.cargo/bin`. `--locked` builds with the dependency versions in `Cargo.lock`,
+the ones CI tests and checks for security advisories. The build takes several minutes, because the
+release profile optimizes the whole program at once.
 
 PDF output is included by default. To leave it out for a smaller binary, add
 `--no-default-features`; `--to pdf` then says it isn't built in.
+
+### Uninstall
+
+Delete the binary (`rm ~/.local/bin/officeconv`), or run `cargo uninstall officeconv` if you
+built it with Cargo.
 
 ## Usage
 

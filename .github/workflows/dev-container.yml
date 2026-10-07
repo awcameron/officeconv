@@ -1,0 +1,51 @@
+name: Dev container
+
+# Builds the contributor image (.devcontainer/) and checks that each of its tools runs, when
+# the image changes. The full checks aren't repeated here: CI's check job already runs them on
+# every PR. CI's msrv job checks that the image's Rust matches rust-version.
+#
+# Weekly, and on demand, it also builds the fuzz targets in the image. The image takes whichever
+# nightly is current, so that catches a new nightly that breaks fuzzing without slowing any PR.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .devcontainer/**
+      - .github/workflows/dev-container.yml
+  pull_request:
+    paths:
+      - .devcontainer/**
+      - .github/workflows/dev-container.yml
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image
+        run: docker build -t officeconv-dev .devcontainer
+
+      # As a contributor on Linux runs it: as their own user, so files it writes into the
+      # repository aren't owned by root. cargo deny check also proves the tool reads deny.toml.
+      - name: Each tool runs
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" officeconv-dev sh -ec '
+          cargo fmt --version; cargo clippy --version; cargo +nightly --version;
+          cargo fuzz --version; python3 --version; git --version; cargo deny check'
+
+      - name: Fuzz targets build
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" officeconv-dev
+          sh -c 'cd fuzz && cargo +nightly fuzz build'

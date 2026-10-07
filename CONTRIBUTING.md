@@ -8,6 +8,7 @@ input, and the conventions for branches, commits and PRs. It's written for codin
 the rules are the same for people.
 
 - [Development](#development)
+- [Developing in a container](#developing-in-a-container)
 - [Fuzzing](#fuzzing)
 - [Comparing two builds](#comparing-two-builds)
 - [Layout](#layout)
@@ -33,6 +34,43 @@ the repo doesn't need to contain any binary test files.
 
 Design decisions are recorded in [`docs/adr/`](docs/adr/), starting with
 [how PDF output is rendered](docs/adr/0001-pdf-rendering.md).
+
+## Developing in a container
+
+[`.devcontainer/Dockerfile`](.devcontainer/Dockerfile) is a Linux image with everything the
+checks, fuzzing and `tools/compare` need: Rust at exactly the `rust-version` releases build
+with, nightly, `cargo-fuzz`, `cargo-deny`, Python 3 and git. Use it if you'd rather not install
+those, if Homebrew's Rust gets in the way of rustup's, or to fuzz on Windows. It's only for
+development; it doesn't run officeconv for you.
+
+From the repository root, build the image once, then run commands in it:
+
+```sh
+docker build -t officeconv-dev .devcontainer
+alias dev='docker run --rm -it -v "$PWD:/work" -v officeconv-target:/cache/target -v officeconv-cargo-registry:/usr/local/cargo/registry officeconv-dev'
+
+dev scripts/check.sh                               # every check, cargo deny included
+dev sh -c 'cd fuzz && cargo +nightly fuzz run docx'  # fuzzing; Ctrl-C to stop
+dev tools/compare/compare.sh                       # compare with main
+dev bash                                           # a shell
+```
+
+The repository is mounted at `/work`, so edits on either side show up on the other. Builds go to the
+`officeconv-target` volume and downloaded crates to `officeconv-cargo-registry`, which keeps them
+between runs and away from your own `target/`. On Linux, add `--user "$(id -u):$(id -g)"` after
+`docker run`, so files it writes into the repository, such as fuzz inputs, belong to you. Use the
+same user every time: the volumes keep whichever user first wrote to them, and another can't write
+there. To start them afresh, run `docker volume rm officeconv-target officeconv-cargo-registry`.
+`compare.sh` builds into `target/compare/` in the repository, which is slower under Docker Desktop
+on macOS than a native build.
+
+VS Code's Dev Containers extension and GitHub Codespaces use the same image through
+[`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json), with the same volumes.
+
+The [Dev container workflow](.github/workflows/dev-container.yml) builds the image and checks
+that each of its tools runs whenever the image changes, and also builds the fuzz targets in it
+once a week. CI's `msrv` job fails if the image's Rust version differs from `rust-version`, so a
+change to one needs the other.
 
 ## Fuzzing
 
@@ -98,7 +136,8 @@ scripts/check.sh     the checks to run before committing
 build.rs             compresses the fonts in assets/fonts/ before they're built into the binary
 assets/fonts/        Noto Sans, built into the binary for PDF output, and its license
 docs/adr/            design decisions, one record each
-.github/             CI and release workflows, Dependabot, and how release notes are grouped
+.devcontainer/       a Linux image to build, test and fuzz in, for Docker, VS Code and Codespaces
+.github/             CI, release and dev container workflows, Dependabot, and release notes
 .agents/skills/      agent skills for this repo's workflows: issue to PR, and releasing
 .claude/skills       a symlink to .agents/skills, so Claude Code finds them too
 AGENTS.md            the rules and checks for coding agents

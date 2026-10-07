@@ -1,0 +1,19 @@
+// The contributor image, for VS Code's Dev Containers and GitHub Codespaces. CONTRIBUTING.md
+// shows how to use the same image with plain `docker run`.
+{
+  "name": "officeconv",
+  "build": { "dockerfile": "Dockerfile" },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/work,type=bind",
+  "workspaceFolder": "/work",
+  // The same named volumes as the docker run commands in CONTRIBUTING.md, so both share builds.
+  "mounts": [
+    "source=officeconv-target,target=/cache/target,type=volume",
+    "source=officeconv-cargo-registry,target=/usr/local/cargo/registry,type=volume"
+  ],
+  "remoteUser": "dev",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"]
+    }
+  }
+}

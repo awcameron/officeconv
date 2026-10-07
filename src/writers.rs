@@ -1,5 +1,6 @@
 //! Writing a [`Table`] out as CSV, TSV, JSON or Markdown.
 
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
@@ -131,8 +132,15 @@ fn serialize_float<S: Serializer>(x: f64, serializer: S) -> Result<S::Ok, S::Err
 }
 
 /// Makes headers usable as JSON keys: blanks get a column name, repeats get a suffix.
+///
+/// A repeat takes the first of `base_2`, `base_3`, ... that isn't a key yet. Each base
+/// remembers where its last search stopped: keys are never removed, so every suffix before
+/// that is still taken, and the result is the same as searching from `_2` each time. That keeps
+/// the work proportional to the number of headers, however many of them repeat.
 fn json_keys(headers: &[String]) -> Vec<String> {
     let mut keys: Vec<String> = Vec::with_capacity(headers.len());
+    let mut used: HashSet<String> = HashSet::with_capacity(headers.len());
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     for (i, header) in headers.iter().enumerate() {
         let base = if header.trim().is_empty() {
             format!("column_{}", i + 1)
@@ -140,12 +148,19 @@ fn json_keys(headers: &[String]) -> Vec<String> {
             header.clone()
         };
 
-        let mut key = base.clone();
-        let mut n = 2;
-        while keys.contains(&key) {
-            key = format!("{base}_{n}");
-            n += 1;
-        }
+        let key = if used.contains(&base) {
+            let n = next_suffix.entry(base.clone()).or_insert(2);
+            loop {
+                let key = format!("{base}_{n}");
+                *n += 1;
+                if !used.contains(&key) {
+                    break key;
+                }
+            }
+        } else {
+            base
+        };
+        used.insert(key.clone());
         keys.push(key);
     }
     keys
@@ -363,6 +378,73 @@ mod tests {
     fn json_keys_fill_blanks_and_dedupe() {
         let headers = ["id", "", "id", "id"].map(String::from);
         assert_eq!(json_keys(&headers), ["id", "column_2", "id_2", "id_3"]);
+    }
+
+    #[test]
+    fn json_keys_skip_suffixes_that_are_real_headers() {
+        let keys = |headers: &[&str]| {
+            json_keys(&headers.iter().map(|h| h.to_string()).collect::<Vec<_>>())
+        };
+        assert_eq!(keys(&["a", "a", "a_2"]), ["a", "a_2", "a_2_2"]);
+        assert_eq!(keys(&["a_2", "a", "a"]), ["a_2", "a", "a_3"]);
+        assert_eq!(keys(&["column_2", ""]), ["column_2", "column_2_2"]);
+    }
+
+    /// The rules as they were first written: search from `_2` for every repeat. Correct, but
+    /// cubic in the number of repeats.
+    fn json_keys_by_searching_from_2(headers: &[String]) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        for (i, header) in headers.iter().enumerate() {
+            let base = if header.trim().is_empty() {
+                format!("column_{}", i + 1)
+            } else {
+                header.clone()
+            };
+            let mut key = base.clone();
+            let mut n = 2;
+            while keys.contains(&key) {
+                key = format!("{base}_{n}");
+                n += 1;
+            }
+            keys.push(key);
+        }
+        keys
+    }
+
+    #[test]
+    fn json_keys_match_searching_from_2_every_time() {
+        // Names chosen to collide with each other's suffixes and with blank columns' names.
+        let names = [
+            "", " ", "a", "a_2", "a_3", "a_2_2", "a_1", "b", "column_1", "column_3",
+        ];
+        // A small fixed generator, so the test needs no dependency and never changes.
+        let mut state: u64 = 1;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..20_000 {
+            let len = (next() % 12) as usize;
+            let headers: Vec<String> = (0..len)
+                .map(|_| names[(next() % names.len() as u64) as usize].to_string())
+                .collect();
+            assert_eq!(
+                json_keys(&headers),
+                json_keys_by_searching_from_2(&headers),
+                "{headers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_keys_handle_many_repeats_quickly() {
+        // Searching from _2 every time would take hours here.
+        let headers = vec!["a".to_string(); 100_000];
+        let keys = json_keys(&headers);
+        assert_eq!(keys[1], "a_2");
+        assert_eq!(keys[99_999], "a_100000");
     }
 
     #[test]

@@ -55,12 +55,14 @@ dev tools/compare/compare.sh                       # compare with main
 dev bash                                           # a shell
 ```
 
-The repository is mounted at `/work`, so edits on either side show up on the other. Builds go
-to the `officeconv-target` volume and downloaded crates to `officeconv-cargo-registry`, which
-keeps them between runs and away from your own `target/`. On Linux, add
-`--user "$(id -u):$(id -g)"` after `docker run`, so files it writes into the repository, such
-as fuzz inputs, belong to you. `compare.sh` builds into `target/compare/` in the repository,
-which is slower under Docker Desktop on macOS than a native build.
+The repository is mounted at `/work`, so edits on either side show up on the other. Builds go to the
+`officeconv-target` volume and downloaded crates to `officeconv-cargo-registry`, which keeps them
+between runs and away from your own `target/`. On Linux, add `--user "$(id -u):$(id -g)"` after
+`docker run`, so files it writes into the repository, such as fuzz inputs, belong to you. Use the
+same user every time: the volumes keep whichever user first wrote to them, and another can't write
+there. To start them afresh, run `docker volume rm officeconv-target officeconv-cargo-registry`.
+`compare.sh` builds into `target/compare/` in the repository, which is slower under Docker Desktop
+on macOS than a native build.
 
 VS Code's Dev Containers extension and GitHub Codespaces use the same image through
 [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json), with the same volumes.

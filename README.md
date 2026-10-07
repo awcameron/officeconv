@@ -43,13 +43,22 @@ it protects against. It's written in Rust as a learning project.
 
 Each [release](https://github.com/awcameron/officeconv/releases) has a ready-built binary:
 
-| Platform             | `target`                                |
-| -------------------- | --------------------------------------- |
-| macOS, Apple silicon | `aarch64-apple-darwin`                  |
-| macOS, Intel         | `x86_64-apple-darwin`                   |
-| Linux, x86_64        | `x86_64-unknown-linux-gnu`              |
-| Linux, arm64         | `aarch64-unknown-linux-gnu`             |
-| Windows, x86_64      | `x86_64-pc-windows-msvc` (a `.zip`)     |
+| Platform                       | `target`                             |
+| ------------------------------ | ------------------------------------ |
+| macOS, Apple silicon           | `aarch64-apple-darwin`               |
+| macOS, Intel                   | `x86_64-apple-darwin`                |
+| Linux, x86_64                  | `x86_64-unknown-linux-gnu`           |
+| Linux, arm64                   | `aarch64-unknown-linux-gnu`          |
+| Linux, x86_64, static (musl)   | `x86_64-unknown-linux-musl`          |
+| Linux, arm64, static (musl)    | `aarch64-unknown-linux-musl`         |
+| Windows, x86_64                | `x86_64-pc-windows-msvc` (a `.zip`)  |
+| Windows, arm64                 | `aarch64-pc-windows-msvc` (a `.zip`) |
+
+The `gnu` Linux builds need glibc 2.17 or later, which nearly every distribution has. The `musl`
+builds are statically linked and need no system libraries, so they also run on Alpine and in
+minimal container images such as `scratch` or distroless. For PDF output with characters Noto
+Sans lacks, the system still needs a font that has them; on Alpine, install `font-noto-cjk`.
+The `musl` builds and the Windows arm64 build start with the first release after v0.3.6.
 
 On macOS or Linux, set `target` from the table. This downloads the latest release, checks it
 against its SHA-256 checksum, and puts `officeconv` in `~/.local/bin`:
@@ -72,7 +81,8 @@ printf 'name,city\nAda,London\n' | officeconv - --from csv --to md
 
 The [GitHub CLI](https://cli.github.com) can download the same two files in place of the `curl`
 line: `gh release download -R awcameron/officeconv -p "officeconv-$target.*"`. On Windows,
-download `officeconv-x86_64-pc-windows-msvc.zip` from the latest release and put
+download `officeconv-x86_64-pc-windows-msvc.zip` (or `aarch64-pc-windows-msvc` for an ARM
+laptop) from the latest release and put
 `officeconv.exe` in a folder on your `PATH`. To get one version instead of the latest, replace
 `latest/download` with `download/<tag>`, such as `download/v0.3.5`. Releases before v0.3.5 have
 the version in their file names too, such as `officeconv-v0.3.4-<target>.tar.gz`.

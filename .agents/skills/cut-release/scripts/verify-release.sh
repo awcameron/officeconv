@@ -51,19 +51,29 @@ tagged=$(git rev-parse --verify --quiet "$tag^{commit}") || die "$tag doesn't ex
 echo "$tag points at $short"
 
 assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
-targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin
-    x86_64-apple-darwin x86_64-pc-windows-msvc"
+targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl
+    aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc
+    aarch64-pc-windows-msvc"
+# An archive and a .sha256 for each target.
+expected=$(($(echo $targets | wc -w) * 2))
+
+# Windows archives are zips; the others are gzipped tarballs.
+archive_name() {
+    case $1 in
+        *-windows-*) echo "officeconv-$1.zip" ;;
+        *) echo "officeconv-$1.tar.gz" ;;
+    esac
+}
 missing=
 for target in $targets; do
-    archive=officeconv-$target.tar.gz
-    [ "$target" = x86_64-pc-windows-msvc ] && archive=officeconv-$target.zip
+    archive=$(archive_name "$target")
     for name in "$archive" "officeconv-$target.sha256"; do
         echo "$assets" | grep -qxF "$name" || missing="$missing $name"
     done
 done
 [ -z "$missing" ] || die "the release is missing:$missing"
 count=$(echo "$assets" | grep -c .)
-[ "$count" -eq 10 ] || die "expected 10 files in the release, found $count"
+[ "$count" -eq "$expected" ] || die "expected $expected files in the release, found $count"
 
 downloads=$(mktemp -d)
 trap 'rm -rf "$downloads"' EXIT
@@ -73,8 +83,7 @@ repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 # Each archive must have an attestation signed by this repo's release workflow, for the merge
 # commit, so `gh attestation verify` in the README works for it.
 for target in $targets; do
-    archive=officeconv-$target.tar.gz
-    [ "$target" = x86_64-pc-windows-msvc ] && archive=officeconv-$target.zip
+    archive=$(archive_name "$target")
     gh attestation verify "$downloads/$archive" --repo "$repo" \
         --signer-workflow "$repo/.github/workflows/release.yml" --source-digest "$sha" \
         > /dev/null 2>&1 ||
@@ -97,4 +106,4 @@ for target in $targets; do
 done
 echo "the latest links reach $tag"
 
-echo "all 10 files published: $(gh release view "$tag" --json url --jq .url)"
+echo "all $expected files published: $(gh release view "$tag" --json url --jq .url)"

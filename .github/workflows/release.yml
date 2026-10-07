@@ -107,11 +107,23 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
             build-tool: cross
+          # Statically linked, so they need no libc at all: for Alpine and other musl systems,
+          # and minimal container images. Published alongside the glibc builds, so existing
+          # links to those keep working.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            build-tool: cross
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+            build-tool: cross
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          # Cross-compiled on the x86_64 runner, whose Visual Studio has the ARM64 tools.
+          - target: aarch64-pc-windows-msvc
             os: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

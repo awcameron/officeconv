@@ -13,7 +13,7 @@ tagged yet, it:
 
 1. runs the tests;
 2. creates the GitHub Release and its tag on the merge commit;
-3. uploads five archives, each with a `.sha256`. Their names have no version
+3. uploads eight archives, each with a `.sha256`. Their names have no version
    (`officeconv-<target>.tar.gz`), so the README's `releases/latest/download/` links get the
    newest release;
 4. attests each archive, so `gh attestation verify` can show it was built here.
@@ -85,7 +85,7 @@ Then:
    so and try again shortly. Then it:
    - waits for the Release run on the merge commit and checks that every job passed;
    - checks that `vX.Y.Z` points at the merge commit;
-   - checks that the release has an archive and a `.sha256` for each of the five platforms, and
+   - checks that the release has an archive and a `.sha256` for each of the eight platforms, and
      nothing else;
    - checks that each archive has an attestation from `release.yml` for the merge commit;
    - checks that each `releases/latest/download/` link reaches this release.

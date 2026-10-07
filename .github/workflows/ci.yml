@@ -43,6 +43,29 @@ jobs:
       - name: Test without PDF
         run: cargo test --locked --no-default-features
 
+  # The tests with the exact version in Cargo.toml's rust-version, the oldest Rust officeconv
+  # claims to build with and the one releases build with. A dependency update that needs a newer
+  # Rust fails here instead of quietly raising the minimum.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain from Cargo.toml
+        id: toolchain
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          [ -n "$version" ] || { echo "no rust-version in Cargo.toml" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Test
+        run: cargo test --locked
+      - name: Test without PDF
+        run: cargo test --locked --no-default-features
+
   # Known vulnerabilities, licenses and sources of every crate in Cargo.lock (see deny.toml).
   # The advisory database changes daily, so a new advisory can fail a PR that didn't touch
   # dependencies: fix it or add it to deny.toml's ignore list with the reason.

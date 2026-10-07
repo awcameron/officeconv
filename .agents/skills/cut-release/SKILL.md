@@ -15,7 +15,8 @@ tagged yet, it:
 2. creates the GitHub Release and its tag on the merge commit;
 3. uploads five archives, each with a `.sha256`. Their names have no version
    (`officeconv-<target>.tar.gz`), so the README's `releases/latest/download/` links get the
-   newest release.
+   newest release;
+4. attests each archive, so `gh attestation verify` can show it was built here.
 
 **Never push, move or delete a `v*` tag by hand.** A pushed tag starts nothing, and a ruleset
 blocks moving or deleting one, so a wrong tag can't be fixed without the repo owner.
@@ -85,6 +86,7 @@ Then:
    - checks that `vX.Y.Z` points at the merge commit;
    - checks that the release has an archive and a `.sha256` for each of the five platforms, and
      nothing else;
+   - checks that each archive has an attestation from `release.yml` for the merge commit;
    - checks that each `releases/latest/download/` link reaches this release.
 
    It exits with an error that names what failed. For a failed run, see below.
@@ -105,6 +107,7 @@ Then:
     failed. Tell the user before doing this.
 - **`create-release` or an `upload` job fails after the tag exists:** use "Re-run failed jobs"
   (`gh run rerun <run> --failed`). A full re-run finds the tag already there and publishes
-  nothing.
+  nothing. The same goes for a failed attest step: the re-run builds, uploads and attests that
+  platform's archive again, replacing what was there.
 - **A run on `main` says the tag already exists:** that's expected when `Cargo.toml` changed but
   the version didn't, such as after a dependency update. Nothing needs doing.

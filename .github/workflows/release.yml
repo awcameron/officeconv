@@ -86,6 +86,13 @@ jobs:
       !failure() && !cancelled()
       && (github.event_name == 'pull_request' || needs.check.outputs.tag != '')
     runs-on: ${{ matrix.os }}
+    # Job permissions replace the workflow's, so contents: write (uploading) is repeated here.
+    # id-token and attestations let the attest step sign with a short-lived Sigstore
+    # certificate and store the attestation.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     strategy:
       # One platform failing leaves the others to finish, so "Re-run failed jobs" repeats only
       # that one.
@@ -114,6 +121,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        id: upload
         with:
           bin: officeconv
           target: ${{ matrix.target }}
@@ -130,3 +138,12 @@ jobs:
           dry-run: ${{ github.event_name == 'pull_request' }}
           dry-run-intended: true
           token: ${{ github.token }}
+
+      # Records, signed through Sigstore, that this workflow built the archive from this commit,
+      # so `gh attestation verify` can check a download came from here and not just that it
+      # matches a checksum on the same page. Only on releases: PR builds aren't published.
+      - name: Attest the archive
+        if: needs.check.outputs.tag != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.upload.outputs.tar || steps.upload.outputs.zip }}

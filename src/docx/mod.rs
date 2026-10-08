@@ -21,29 +21,16 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph};
-use crate::document::{Block, Merged, RunStyle, display_size};
+use crate::document::{Block, ImagePart, Merged, RunStyle, display_size};
 use crate::error::Result;
-use crate::images::{self, Images};
-use crate::opc::{self, Limits, Open, XmlHandler, attr};
+use crate::opc::{self, Archive, Open, XmlHandler, attr};
 use package::Package;
 
 const DOCUMENT: &str = "word/document.xml";
 
-/// Reads a `.docx` and returns its body as blocks.
-///
-/// `images` says whether pictures are saved, embedded, or left out.
-pub fn read_blocks<R: Read + Seek>(reader: R, images: Images<'_>) -> Result<Vec<Block>> {
-    read_blocks_with_limits(reader, images, Limits::DEFAULT)
-}
-
-/// [`read_blocks`], decompressing at most `limits` instead of [`Limits::DEFAULT`]. The fuzz
-/// targets use this to pass smaller limits.
-pub fn read_blocks_with_limits<R: Read + Seek>(
-    reader: R,
-    images: Images<'_>,
-    limits: Limits,
-) -> Result<Vec<Block>> {
-    let mut archive = opc::Archive::with_limits(reader, limits)?;
+/// Reads the body of the `.docx` in `archive` as blocks. Each picture names its part in the
+/// package; [`images::resolve`](crate::images::resolve) deals with them.
+pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block<ImagePart>>> {
     let document = archive.read_required_part(DOCUMENT)?;
 
     let mut package = Package::default();
@@ -57,13 +44,11 @@ pub fn read_blocks_with_limits<R: Read + Seek>(
         package.styles = package::parse_styles(&xml)?;
     }
 
-    let mut blocks = parse_document(&document, &package)?;
-    images::link_images(&mut blocks, &mut archive, images)?;
-    Ok(blocks)
+    parse_document(&document, &package)
 }
 
 /// Parses the contents of `word/document.xml`, looking up IDs in `package`.
-pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block>> {
+pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block<ImagePart>>> {
     let mut parser = Parser::new(package);
     opc::walk(xml, &mut parser)?;
     Ok(parser.builder.into_blocks())
@@ -220,7 +205,7 @@ impl<'p> Parser<'p> {
     }
 
     /// Decides whether a paragraph is a heading, a list item, or plain text.
-    fn classify(&self, paragraph: Paragraph<ParagraphProps>) -> Block {
+    fn classify(&self, paragraph: Paragraph<ParagraphProps>) -> Block<ImagePart> {
         let Paragraph { props, runs } = paragraph;
         let style = props
             .style_id

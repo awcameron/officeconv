@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::document::{Block, resolve_images};
+use crate::document::{Block, ImagePart, resolve_images};
 use crate::error::{ConvertError, Result};
 use crate::opc::Archive;
 use crate::output::{UniqueNames, ensure_dir, safe_file_name};
@@ -222,12 +222,14 @@ pub enum Images<'a> {
     Embed(&'a mut EmbeddedImages),
 }
 
-/// Handles the images the blocks refer to as `images` says, removing the ones it leaves out.
-pub fn link_images<R: Read + Seek>(
-    blocks: &mut Vec<Block>,
+/// Handles the images in blocks a reader returned as `images` says, reading them from the
+/// `archive` the reader read, so its size limits count them too. Returns the blocks with each
+/// image's link or key, and without the ones it leaves out.
+pub fn resolve<R: Read + Seek>(
+    blocks: Vec<Block<ImagePart>>,
     archive: &mut Archive<R>,
     images: Images<'_>,
-) -> Result<()> {
+) -> Result<Vec<Block>> {
     match images {
         Images::Skip => resolve_images(blocks, |_| Ok(None)),
         Images::Save(export) => resolve_images(blocks, |part| export.export(archive, part)),

@@ -6,13 +6,14 @@
 //! becomes a block.
 
 use super::{
-    Block, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run, is_blank,
+    Block, ImagePart, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run,
+    is_blank,
 };
 
 /// Collects blocks for a reader. `P` is what the reader records about each paragraph, such as
 /// its style or list level; the builder only carries it.
 pub struct BlockBuilder<P> {
-    blocks: Vec<Block>,
+    blocks: Vec<Block<ImagePart>>,
     /// Paragraphs we're inside. Usually 0 or 1, but Word's text boxes nest paragraphs.
     paragraphs: Vec<Paragraph<P>>,
     /// Tables we're inside. More than one means a table inside a table cell.
@@ -26,7 +27,7 @@ pub struct BlockBuilder<P> {
 /// A finished paragraph that isn't in a table, for the reader to turn into a block.
 pub struct Paragraph<P> {
     pub props: P,
-    pub runs: Vec<Run>,
+    pub runs: Vec<Run<ImagePart>>,
 }
 
 impl<P: Default> BlockBuilder<P> {
@@ -127,24 +128,27 @@ impl<P: Default> BlockBuilder<P> {
         self.blocks.push(Block::Table(rows));
     }
 
-    pub fn push(&mut self, block: Block) {
+    pub fn push(&mut self, block: Block<ImagePart>) {
         self.blocks.push(block);
     }
 
-    pub fn into_blocks(self) -> Vec<Block> {
+    pub fn into_blocks(self) -> Vec<Block<ImagePart>> {
         self.blocks
     }
 }
 
 /// An image run for the image in package part `part`, shown at `size` if the document gives
 /// one.
-pub fn image_run(part: String, alt: String, size: Option<(u32, u32)>, link: Option<String>) -> Run {
-    let mut run = Run::image(part, alt);
-    if let Some(image) = run.image.as_mut() {
-        image.size = size;
+pub fn image_run(
+    part: String,
+    alt: String,
+    size: Option<(u32, u32)>,
+    link: Option<String>,
+) -> Run<ImagePart> {
+    Run {
+        link,
+        ..Run::image(ImagePart { part, size }, alt)
     }
-    run.link = link;
-    run
 }
 
 #[cfg(test)]
@@ -157,11 +161,11 @@ mod tests {
     };
 
     /// Plain runs holding `text`: a paragraph's, or a table cell's.
-    fn cell(text: &str) -> Vec<Run> {
+    fn cell(text: &str) -> Vec<Run<ImagePart>> {
         vec![Run::new(text, RunStyle::default())]
     }
 
-    fn paragraph(builder: &mut BlockBuilder<()>, text: &str) -> Option<Vec<Run>> {
+    fn paragraph(builder: &mut BlockBuilder<()>, text: &str) -> Option<Vec<Run<ImagePart>>> {
         builder.start_paragraph();
         builder.text(text);
         builder.end_paragraph().map(|p| p.runs)

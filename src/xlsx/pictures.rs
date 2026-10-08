@@ -17,9 +17,8 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::{Block, Run};
+use crate::document::{Block, ImagePart, Run};
 use crate::error::Result;
-use crate::images::{self, ImageExport, Images};
 use crate::opc::{self, Archive, Open, XmlHandler, attr};
 
 /// One picture on a sheet.
@@ -34,19 +33,19 @@ pub struct Picture {
     pub col: u32,
 }
 
-/// Saves the pictures on the worksheet stored in `sheet_part` and returns one Markdown paragraph
-/// per picture, in reading order (top to bottom, then left to right).
-pub fn export_sheet_pictures<R: Read + Seek>(
+/// The pictures on the worksheet stored in `sheet_part`, one paragraph per picture, in reading
+/// order (top to bottom, then left to right). Each names its part in the package;
+/// [`images::resolve`](crate::images::resolve) deals with them.
+pub fn sheet_pictures<R: Read + Seek>(
     archive: &mut Archive<R>,
     sheet_part: &str,
-    export: &mut ImageExport,
-) -> Result<Vec<Block>> {
-    let mut blocks: Vec<Block> = read_pictures(archive, sheet_part)?
+) -> Result<Vec<Block<ImagePart>>> {
+    Ok(read_pictures(archive, sheet_part)?
         .into_iter()
-        .map(|picture| Block::Paragraph(vec![Run::image(picture.part, picture.alt)]))
-        .collect();
-    images::link_images(&mut blocks, archive, Images::Save(export))?;
-    Ok(blocks)
+        .map(|picture| {
+            Block::Paragraph(vec![Run::image(ImagePart::new(picture.part), picture.alt)])
+        })
+        .collect())
 }
 
 /// Finds the pictures on the worksheet stored in `sheet_part` (see

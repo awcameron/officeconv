@@ -24,20 +24,21 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
-use crate::document::{Block, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank};
+use crate::document::{
+    Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank,
+};
 use crate::error::Result;
-use crate::images::{self, Images};
-use crate::opc::{self, Limits, Open, Targets, XmlHandler, attr};
+use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
 
 /// What we read from one slide.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Slide {
-    pub title: Vec<Run>,
+    pub title: Vec<Run<ImagePart>>,
     pub hidden: bool,
-    pub body: Vec<Block>,
-    pub notes: Vec<Block>,
+    pub body: Vec<Block<ImagePart>>,
+    pub notes: Vec<Block<ImagePart>>,
 }
 
 /// Whether to include each slide's speaker notes.
@@ -47,26 +48,12 @@ pub enum Notes {
     Skip,
 }
 
-/// Reads a `.pptx` and returns it as blocks, slide by slide.
-///
-/// `images` says whether pictures are saved, embedded, or left out.
+/// Reads the `.pptx` in `archive` as blocks, slide by slide. Each picture names its part in
+/// the package; [`images::resolve`](crate::images::resolve) deals with them.
 pub fn read_blocks<R: Read + Seek>(
-    reader: R,
+    archive: &mut Archive<R>,
     notes: Notes,
-    images: Images<'_>,
-) -> Result<Vec<Block>> {
-    read_blocks_with_limits(reader, notes, images, Limits::DEFAULT)
-}
-
-/// [`read_blocks`], decompressing at most `limits` instead of [`Limits::DEFAULT`]. The fuzz
-/// targets use this to pass smaller limits.
-pub fn read_blocks_with_limits<R: Read + Seek>(
-    reader: R,
-    notes: Notes,
-    images: Images<'_>,
-    limits: Limits,
-) -> Result<Vec<Block>> {
-    let mut archive = opc::Archive::with_limits(reader, limits)?;
+) -> Result<Vec<Block<ImagePart>>> {
     let presentation = archive.read_required_part(PRESENTATION)?;
     let relationships = match archive.read_part(&opc::rels_path(PRESENTATION))? {
         Some(xml) => opc::parse_relationships(&xml)?,
@@ -114,9 +101,7 @@ pub fn read_blocks_with_limits<R: Read + Seek>(
         slides.push(slide);
     }
 
-    let mut blocks = slides_to_blocks(slides);
-    images::link_images(&mut blocks, &mut archive, images)?;
-    Ok(blocks)
+    Ok(slides_to_blocks(slides))
 }
 
 /// The relationship IDs of the slides, in presentation order.
@@ -141,7 +126,7 @@ fn slide_ids(presentation: &str) -> Result<Vec<String>> {
 }
 
 /// Lays out slides as Markdown blocks.
-fn slides_to_blocks(slides: Vec<Slide>) -> Vec<Block> {
+fn slides_to_blocks(slides: Vec<Slide>) -> Vec<Block<ImagePart>> {
     let mut blocks = Vec::new();
     for (i, slide) in slides.into_iter().enumerate() {
         if i > 0 {
@@ -188,7 +173,7 @@ pub fn parse_slide(xml: &str, targets: &Targets) -> Result<Slide> {
 }
 
 /// Parses a notes part. Only the notes text box counts, not the slide image or slide number.
-pub fn parse_notes(xml: &str) -> Result<Vec<Block>> {
+pub fn parse_notes(xml: &str) -> Result<Vec<Block<ImagePart>>> {
     let targets = Targets::default();
     let mut parser = SlideParser::new(&targets, true);
     opc::walk(xml, &mut parser)?;
@@ -245,7 +230,7 @@ struct SlideParser<'a> {
     targets: &'a Targets,
     /// Reading speaker notes: keep only the notes body, and don't bullet it.
     notes: bool,
-    title: Vec<Run>,
+    title: Vec<Run<ImagePart>>,
     hidden: bool,
     shape: Option<Shape>,
     /// The picture (`p:pic`) being read, if any.
@@ -500,7 +485,7 @@ mod tests {
         parse_slide(&slide_xml(shapes), &Targets::default()).unwrap()
     }
 
-    fn runs(text: &str) -> Vec<Run> {
+    fn runs(text: &str) -> Vec<Run<ImagePart>> {
         vec![Run::new(text, PLAIN)]
     }
 
@@ -768,9 +753,10 @@ mod tests {
             [
                 Block::Paragraph(runs("Before")),
                 Block::Paragraph(vec![
-                    Run::image("ppt/media/image1.png", "Team photo").linked("https://example.com")
+                    Run::image(ImagePart::new("ppt/media/image1.png"), "Team photo")
+                        .linked("https://example.com")
                 ]),
-                Block::Paragraph(vec![Run::image("ppt/media/image1.png", "")]),
+                Block::Paragraph(vec![Run::image(ImagePart::new("ppt/media/image1.png"), "")]),
             ]
         );
     }
@@ -797,7 +783,7 @@ mod tests {
 
         let slide = parse_slide(&xml, &targets).unwrap();
         let sized = |cx, cy| {
-            let mut run = Run::image("ppt/media/image1.png", "");
+            let mut run = Run::image(ImagePart::new("ppt/media/image1.png"), "");
             run.image.as_mut().unwrap().size = Some((cx, cy));
             Block::Paragraph(vec![run])
         };

@@ -15,7 +15,7 @@ use krilla::text::KrillaGlyph;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
-use crate::document::{Block, CellRuns, ListKind, Run, RunStyle};
+use crate::document::{Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle};
 use crate::images::{EmbeddedImages, ImageFormat};
 
 /// Page size, margins, and text size for one kind of document.
@@ -512,8 +512,8 @@ impl<'a> Layout<'a> {
         let mut after_image = false;
         for group in runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none()) {
             match &group[0].image {
-                Some(key) => {
-                    if let Some(line) = self.layout_image(key, group[0].link.as_deref(), width) {
+                Some(image) => {
+                    if let Some(line) = self.layout_image(image, group[0].link.as_deref(), width) {
                         lines.push(line);
                     }
                     after_image = true;
@@ -538,14 +538,31 @@ impl<'a> Layout<'a> {
             .fold(0.0, f32::max)
     }
 
-    /// An image scaled down, if needed, to fit `width` and the page's height.
-    fn layout_image(&mut self, key: &str, link: Option<&str>, width: f32) -> Option<LineBox> {
-        let image = self.decode(key)?;
+    /// An image at the size the document shows it, or at its pixel size if it doesn't say,
+    /// then scaled down, if needed, to fit `width` and the page's height.
+    fn layout_image(
+        &mut self,
+        image_ref: &ImageRef,
+        link: Option<&str>,
+        width: f32,
+    ) -> Option<LineBox> {
+        let image = self.decode(&image_ref.source)?;
         let (pixels_wide, pixels_high) = image.size();
         let natural_width = pixels_wide as f32 * POINTS_PER_PIXEL;
         let natural_height = pixels_high as f32 * POINTS_PER_PIXEL;
+        // Fit within the document's size, keeping the image's shape. A cropped picture's size
+        // is the size of the part shown, and the whole image is drawn, so stretching it to
+        // that size would distort it.
+        let (box_width, box_height) = match image_ref.size {
+            Some((cx, cy)) => (
+                cx as f32 / EMU_PER_POINT as f32,
+                cy as f32 / EMU_PER_POINT as f32,
+            ),
+            None => (natural_width, natural_height),
+        };
         let max_height = self.setup.bottom() - self.setup.margin;
-        let scale = 1.0_f32
+        let scale = (box_width / natural_width)
+            .min(box_height / natural_height)
             .min(width / natural_width)
             .min(max_height / natural_height);
         let (w, h) = (natural_width * scale, natural_height * scale);

@@ -40,16 +40,44 @@ pub enum ListKind {
 
 /// A stretch of text that shares the same formatting (and link, if any).
 ///
-/// A run can instead be an image: then `image` holds where it is, and `text` is its alt text.
+/// A run can instead be an image: then `image` says where it is, and `text` is its alt text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Run {
     pub text: String,
     pub style: RunStyle,
     pub link: Option<String>,
+    pub image: Option<ImageRef>,
+}
+
+/// An image in a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageRef {
     /// While reading: the image's part inside the package (`word/media/image1.png`).
     /// After [`resolve_images`]: the link written into the Markdown, or for a PDF, the key of
     /// its bytes in [`EmbeddedImages`](crate::images::EmbeddedImages).
-    pub image: Option<String>,
+    pub source: String,
+    /// The size the document shows it at, width then height, in EMU (914,400 to the inch).
+    /// `None` if the document doesn't give one, or gives one [`display_size`] rejects. Only PDF
+    /// uses it: Markdown image syntax has no size.
+    pub size: Option<(u32, u32)>,
+}
+
+/// EMU per point: Office measures sizes in English Metric Units.
+#[cfg(feature = "pdf")]
+pub const EMU_PER_POINT: u32 = 12_700;
+
+/// The largest display size kept, per side: 100 inches. Anything larger, like a size of zero,
+/// is a broken or hostile file rather than a real picture.
+const MAX_DISPLAY_EMU: u64 = 100 * 914_400;
+
+/// A picture's display size from the `cx` and `cy` attributes DOCX and PPTX store it in, or
+/// `None` unless both are whole numbers above zero and at most 100 inches.
+pub fn display_size(cx: Option<String>, cy: Option<String>) -> Option<(u32, u32)> {
+    let side = |v: Option<String>| {
+        let emu = v?.parse::<u64>().ok()?;
+        (1..=MAX_DISPLAY_EMU).contains(&emu).then_some(emu as u32)
+    };
+    Some((side(cx)?, side(cy)?))
 }
 
 /// Character formatting we carry over to Markdown.
@@ -69,11 +97,15 @@ impl Run {
         }
     }
 
-    /// An image run: `source` is where the image is, `alt` describes it.
+    /// An image run: `source` is where the image is, `alt` describes it. It has no display
+    /// size until a reader sets one.
     pub fn image(source: impl Into<String>, alt: impl Into<String>) -> Self {
         Run {
             text: alt.into(),
-            image: Some(source.into()),
+            image: Some(ImageRef {
+                source: source.into(),
+                size: None,
+            }),
             ..Run::default()
         }
     }
@@ -163,9 +195,9 @@ fn resolve_runs(
 ) -> Result<()> {
     let mut resolved = Vec::with_capacity(runs.len());
     for mut run in runs.drain(..) {
-        if let Some(part) = &run.image {
-            match export(part)? {
-                Some(link) => run.image = Some(link),
+        if let Some(image) = &mut run.image {
+            match export(&image.source)? {
+                Some(link) => image.source = link,
                 None => continue,
             }
         }
@@ -255,5 +287,35 @@ mod tests {
                 Block::Table(vec![vec![vec![Run::image("img/logo.png", "again")]]]),
             ]
         );
+    }
+
+    #[test]
+    fn keeps_display_sizes_only_within_bounds() {
+        let size = |cx: &str, cy: &str| display_size(Some(cx.into()), Some(cy.into()));
+        assert_eq!(size("914400", "457200"), Some((914_400, 457_200)));
+        assert_eq!(size("91440000", "1"), Some((91_440_000, 1)));
+        // Zero, negative, past 100 inches, not a whole number, or past u64.
+        assert_eq!(size("0", "457200"), None);
+        assert_eq!(size("914400", "-1"), None);
+        assert_eq!(size("91440001", "457200"), None);
+        assert_eq!(size("1e6", "457200"), None);
+        assert_eq!(size("99999999999999999999999", "1"), None);
+        assert_eq!(display_size(None, Some("914400".into())), None);
+    }
+
+    #[test]
+    fn resolving_an_image_keeps_its_size() {
+        let mut image = Run::image("word/media/logo.png", "Logo");
+        image.image.as_mut().unwrap().size = Some((914_400, 457_200));
+        let mut blocks = vec![Block::Paragraph(vec![image])];
+
+        resolve_images(&mut blocks, |_| Ok(Some("img/logo.png".to_string()))).unwrap();
+
+        let Block::Paragraph(runs) = &blocks[0] else {
+            panic!("{blocks:?}");
+        };
+        let image = runs[0].image.as_ref().unwrap();
+        assert_eq!(image.source, "img/logo.png");
+        assert_eq!(image.size, Some((914_400, 457_200)));
     }
 }

@@ -160,6 +160,79 @@ fn links_and_embeds_pictures() {
     assert_eq!(stderr, "");
 }
 
+/// The width and height each image is drawn at, in points, in drawing order: the scale of the
+/// last `cm` transform before each `Do`.
+fn image_sizes(pdf: &[u8]) -> Vec<(f32, f32)> {
+    let document = pdf_extract::Document::load_mem(pdf).unwrap();
+    let mut sizes = Vec::new();
+    for page in document.get_pages().into_values() {
+        let content = document.get_page_content(page).unwrap();
+        let mut scale = None;
+        for op in pdf_extract::content::Content::decode(&content)
+            .unwrap()
+            .operations
+        {
+            match op.operator.as_str() {
+                "cm" => {
+                    let number = |i: usize| op.operands[i].as_float().unwrap().abs();
+                    scale = Some((number(0), number(3)));
+                }
+                "Do" => sizes.extend(scale),
+                _ => {}
+            }
+        }
+    }
+    sizes
+}
+
+#[test]
+fn draws_pictures_at_the_size_the_document_gives_them() {
+    let picture = |extent: &str| {
+        format!(
+            r#"<w:p><w:r><w:drawing><wp:inline>{extent}<wp:docPr id="1" name="p"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+        )
+    };
+    let body = [
+        picture(r#"<wp:extent cx="1828800" cy="1828800"/>"#),
+        picture(r#"<wp:extent cx="1828800" cy="914400"/>"#),
+        picture(""),
+        picture(r#"<wp:extent cx="45720000" cy="45720000"/>"#),
+    ]
+    .concat();
+    let (_dir, path) = sample_docx_with_parts(
+        &body,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[("rId4", "image", "media/image1.png")]),
+            ),
+            part("word/media/image1.png", RED_PNG),
+        ],
+    );
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    let sizes = image_sizes(&pdf);
+    let content_width = 595.28 - 2.0 * 72.0;
+    let expected = [
+        // 2 by 2 inches.
+        (144.0, 144.0),
+        // 2 by 1 inches, but the image is square: it fits inside, keeping its shape.
+        (72.0, 72.0),
+        // No size: 2 pixels at 96 dpi, as before.
+        (1.5, 1.5),
+        // 50 inches: scaled down to the page.
+        (content_width, content_width),
+    ];
+    assert_eq!(sizes.len(), expected.len(), "{sizes:?}");
+    for ((w, h), (want_w, want_h)) in sizes.iter().zip(expected) {
+        assert!(
+            (w - want_w).abs() < 0.01 && (h - want_h).abs() < 0.01,
+            "{sizes:?}"
+        );
+    }
+    assert_eq!(stderr, "");
+}
+
 /// True for an image XObject's dictionary.
 fn is_image(dict: &pdf_extract::Dictionary) -> bool {
     dict.get(b"Subtype")

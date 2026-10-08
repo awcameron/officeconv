@@ -126,10 +126,10 @@ fn render_runs(runs: &[Run]) -> String {
 ///
 /// `**bold **` isn't bold in Markdown, but `**bold** ` is.
 fn render_run(run: &Run) -> String {
-    if let Some(source) = &run.image {
+    if let Some(image) = &run.image {
         // Alt text can't span lines in Markdown.
         let alt = escape_markdown_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
-        return format!("![{alt}]({})", escape_url(source));
+        return format!("![{alt}]({})", escape_url(&image.source));
     }
 
     let marker = match (run.style.bold, run.style.italic) {

@@ -21,7 +21,8 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::{
-    Block, CellRuns, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
+    Block, CellRuns, Run, RunStyle, TableBuilder, append_paragraph, append_run, display_size,
+    is_blank,
 };
 use crate::error::Result;
 use crate::images::{self, Images};
@@ -88,6 +89,8 @@ struct Parser<'p> {
     link: Option<String>,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
+    /// Display size of the picture being read, from its `wp:extent`.
+    image_size: Option<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -135,18 +138,26 @@ impl XmlHandler for Parser<'_> {
             "r" if !is_empty => self.style = RunStyle::default(),
             "b" if in_run => self.style.bold = is_on(e),
             "i" if in_run => self.style.italic = is_on(e),
-            // A picture: `wp:docPr` carries its alt text, then `a:blip` points at the image.
+            // A picture: `wp:extent` carries its size and `wp:docPr` its alt text, then `a:blip`
+            // points at the image. Each drawing starts afresh, so a size can't carry over.
+            "inline" | "anchor" if in_run => {
+                self.image_size = None;
+            }
+            "extent" if in_run && (open.inside("inline") || open.inside("anchor")) => {
+                self.image_size = display_size(attr(e, "cx"), attr(e, "cy"));
+            }
             "docPr" if in_run => {
                 self.image_alt = attr(e, "descr").or_else(|| attr(e, "title"));
             }
             "blip" if in_run => {
                 let alt = self.image_alt.take().unwrap_or_default();
-                self.push_image(attr(e, "embed"), alt);
+                let size = self.image_size.take();
+                self.push_image(attr(e, "embed"), alt, size);
             }
             // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
             "imagedata" if in_run => {
                 let alt = attr(e, "title").unwrap_or_default();
-                self.push_image(attr(e, "id"), alt);
+                self.push_image(attr(e, "id"), alt, None);
             }
             "tab" if in_run => self.push_text(" "),
             "br" | "cr" if in_run => {
@@ -214,6 +225,7 @@ impl<'p> Parser<'p> {
             style: RunStyle::default(),
             link: None,
             image_alt: None,
+            image_size: None,
         }
     }
 
@@ -229,13 +241,16 @@ impl<'p> Parser<'p> {
     }
 
     /// Adds the image with relationship ID `id`, if it's one stored in the document.
-    fn push_image(&mut self, id: Option<String>, alt: String) {
+    fn push_image(&mut self, id: Option<String>, alt: String, size: Option<(u32, u32)>) {
         let part = id.and_then(|id| self.package.images.get(&id));
         let (Some(part), Some(paragraph)) = (part, self.paragraphs.last_mut()) else {
             return;
         };
 
         let mut run = Run::image(part.clone(), alt);
+        if let Some(image) = run.image.as_mut() {
+            image.size = size;
+        }
         run.link = self.link.clone();
         append_run(&mut paragraph.runs, run);
     }

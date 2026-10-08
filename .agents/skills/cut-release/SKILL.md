@@ -12,11 +12,13 @@ workflow (`.github/workflows/release.yml`) runs on that push to `main`. If `vX.Y
 tagged yet, it:
 
 1. runs the tests;
-2. creates the GitHub Release and its tag on the merge commit;
-3. uploads eight archives, each with a `.sha256`. Their names have no version
+2. builds eight archives, each with a `.sha256`. Their names have no version
    (`officeconv-<target>.tar.gz`), so the README's `releases/latest/download/` links get the
    newest release;
-4. attests each archive, so `gh attestation verify` can show it was built here.
+3. smoke-tests each archive's binary on a runner of its own platform (`scripts/smoke.sh`);
+4. once all eight pass, creates the GitHub Release and its tag on the merge commit, with every
+   archive;
+5. attests each archive, so `gh attestation verify` can show it was built here.
 
 **Never push, move or delete a `v*` tag by hand.** A pushed tag starts nothing, and a ruleset
 blocks moving or deleting one, so a wrong tag can't be fixed without the repo owner.
@@ -106,9 +108,13 @@ Then:
   - If it's a real failure, fix it in a normal PR. That PR doesn't change `Cargo.toml`, so it
     doesn't start a release. Then release the next patch version, which skips the version that
     failed. Tell the user before doing this.
-- **`create-release` or an `upload` job fails after the tag exists:** use "Re-run failed jobs"
-  (`gh run rerun <run> --failed`). A full re-run finds the tag already there and publishes
-  nothing. The same goes for a failed attest step: the re-run builds, uploads and attests that
-  platform's archive again, replacing what was there.
+- **A `build` or `smoke-test` job fails:** nothing was tagged or published.
+  - If it's a flaky failure, such as a runner problem, use "Re-run failed jobs"
+    (`gh run rerun <run> --failed`). It re-runs the jobs after it too, so `publish` follows.
+  - If the binary is really broken, fix it in a normal PR, then release the next patch
+    version, as for a failed `check`. Tell the user before doing this.
+- **`publish` fails after the release exists,** such as in the attest step: use "Re-run failed
+  jobs". The re-run replaces the release's files and attests them again. A full re-run finds the
+  tag already there and publishes nothing.
 - **A run on `main` says the tag already exists:** that's expected when `Cargo.toml` changed but
   the version didn't, such as after a dependency update. Nothing needs doing.

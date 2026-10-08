@@ -41,11 +41,10 @@ pub mod fuzzing {
     pub use crate::pdf::{layout::PageSetup, render as render_pdf};
     pub use crate::pptx::{Notes, read_blocks as read_pptx};
     pub use crate::writers::{JsonValues, write_table};
-    pub use crate::xlsx::pictures::read_pictures;
-    pub use crate::xlsx::read_all_sheets_with_limits as read_xlsx;
+    pub use crate::xlsx::{Pictures, read_all_sheets_with_limits as read_xlsx};
 }
 
-use std::io::{self, ErrorKind, IsTerminal, Write};
+use std::io::{self, ErrorKind, IsTerminal, Read, Seek, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -54,7 +53,7 @@ use cli::Cli;
 use error::{ConvertError, Result};
 use format::OutputFormat;
 use images::{EmbeddedImages, ImageExport, Images};
-use input::{InputKind, ReadSeek, Source};
+use input::{InputKind, Source};
 use writers::JsonValues;
 
 /// The `officeconv` command: parses the arguments, converts, and reports any error.
@@ -140,13 +139,7 @@ fn convert_delimited(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> 
 
 /// Converts a Word or PowerPoint file to Markdown (saving its images if asked to) or to PDF.
 fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
-    let mut export = match &cli.images {
-        Some(dir) => Some(ImageExport::new(
-            dir,
-            output::markdown_dir(cli.output.as_deref()),
-        )?),
-        None => None,
-    };
+    let mut export = image_export(cli, output::markdown_dir(cli.output.as_deref()))?;
     let mut embedded = EmbeddedImages::default();
     let images = match (cli.to, export.as_mut()) {
         (OutputFormat::Pdf, _) => Images::Embed(&mut embedded),
@@ -253,16 +246,22 @@ fn write_output(cli: &Cli, bytes: &[u8]) -> Result<()> {
 
 /// Converts one sheet to stdout or the `-o` file.
 fn convert_one_sheet(cli: &Cli, source: &Source) -> Result<()> {
-    let sheet = xlsx::read_sheet(source.reader()?, cli.sheet.as_deref())?;
-    let mut images = SheetImages::open(cli, source, output::markdown_dir(cli.output.as_deref()))?;
+    let workbook = xlsx::read_sheet(source.reader()?, cli.sheet.as_deref(), sheet_pictures(cli))?;
+    let mut export = image_export(cli, output::markdown_dir(cli.output.as_deref()))?;
+    let xlsx::Workbook {
+        sheets,
+        mut archive,
+    } = workbook;
 
     let mut out = output::open_output(cli.output.as_deref())?;
-    write_sheet(&sheet, cli, images.as_mut(), &mut out)?;
+    for sheet in sheets {
+        write_sheet(sheet, cli, archive.as_mut().zip(export.as_mut()), &mut out)?;
+    }
     // BufWriter flushes on drop but ignores errors there, so flush explicitly.
     out.flush()?;
 
-    if let Some(images) = &images {
-        images.report();
+    if let Some(export) = &export {
+        export.report();
     }
     Ok(())
 }
@@ -271,32 +270,53 @@ fn convert_one_sheet(cli: &Cli, source: &Source) -> Result<()> {
 fn convert_all_sheets(cli: &Cli, source: &Source) -> Result<()> {
     let dir = cli.output.as_deref().unwrap_or(Path::new("."));
     output::ensure_dir(dir)?;
-    let mut images = SheetImages::open(cli, source, dir)?;
+    let mut export = image_export(cli, dir)?;
     let stem = source.stem();
     let mut names = output::UniqueNames::default();
 
-    for sheet in xlsx::read_all_sheets(source.reader()?)? {
+    let xlsx::Workbook {
+        sheets,
+        mut archive,
+    } = xlsx::read_all_sheets(source.reader()?, sheet_pictures(cli))?;
+    for sheet in sheets {
         let path = output::sheet_output_path(dir, &stem, &sheet.name, cli.to, &mut names);
         let mut out = output::open_output(Some(&path))?;
-        write_sheet(&sheet, cli, images.as_mut(), &mut out)?;
+        write_sheet(sheet, cli, archive.as_mut().zip(export.as_mut()), &mut out)?;
         out.flush()?;
         eprintln!("wrote {}", path.display());
     }
 
-    if let Some(images) = &images {
-        images.report();
+    if let Some(export) = &export {
+        export.report();
     }
     Ok(())
 }
 
-/// Writes a sheet's table, then saves its pictures if asked to.
+/// Pictures are read from a workbook only to save them, with `--images`.
+fn sheet_pictures(cli: &Cli) -> xlsx::Pictures {
+    if cli.images.is_some() {
+        xlsx::Pictures::Include
+    } else {
+        xlsx::Pictures::Skip
+    }
+}
+
+/// Where `--images` saves images, linked from Markdown in `markdown_dir`, or `None` without it.
+fn image_export(cli: &Cli, markdown_dir: &Path) -> Result<Option<ImageExport>> {
+    cli.images
+        .as_deref()
+        .map(|dir| ImageExport::new(dir, markdown_dir))
+        .transpose()
+}
+
+/// Writes a sheet's table, then saves its pictures through `images` if asked to.
 ///
 /// Markdown lists the pictures after the table. CSV, TSV and JSON have no way to point at an
 /// image, so for those the files are saved and the data is left as it is.
-fn write_sheet(
-    sheet: &xlsx::Sheet,
+fn write_sheet<R: Read + Seek>(
+    sheet: xlsx::Sheet,
     cli: &Cli,
-    images: Option<&mut SheetImages>,
+    images: Option<(&mut opc::Archive<R>, &mut ImageExport)>,
     out: &mut impl Write,
 ) -> Result<()> {
     let format = cli.to;
@@ -307,20 +327,10 @@ fn write_sheet(
     };
     writers::write_table(&sheet.table, format, json, &mut *out)?;
 
-    let Some(images) = images else {
+    let Some((archive, export)) = images else {
         return Ok(());
     };
-    let pictures = match &sheet.part {
-        Some(part) => {
-            let pictures = xlsx::pictures::sheet_pictures(&mut images.archive, part)?;
-            images::resolve(
-                pictures,
-                &mut images.archive,
-                Images::Save(&mut images.export),
-            )?
-        }
-        None => Vec::new(),
-    };
+    let pictures = images::resolve(sheet.pictures, archive, Images::Save(export))?;
     if format == OutputFormat::Markdown && !pictures.is_empty() {
         if !sheet.table.is_empty() {
             writeln!(out)?;
@@ -328,29 +338,4 @@ fn write_sheet(
         out.write_all(document::markdown::render(&pictures).as_bytes())?;
     }
     Ok(())
-}
-
-/// A second reader on the workbook (to find pictures in) and where to save them.
-///
-/// `'a` is the lifetime of the [`Source`]: when the input is stdin, the reader borrows its bytes.
-struct SheetImages<'a> {
-    archive: opc::Archive<Box<dyn ReadSeek + 'a>>,
-    export: ImageExport,
-}
-
-impl<'a> SheetImages<'a> {
-    /// `None` unless `--images` was given.
-    fn open(cli: &Cli, source: &'a Source, markdown_dir: &Path) -> Result<Option<Self>> {
-        let Some(dir) = &cli.images else {
-            return Ok(None);
-        };
-        Ok(Some(SheetImages {
-            archive: opc::Archive::open(source.reader()?)?,
-            export: ImageExport::new(dir, markdown_dir)?,
-        }))
-    }
-
-    fn report(&self) {
-        self.export.report();
-    }
 }

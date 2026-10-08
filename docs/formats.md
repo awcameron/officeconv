@@ -63,10 +63,12 @@ What `officeconv` reads from each kind of file. [Outputs](#outputs) says how it'
 
 [Markdown](#markdown) shows how each is written.
 
-A table cell merged across columns keeps its text in the first cell and leaves the others empty,
-so every row keeps all its columns. Markdown has no merged cells, and PDF draws the same separate
-cells rather than one cell across the columns. A table inside a table cell can't be shown either,
-so its text goes into that cell, a line for each of its cells.
+A table cell merged across columns or down rows keeps its text in its first cell, so every row
+keeps all its columns. Markdown has no merged cells, so it leaves the cells the merge covers
+empty. PDF draws the merged cell once, across all its columns and rows. A merge never reaches
+past the table, however far the file says it goes, and a continuing cell that holds text of its
+own starts a new cell rather than lose it. A table inside a table cell can't be shown either, so
+its text goes into that cell, a line for each of its cells.
 
 Not converted yet: footnotes, comments, and headers and footers; see
 [ADR 0004](adr/0004-document-model.md) for how they'll fit. Headings that use custom style
@@ -168,9 +170,11 @@ links, tables, line breaks, and pictures.
   speaker notes under the slide unless you pass `--no-notes`. A slide with more text than fits
   continues onto another page.
 - Numbered lists are numbered properly (`1.`, `2.`, ...), restarting at each level. Long table rows
-  wrap inside their cells, and a table that runs onto another page repeats its header row.
-  Links are clickable. Merged cells are drawn as separate cells, as described under
-  [DOCX](#docx).
+  wrap inside their cells, and a table that runs onto another page repeats its header row,
+  unless a merged cell joins it to the rows below. Links are clickable.
+- A merged table cell is drawn once, across its columns and rows, and the rows it joins go onto
+  the same page. If they're too tall to fit on any page, they're drawn as separate rows instead,
+  with the text in the first, as in Markdown.
 - Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
   are kept; other formats, such as EMF or TIFF, are left out with a warning. So are pictures
   larger than 50 megapixels, which could take gigabytes of memory to decode.

@@ -5,7 +5,9 @@
 //! goes: a paragraph inside a table becomes part of the open cell, and a finished table
 //! becomes a block.
 
-use super::{Block, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank};
+use super::{
+    Block, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run, is_blank,
+};
 
 /// Collects blocks for a reader. `P` is what the reader records about each paragraph, such as
 /// its style or list level; the builder only carries it.
@@ -110,16 +112,19 @@ impl<P: Default> BlockBuilder<P> {
         let Some(table) = self.tables.pop() else {
             return;
         };
-        if table.rows.is_empty() {
+        let rows = table.finish();
+        if rows.is_empty() {
             return;
         }
         if let Some(outer) = self.tables.last_mut() {
-            for cell in table.rows.into_iter().flatten() {
-                append_paragraph(&mut outer.cell, cell);
+            for cell in rows.into_iter().flatten() {
+                if let TableCell::Content { runs, .. } = cell {
+                    append_paragraph(&mut outer.cell, runs);
+                }
             }
             return;
         }
-        self.blocks.push(Block::Table(table.rows));
+        self.blocks.push(Block::Table(rows));
     }
 
     pub fn push(&mut self, block: Block) {
@@ -259,7 +264,7 @@ mod tests {
 
         assert_eq!(
             builder.into_blocks(),
-            [Block::Table(vec![vec![cell("Bobby\nDon")]])]
+            [Block::Table(vec![vec![TableCell::new(cell("Bobby\nDon"))]])]
         );
     }
 
@@ -284,7 +289,7 @@ mod tests {
 
         assert_eq!(
             builder.into_blocks(),
-            [Block::Table(vec![vec![cell("One\nx\ny")]])]
+            [Block::Table(vec![vec![TableCell::new(cell("One\nx\ny"))]])]
         );
     }
 }

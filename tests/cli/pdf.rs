@@ -105,6 +105,138 @@ fn numbers_lists_and_draws_tables() {
     }
 }
 
+/// The table borders a PDF draws, added up: for each x a vertical border is drawn at, how
+/// long it is in all, and the same for each y of a horizontal border. Only stroked paths
+/// count, so the header's shading doesn't.
+fn border_lengths(pdf: &[u8]) -> (Vec<f32>, Vec<f32>) {
+    let document = pdf_extract::Document::load_mem(pdf).unwrap();
+    let (mut vertical, mut horizontal) = (Vec::new(), Vec::new());
+    for page in document.get_pages().into_values() {
+        let content = document.get_page_content(page).unwrap();
+        let mut path: Vec<((f32, f32), (f32, f32))> = Vec::new();
+        let mut from = (0.0, 0.0);
+        for op in pdf_extract::content::Content::decode(&content)
+            .unwrap()
+            .operations
+        {
+            let point = || {
+                let number = |i: usize| op.operands[i].as_float().unwrap();
+                (number(0), number(1))
+            };
+            match op.operator.as_str() {
+                "m" => from = point(),
+                "l" => {
+                    let to = point();
+                    path.push((from, to));
+                    from = to;
+                }
+                "S" => {
+                    for (from, to) in path.drain(..) {
+                        if from.0 == to.0 {
+                            add_length(&mut vertical, to.0, (to.1 - from.1).abs());
+                        } else if from.1 == to.1 {
+                            add_length(&mut horizontal, to.1, (to.0 - from.0).abs());
+                        }
+                    }
+                }
+                "f" | "f*" | "n" => path.clear(),
+                _ => {}
+            }
+        }
+    }
+    let lengths = |lines: Vec<(f32, f32)>| lines.into_iter().map(|(_, length)| length).collect();
+    (lengths(vertical), lengths(horizontal))
+}
+
+/// Adds `length` to the total for position `at`.
+fn add_length(totals: &mut Vec<(f32, f32)>, at: f32, length: f32) {
+    match totals
+        .iter_mut()
+        .find(|(other, _)| (other - at).abs() < 0.01)
+    {
+        Some((_, total)) => *total += length,
+        None => totals.push((at, length)),
+    }
+}
+
+/// Checks a three-by-three table whose first row merges its first two cells, and whose first
+/// column merges its last two: every border but one in each direction runs the full width or
+/// height of the table.
+fn assert_draws_merged_cells(pdf: &[u8]) {
+    let (vertical, horizontal) = border_lengths(pdf);
+    for (lengths, direction) in [(vertical, "vertical"), (horizontal, "horizontal")] {
+        assert_eq!(lengths.len(), 4, "{direction} borders: {lengths:?}");
+        let full = lengths.iter().copied().fold(0.0, f32::max);
+        let short: Vec<_> = lengths.iter().filter(|&&l| l < full - 0.01).collect();
+        assert_eq!(short.len(), 1, "{direction} borders: {lengths:?}");
+    }
+}
+
+/// The Markdown both merged tables come out as, merged cells' text in their first cell.
+const MERGED_TABLE_MARKDOWN: &str = "\
+| A   |     | B   |
+| --- | --- | --- |
+| C   | D   | E   |
+|     | F   | G   |
+";
+
+#[test]
+fn draws_merged_docx_cells_across_their_span() {
+    let cell =
+        |props: &str, text: &str| format!("<w:tc><w:tcPr>{props}</w:tcPr>{}</w:tc>", para(text));
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}{}</w:tr><w:tr>{}{}{}</w:tr></w:tbl>",
+        cell(r#"<w:gridSpan w:val="2"/>"#, "A"),
+        cell("", "B"),
+        cell(r#"<w:vMerge w:val="restart"/>"#, "C"),
+        cell("", "D"),
+        cell("", "E"),
+        "<w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc>",
+        cell("", "F"),
+        cell("", "G"),
+    );
+    let (_dir, path) = sample_docx(&body);
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert_draws_merged_cells(&pdf);
+    assert_eq!(page_texts(&pdf), ["A B C D E F G"]);
+    assert_eq!(stderr, "");
+    assert_eq!(convert(&path, "md"), MERGED_TABLE_MARKDOWN);
+}
+
+#[test]
+fn draws_merged_pptx_cells_across_their_span() {
+    let cell = |attrs: &str, text: &str| {
+        format!(
+            "<a:tc{attrs}><a:txBody><a:bodyPr/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"
+        )
+    };
+    let table = format!(
+        r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="1"/><a:gridCol w="1"/><a:gridCol w="1"/></a:tblGrid><a:tr h="1">{}{}{}</a:tr><a:tr h="1">{}{}{}</a:tr><a:tr h="1">{}{}{}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+        cell(r#" gridSpan="2""#, "A"),
+        cell(r#" hMerge="1""#, ""),
+        cell("", "B"),
+        cell(r#" rowSpan="2""#, "C"),
+        cell("", "D"),
+        cell("", "E"),
+        cell(r#" vMerge="1""#, ""),
+        cell("", "F"),
+        cell("", "G"),
+    );
+    let mut parts = presentation(&["slides/slide1.xml"]).to_vec();
+    parts.push(part("ppt/slides/slide1.xml", slide(&table)));
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert_draws_merged_cells(&pdf);
+    assert_eq!(page_texts(&pdf), ["Slide 1 A B C D E F G"]);
+    assert_eq!(stderr, "");
+    assert_eq!(
+        convert(&path, "md"),
+        format!("## Slide 1\n\n{MERGED_TABLE_MARKDOWN}")
+    );
+}
+
 #[test]
 fn leaves_out_links_with_unsafe_schemes() {
     let (_dir, path) = sample_docx_with_parts(

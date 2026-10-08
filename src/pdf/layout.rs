@@ -15,7 +15,9 @@ use krilla::text::KrillaGlyph;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
-use crate::document::{Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle};
+use crate::document::{
+    Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle, TableCell,
+};
 use crate::images::{EmbeddedImages, ImageFormat};
 
 /// Page size, margins, and text size for one kind of document.
@@ -153,6 +155,17 @@ struct LineBox {
     height: f32,
     items: Vec<Item>,
     links: Vec<Link>,
+}
+
+/// A table cell laid out from (0, 0), padding included, before it's placed. It starts at
+/// `row` and `col` and spans `rows` and `cols`.
+#[derive(Debug)]
+struct TableBox {
+    row: usize,
+    col: usize,
+    rows: usize,
+    cols: usize,
+    content: LineBox,
 }
 
 /// Heading font sizes, as multiples of the body size, for levels 1 to 6.
@@ -356,11 +369,12 @@ impl<'a> Layout<'a> {
         self.place_lines(lines, indent + hang);
     }
 
-    /// A table with a border around every cell. Columns get their natural width when the table
-    /// fits, and otherwise share the page so that words aren't broken unless they have to be
-    /// (the way browsers size tables). The header row is bold, shaded, and repeated on each
-    /// page the table continues onto.
-    fn place_table(&mut self, rows: &[Vec<CellRuns>]) {
+    /// A table with a border around every cell, drawing a merged cell once across its columns
+    /// and rows. Columns get their natural width when the table fits, and otherwise share the
+    /// page so that words aren't broken unless they have to be (the way browsers size tables).
+    /// The header row is bold, shaded, and repeated on each page the table continues onto,
+    /// unless a cell spans from it into the rows below.
+    fn place_table(&mut self, rows: &[Vec<TableCell>]) {
         let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
         if columns == 0 {
             return;
@@ -368,142 +382,201 @@ impl<'a> Layout<'a> {
         let body = self.setup.body_size;
         let padding = body * 0.4;
 
+        // Every cell, with a short row's missing cells as empty ones. The readers keep spans
+        // inside the table; clamping them again keeps a bad one from panicking here.
+        let mut cells = Vec::new();
+        for (r, row) in rows.iter().enumerate() {
+            for c in 0..columns {
+                let (runs, cols, tall) = match row.get(c) {
+                    Some(TableCell::Content { runs, cols, rows }) => {
+                        (cell_runs(runs, r == 0), *cols, *rows)
+                    }
+                    Some(TableCell::Covered) => continue,
+                    None => (Vec::new(), 1, 1),
+                };
+                cells.push((
+                    r,
+                    c,
+                    cols.clamp(1, columns - c),
+                    tall.clamp(1, rows.len() - r),
+                    runs,
+                ));
+            }
+        }
+
         // Each column's narrowest width (its longest word) and natural width (its widest
-        // line, unwrapped).
+        // line, unwrapped). One-column cells go first; then a merged cell that needs more room
+        // than its columns have widens them evenly.
         let mut narrowest = vec![2.0 * padding; columns];
         let mut natural = vec![2.0 * padding; columns];
-        for (r, row) in rows.iter().enumerate() {
-            for (c, cell) in row.iter().enumerate() {
-                let runs = cell_runs(cell, r == 0);
-                let word = self.longest_word(&runs, body);
-                narrowest[c] = narrowest[c].max(word + 2.0 * padding);
-                let lines = self.layout_runs(&runs, body, f32::INFINITY);
-                let widest = lines.iter().map(|l| l.width).fold(0.0, f32::max);
-                natural[c] = natural[c].max(widest + 2.0 * padding);
-            }
+        let mut needs = Vec::with_capacity(cells.len());
+        for (_, c, cols, _, runs) in &cells {
+            let word = self.longest_word(runs, body);
+            let lines = self.layout_runs(runs, body, f32::INFINITY);
+            let widest = lines.iter().map(|l| l.width).fold(0.0, f32::max);
+            needs.push((*c..c + cols, word + 2.0 * padding, widest + 2.0 * padding));
+        }
+        needs.sort_by_key(|(span, ..)| span.len());
+        for (span, word, widest) in needs {
+            widen(&mut narrowest[span.clone()], word);
+            widen(&mut natural[span], widest);
+        }
+        for (natural, narrowest) in natural.iter_mut().zip(&narrowest) {
+            *natural = natural.max(*narrowest);
         }
         let widths = column_widths(&narrowest, &natural, self.setup.content_width());
 
-        let laid_out: Vec<(f32, Vec<LineBox>)> = rows
-            .iter()
-            .enumerate()
-            .map(|(r, row)| self.layout_row(row, r == 0, &widths, padding))
+        let mut boxes: Vec<TableBox> = cells
+            .into_iter()
+            .map(|(row, col, cols, rows, runs)| {
+                let width = widths[col..col + cols].iter().sum();
+                let content = self.layout_cell(&runs, width, padding);
+                TableBox {
+                    row,
+                    col,
+                    cols,
+                    rows,
+                    content,
+                }
+            })
             .collect();
 
-        let mut header: Option<(f32, Vec<Vec<Item>>)> = None;
-        for (r, (height, cells)) in laid_out.into_iter().enumerate() {
-            self.ensure_space(height);
-            if r > 0
-                && self.at_page_top()
-                && let Some((header_height, items)) = &header
-            {
-                self.place_row(*header_height, items.clone(), Vec::new(), &widths, true);
+        // Rows a merged cell joins go on one page. When they can't fit on any page, they're
+        // drawn as separate rows instead, with the cell's text in the first, as Markdown has it.
+        let min_height = self.line_height(body) + 2.0 * padding;
+        let mut heights = row_heights(&boxes, rows.len(), min_height);
+        // Leave room for the header, which may repeat above them.
+        let room = self.setup.bottom() - self.setup.margin - heights[0];
+        let mut too_tall = vec![false; rows.len()];
+        for group in row_groups(&boxes, rows.len()) {
+            if group.len() > 1 && heights[group.clone()].iter().sum::<f32>() > room {
+                too_tall[group].fill(true);
             }
-            let (items, links): (Vec<_>, Vec<_>) =
-                cells.into_iter().map(|c| (c.items, c.links)).unzip();
-            if r == 0 {
-                header = Some((height, items.clone()));
+        }
+        if too_tall.contains(&true) {
+            let mut split = Vec::new();
+            for cell in &mut boxes {
+                if cell.rows > 1 && too_tall[cell.row] {
+                    split.extend((cell.row + 1..cell.row + cell.rows).map(|row| TableBox {
+                        row,
+                        rows: 1,
+                        content: LineBox::default(),
+                        ..*cell
+                    }));
+                    cell.rows = 1;
+                }
             }
-            self.place_row(height, items, links, &widths, r == 0);
+            boxes.extend(split);
+            boxes.sort_by_key(|cell| (cell.row, cell.col));
+            heights = row_heights(&boxes, rows.len(), min_height);
+        }
+
+        let header_end = boxes.partition_point(|cell| cell.row == 0);
+        let repeat_header = boxes[..header_end].iter().all(|cell| cell.rows == 1);
+        let mut start = 0;
+        for group in row_groups(&boxes, rows.len()) {
+            let end = start + boxes[start..].partition_point(|cell| cell.row < group.end);
+            self.ensure_space(heights[group.clone()].iter().sum());
+            // The table needs a top border wherever it starts on a page.
+            let mut top = group.start == 0 || self.at_page_top();
+            if group.start > 0 && repeat_header && self.at_page_top() {
+                let header = &boxes[..header_end];
+                self.place_rows(header, 0..1, &heights, &widths, true, false);
+                top = false;
+            }
+            self.place_rows(&boxes[start..end], group, &heights, &widths, top, true);
+            start = end;
         }
     }
 
-    /// Lays out one row's cells; returns the row's height and each cell's content, positioned
-    /// inside its cell.
-    fn layout_row(
-        &mut self,
-        row: &[CellRuns],
-        header: bool,
-        widths: &[f32],
-        padding: f32,
-    ) -> (f32, Vec<LineBox>) {
-        let min_height = self.line_height(self.setup.body_size) + 2.0 * padding;
-        let mut height = min_height;
-        let mut cells = Vec::with_capacity(widths.len());
-        for (c, width) in widths.iter().enumerate() {
-            let lines = match row.get(c) {
-                Some(cell) => self.layout_cell(cell, header, width - 2.0 * padding),
-                None => Vec::new(),
-            };
-            let mut cell = LineBox::default();
-            let mut y = padding;
-            for line in lines {
-                cell.items
-                    .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
-                cell.links.extend(line.links.into_iter().map(|link| Link {
-                    x: link.x + padding,
-                    y: link.y + y,
-                    ..link
-                }));
-                y += line.height;
-            }
-            height = height.max(y + padding);
-            cells.push(cell);
+    /// Lays out a cell's runs inside its padding. The box is as tall as they are, padding
+    /// included.
+    fn layout_cell(&mut self, runs: &[Run], width: f32, padding: f32) -> LineBox {
+        let mut cell = LineBox::default();
+        let mut y = padding;
+        for line in self.layout_runs(runs, self.setup.body_size, width - 2.0 * padding) {
+            cell.items
+                .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
+            cell.links.extend(line.links.into_iter().map(|link| Link {
+                x: link.x + padding,
+                y: link.y + y,
+                ..link
+            }));
+            y += line.height;
         }
-        (height, cells)
+        cell.height = y + padding;
+        cell
     }
 
-    /// Adds a row at the current position: its shading (for the header), borders, and cells.
-    fn place_row(
+    /// Adds table rows `rows`, holding `cells`, at the current position: the header's shading,
+    /// each cell's content with its left and bottom borders, then the right border, and the
+    /// top border if `top`. Links are left out of a repeated header, whose first copy has them.
+    fn place_rows(
         &mut self,
-        height: f32,
-        cells: Vec<Vec<Item>>,
-        links: Vec<Vec<Link>>,
+        cells: &[TableBox],
+        rows: Range<usize>,
+        heights: &[f32],
         widths: &[f32],
-        header: bool,
+        top_border: bool,
+        links: bool,
     ) {
         let left = self.setup.margin;
         let top = self.y;
         let right = left + widths.iter().sum::<f32>();
-        let bottom = top + height;
+        let bottom = top + heights[rows.clone()].iter().sum::<f32>();
         let page = self.pages.last_mut().expect("there is always a page");
 
-        if header {
+        if rows.start == 0 {
             page.items.push(Item::Shade {
                 x: left,
                 y: top,
                 width: right - left,
-                height,
+                height: heights[0],
             });
         }
-        let mut x = left;
-        for (c, items) in cells.into_iter().enumerate() {
+        for cell in cells {
+            let x = left + widths[..cell.col].iter().sum::<f32>();
+            let y = top + heights[rows.start..cell.row].iter().sum::<f32>();
+            let width: f32 = widths[cell.col..cell.col + cell.cols].iter().sum();
+            let height: f32 = heights[cell.row..cell.row + cell.rows].iter().sum();
             page.items
-                .extend(items.into_iter().map(|i| i.moved(x, top)));
-            if let Some(links) = links.get(c) {
-                page.links.extend(links.iter().map(|link| Link {
-                    x: link.x + x,
-                    y: link.y + top,
-                    ..link.clone()
-                }));
+                .extend(cell.content.items.iter().map(|i| i.clone().moved(x, y)));
+            if links {
+                page.links
+                    .extend(cell.content.links.iter().map(|link| Link {
+                        x: link.x + x,
+                        y: link.y + y,
+                        ..link.clone()
+                    }));
             }
-            x += widths[c];
-        }
-
-        for y in [top, bottom] {
-            page.items.push(Item::Line {
-                x1: left,
-                y1: y,
-                x2: right,
-                y2: y,
-            });
-        }
-        let mut x = left;
-        for edge in std::iter::once(0.0).chain(widths.iter().copied()) {
-            x += edge;
             page.items.push(Item::Line {
                 x1: x,
-                y1: top,
+                y1: y,
                 x2: x,
-                y2: bottom,
+                y2: y + height,
+            });
+            page.items.push(Item::Line {
+                x1: x,
+                y1: y + height,
+                x2: x + width,
+                y2: y + height,
+            });
+        }
+        page.items.push(Item::Line {
+            x1: right,
+            y1: top,
+            x2: right,
+            y2: bottom,
+        });
+        if top_border {
+            page.items.push(Item::Line {
+                x1: left,
+                y1: top,
+                x2: right,
+                y2: top,
             });
         }
         self.y = bottom;
-    }
-
-    fn layout_cell(&mut self, cell: &CellRuns, header: bool, width: f32) -> Vec<LineBox> {
-        let runs = cell_runs(cell, header);
-        self.layout_runs(&runs, self.setup.body_size, width)
     }
 
     /// Lays out runs as lines no wider than `width`. Each image gets a line of its own.
@@ -847,6 +920,52 @@ fn column_widths(narrowest: &[f32], natural: &[f32], available: f32) -> Vec<f32>
         .collect()
 }
 
+/// Widens `widths` evenly until together they're at least `needed`.
+fn widen(widths: &mut [f32], needed: f32) {
+    let short = needed - widths.iter().sum::<f32>();
+    if short > 0.0 {
+        let share = short / widths.len() as f32;
+        widths.iter_mut().for_each(|w| *w += share);
+    }
+}
+
+/// Each table row's height: at least `min_height`, and tall enough for every cell that
+/// starts in it. A merged cell taller than its rows adds what it still needs to the last.
+fn row_heights(cells: &[TableBox], rows: usize, min_height: f32) -> Vec<f32> {
+    let mut heights = vec![min_height; rows];
+    let mut order: Vec<&TableBox> = cells.iter().collect();
+    order.sort_by_key(|cell| (cell.rows > 1, cell.row + cell.rows));
+    for cell in order {
+        let span = &mut heights[cell.row..cell.row + cell.rows];
+        let short = cell.content.height - span.iter().sum::<f32>();
+        if short > 0.0
+            && let Some(last) = span.last_mut()
+        {
+            *last += short;
+        }
+    }
+    heights
+}
+
+/// The runs of rows that merged cells join, which have to go on one page together. A row
+/// no merged cell joins to another is a run of its own.
+fn row_groups(cells: &[TableBox], rows: usize) -> Vec<Range<usize>> {
+    let mut reach: Vec<usize> = (1..=rows).collect();
+    for cell in cells {
+        reach[cell.row] = reach[cell.row].max(cell.row + cell.rows);
+    }
+    let mut groups = Vec::new();
+    let (mut start, mut end) = (0, 0);
+    for (row, reach) in reach.into_iter().enumerate() {
+        end = end.max(reach);
+        if row + 1 == end {
+            groups.push(start..end);
+            start = end;
+        }
+    }
+    groups
+}
+
 /// A cell's runs, made bold in the header row.
 fn cell_runs(cell: &CellRuns, header: bool) -> Vec<Run> {
     if header { all_bold(cell) } else { cell.clone() }
@@ -1054,7 +1173,7 @@ mod tests {
 
     #[test]
     fn repeats_the_table_header_on_each_page() {
-        let cell = |t: &str| text(t);
+        let cell = |t: &str| TableCell::new(text(t));
         let mut rows = vec![vec![cell("Name"), cell("Value")]];
         rows.extend((0..80).map(|i| vec![cell(&format!("row {i}")), cell("x")]));
         let pages = lay_out(&[Block::Table(rows)], PageSetup::DOCUMENT);
@@ -1064,6 +1183,193 @@ mod tests {
             assert_eq!(page_lines(page)[0], "NameValue");
             assert!(page.items.iter().any(|i| matches!(i, Item::Shade { .. })));
         }
+    }
+
+    fn merged(t: &str, cols: usize, rows: usize) -> TableCell {
+        TableCell::Content {
+            runs: text(t),
+            cols,
+            rows,
+        }
+    }
+
+    /// Where the text item reading `t` starts, and its baseline.
+    fn text_at(page: &Page, t: &str) -> (f32, f32) {
+        page.items
+            .iter()
+            .find_map(|item| match item {
+                Item::Text(item) if item.text == t => Some((item.x, item.baseline)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no {t:?} on the page"))
+    }
+
+    /// The table borders crossing the point (x, y): (vertical, horizontal).
+    fn borders_through(page: &Page, x: f32, y: f32) -> (usize, usize) {
+        let (mut vertical, mut horizontal) = (0, 0);
+        for item in &page.items {
+            if let Item::Line { x1, y1, x2, y2 } = *item {
+                if x1 == x2 && (x1 - x).abs() < 0.01 && y1 < y && y < y2 {
+                    vertical += 1;
+                }
+                if y1 == y2 && (y1 - y).abs() < 0.01 && x1 < x && x < x2 {
+                    horizontal += 1;
+                }
+            }
+        }
+        (vertical, horizontal)
+    }
+
+    #[test]
+    fn draws_a_merged_cell_once_across_its_span() {
+        let rows = vec![
+            vec![TableCell::new(text("A")), TableCell::new(text("B"))],
+            vec![merged("Tall", 1, 2), TableCell::new(text("x"))],
+            vec![TableCell::Covered, TableCell::new(text("y"))],
+            vec![merged("Wide", 2, 1), TableCell::Covered],
+        ];
+        let pages = lay_out(&[Block::Table(rows)], PageSetup::DOCUMENT);
+        let page = &pages[0];
+        let padding = PageSetup::DOCUMENT.body_size * 0.4;
+
+        let (x, x_baseline) = text_at(page, "x");
+        let (_, y_baseline) = text_at(page, "y");
+        let (wide_x, wide_baseline) = text_at(page, "Wide");
+        let between_columns = x - padding;
+        let between_rows = (x_baseline + y_baseline) / 2.0;
+        let line = y_baseline - x_baseline;
+        // Find the border between "x" and "y" near halfway between their baselines.
+        let border = page
+            .items
+            .iter()
+            .find_map(|item| match *item {
+                Item::Line { x1, y1, y2, .. }
+                    if y1 == y2
+                        && (y1 - between_rows).abs() < line / 2.0
+                        && x1 >= between_columns - 0.01 =>
+                {
+                    Some(y1)
+                }
+                _ => None,
+            })
+            .expect("a border between x and y");
+
+        // "Tall" has no border across it, though "x" and "y" beside it do.
+        assert_eq!(borders_through(page, wide_x + 1.0, border), (0, 0));
+        assert_eq!(borders_through(page, x + 1.0, border), (0, 1));
+        // "Wide" has no border down its middle, though the rows above it do.
+        assert_eq!(
+            borders_through(page, between_columns, wide_baseline),
+            (0, 0)
+        );
+        assert_eq!(borders_through(page, between_columns, x_baseline), (1, 0));
+    }
+
+    #[test]
+    fn keeps_the_rows_of_a_merged_cell_on_one_page() {
+        let mut rows = vec![vec![
+            TableCell::new(text("Name")),
+            TableCell::new(text("Value")),
+        ]];
+        for i in 0..40 {
+            rows.push(vec![
+                merged(&format!("g{i}"), 1, 3),
+                TableCell::new(text(&format!("a{i}"))),
+            ]);
+            for part in ["b", "c"] {
+                rows.push(vec![
+                    TableCell::Covered,
+                    TableCell::new(text(&format!("{part}{i}"))),
+                ]);
+            }
+        }
+        let pages = lay_out(&[Block::Table(rows)], PageSetup::DOCUMENT);
+
+        assert!(pages.len() > 1);
+        for page in &pages {
+            let lines = page_lines(page);
+            assert_eq!(lines[0], "NameValue");
+            for line in lines.iter().filter_map(|l| l.strip_prefix('g')) {
+                let i = line.split('a').next().unwrap();
+                assert!(lines.iter().any(|l| *l == format!("c{i}")), "{lines:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn repeats_no_header_that_a_cell_spans_down_from() {
+        let mut rows = vec![
+            vec![merged("Name", 1, 2), TableCell::new(text("Value"))],
+            vec![TableCell::Covered, TableCell::new(text("Unit"))],
+        ];
+        rows.extend((0..80).map(|i| {
+            vec![
+                TableCell::new(text(&format!("row {i}"))),
+                TableCell::new(text("x")),
+            ]
+        }));
+        let pages = lay_out(&[Block::Table(rows)], PageSetup::DOCUMENT);
+
+        assert!(pages.len() > 1);
+        assert!(page_lines(&pages[1])[0].starts_with("row "));
+    }
+
+    /// A merged cell too tall for any page can't move to the next one, so its rows are drawn
+    /// apart instead, its text in the first, rather than run off the page.
+    #[test]
+    fn splits_a_merged_cell_too_tall_for_a_page() {
+        let setup = PageSetup::DOCUMENT;
+        let mut rows = vec![
+            vec![TableCell::new(text("Name")), TableCell::new(text("Value"))],
+            vec![merged("Tall", 1, 100), TableCell::new(text("row 0"))],
+        ];
+        rows.extend((1..100).map(|i| {
+            vec![
+                TableCell::Covered,
+                TableCell::new(text(&format!("row {i}"))),
+            ]
+        }));
+        let pages = lay_out(&[Block::Table(rows)], setup);
+
+        assert!(pages.len() > 1);
+        let mut seen = Vec::new();
+        for page in &pages {
+            for item in &page.items {
+                match item {
+                    Item::Text(t) => {
+                        assert!(t.baseline < setup.bottom());
+                        seen.push(t.text.clone());
+                    }
+                    Item::Line { y2, .. } => assert!(*y2 <= setup.bottom() + 0.01),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(seen.iter().filter(|t| *t == "Tall").count(), 1);
+        assert_eq!(seen.iter().filter(|t| t.starts_with("row")).count(), 100);
+    }
+
+    #[test]
+    fn a_merged_cell_widens_and_heightens_what_it_spans() {
+        let mut widths = [10.0, 20.0];
+        widen(&mut widths, 50.0);
+        assert_eq!(widths, [20.0, 30.0]);
+        widen(&mut widths, 40.0);
+        assert_eq!(widths, [20.0, 30.0]);
+
+        let cell = |row, rows, height| TableBox {
+            row,
+            col: 0,
+            rows,
+            cols: 1,
+            content: LineBox {
+                height,
+                ..LineBox::default()
+            },
+        };
+        let cells = [cell(0, 3, 50.0), cell(1, 1, 20.0), cell(3, 1, 5.0)];
+        assert_eq!(row_heights(&cells, 4, 10.0), [10.0, 20.0, 20.0, 10.0]);
+        assert_eq!(row_groups(&cells, 4), [0..3, 3..4]);
     }
 
     #[test]

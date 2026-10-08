@@ -54,6 +54,41 @@ fn titled_slide(text: &str) -> String {
 }
 
 #[test]
+fn keeps_the_text_around_a_nested_paragraph_or_table() {
+    // PowerPoint never nests paragraphs or tables, but a broken file can. Neither loses text:
+    // the outer paragraph keeps its own, and a nested table's text goes into its outer cell.
+    let paragraphs = r#"<a:p><a:r><a:t xml:space="preserve">First </a:t></a:r><a:p><a:r><a:t>Inner</a:t></a:r></a:p><a:r><a:t>Last</a:t></a:r></a:p>"#;
+    let cell = |text: &str| {
+        format!("<a:tc><a:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody></a:tc>")
+    };
+    let table = format!(
+        "<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Outer</a:t></a:r></a:p></a:txBody><a:tbl><a:tr>{}{}</a:tr></a:tbl></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>",
+        cell("x"),
+        cell("y"),
+    );
+    let mut parts = presentation(&["slides/slide1.xml"]).to_vec();
+    parts.push(part(
+        "ppt/slides/slide1.xml",
+        slide(&format!("{}{table}", placeholder("subTitle", paragraphs))),
+    ));
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+## Slide 1
+
+Inner
+
+First Last
+
+| Outer<br>x<br>y |
+| --------------- |
+"
+    );
+}
+
+#[test]
 fn converts_a_slide_listed_twice_once() {
     // Two entries point at the same slide through two relationships. PowerPoint never does
     // this, but a small file could list one slide thousands of times.

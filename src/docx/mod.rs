@@ -20,7 +20,7 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::builder::{BlockBuilder, NestedTables, Paragraph};
+use crate::document::builder::{BlockBuilder, Paragraph};
 use crate::document::{Block, RunStyle, display_size};
 use crate::error::Result;
 use crate::images::{self, Images};
@@ -197,8 +197,7 @@ impl<'p> Parser<'p> {
     fn new(package: &'p Package) -> Self {
         Parser {
             package,
-            // Markdown tables can't nest, so an inner table's text goes into the outer cell.
-            builder: BlockBuilder::new(NestedTables::IntoOuterCell),
+            builder: BlockBuilder::new(),
             image_alt: None,
             image_size: None,
         }

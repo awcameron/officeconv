@@ -15,7 +15,6 @@ pub struct BlockBuilder<P> {
     paragraphs: Vec<Paragraph<P>>,
     /// Tables we're inside. More than one means a table inside a table cell.
     tables: Vec<TableBuilder>,
-    nested_tables: NestedTables,
     /// Formatting of the run we're inside. Readers reset it where their format starts a run.
     pub style: RunStyle,
     /// Target of the link the text we're reading is in, if any.
@@ -28,22 +27,12 @@ pub struct Paragraph<P> {
     pub runs: Vec<Run>,
 }
 
-/// What happens to a table inside a table cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NestedTables {
-    /// Markdown tables can't nest, so the inner table's text goes into the outer cell.
-    IntoOuterCell,
-    /// The inner table becomes a block of its own, before the outer one.
-    OwnBlock,
-}
-
 impl<P: Default> BlockBuilder<P> {
-    pub fn new(nested_tables: NestedTables) -> Self {
+    pub fn new() -> Self {
         BlockBuilder {
             blocks: Vec::new(),
             paragraphs: Vec::new(),
             tables: Vec::new(),
-            nested_tables,
             style: RunStyle::default(),
             link: None,
         }
@@ -94,11 +83,6 @@ impl<P: Default> BlockBuilder<P> {
         Some(paragraph)
     }
 
-    /// Drops the innermost open paragraph and everything in it.
-    pub fn discard_paragraph(&mut self) {
-        self.paragraphs.pop();
-    }
-
     pub fn start_table(&mut self) {
         self.tables.push(TableBuilder::default());
     }
@@ -120,7 +104,8 @@ impl<P: Default> BlockBuilder<P> {
         }
     }
 
-    /// Closes the innermost table, adding it as a block unless it has no rows.
+    /// Closes the innermost table, adding it as a block unless it has no rows. Markdown tables
+    /// can't nest, so a table inside a table cell puts its text into that cell instead.
     pub fn end_table(&mut self) {
         let Some(table) = self.tables.pop() else {
             return;
@@ -128,9 +113,7 @@ impl<P: Default> BlockBuilder<P> {
         if table.rows.is_empty() {
             return;
         }
-        if self.nested_tables == NestedTables::IntoOuterCell
-            && let Some(outer) = self.tables.last_mut()
-        {
+        if let Some(outer) = self.tables.last_mut() {
             for cell in table.rows.into_iter().flatten() {
                 append_paragraph(&mut outer.cell, cell);
             }
@@ -192,7 +175,7 @@ mod tests {
 
     #[test]
     fn merges_text_with_the_same_style_and_link() {
-        let mut builder = BlockBuilder::<()>::new(NestedTables::OwnBlock);
+        let mut builder = BlockBuilder::<()>::new();
         builder.start_paragraph();
         builder.text("Hel");
         builder.text("lo ");
@@ -215,7 +198,7 @@ mod tests {
 
     #[test]
     fn keeps_props_and_drops_blank_paragraphs_and_stray_text() {
-        let mut builder = BlockBuilder::<u8>::new(NestedTables::OwnBlock);
+        let mut builder = BlockBuilder::<u8>::new();
         builder.text("outside any paragraph");
         builder.start_paragraph();
         *builder.paragraph().unwrap() = 2;
@@ -231,20 +214,18 @@ mod tests {
     }
 
     #[test]
-    fn a_discarded_paragraph_leaves_the_one_around_it() {
-        let mut builder = BlockBuilder::<()>::new(NestedTables::OwnBlock);
+    fn a_nested_paragraph_leaves_the_one_around_it_open() {
+        let mut builder = BlockBuilder::<()>::new();
         builder.start_paragraph();
         builder.text("Outer");
-        builder.start_paragraph();
-        builder.text("Inner");
-        builder.discard_paragraph();
+        assert_eq!(paragraph(&mut builder, "Inner"), Some(cell("Inner")));
         builder.text(" again");
         assert_eq!(builder.end_paragraph().unwrap().runs, cell("Outer again"));
     }
 
     #[test]
     fn images_take_the_current_link_and_count_as_content() {
-        let mut builder = BlockBuilder::<()>::new(NestedTables::OwnBlock);
+        let mut builder = BlockBuilder::<()>::new();
         builder.start_paragraph();
         builder.link = Some("https://example.com".into());
         builder.image(
@@ -267,7 +248,7 @@ mod tests {
 
     #[test]
     fn paragraphs_in_a_table_fill_its_cells() {
-        let mut builder = BlockBuilder::<()>::new(NestedTables::OwnBlock);
+        let mut builder = BlockBuilder::<()>::new();
         builder.start_table();
         assert!(paragraph(&mut builder, "Bobby").is_none());
         assert!(paragraph(&mut builder, "Don").is_none());
@@ -284,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_table_without_rows_adds_nothing() {
-        let mut builder = BlockBuilder::<()>::new(NestedTables::OwnBlock);
+        let mut builder = BlockBuilder::<()>::new();
         builder.start_table();
         builder.end_table();
         builder.end_table();
@@ -292,28 +273,18 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_table_goes_into_the_outer_cell_or_its_own_block() {
-        let nest = |nested_tables| {
-            let mut builder = BlockBuilder::<()>::new(nested_tables);
-            builder.start_table();
-            paragraph(&mut builder, "One");
-            table(&mut builder, &["x", "y"]);
-            builder.end_cell();
-            builder.end_row();
-            builder.end_table();
-            builder.into_blocks()
-        };
+    fn a_nested_table_goes_into_the_outer_cell() {
+        let mut builder = BlockBuilder::<()>::new();
+        builder.start_table();
+        paragraph(&mut builder, "One");
+        table(&mut builder, &["x", "y"]);
+        builder.end_cell();
+        builder.end_row();
+        builder.end_table();
 
         assert_eq!(
-            nest(NestedTables::IntoOuterCell),
+            builder.into_blocks(),
             [Block::Table(vec![vec![cell("One\nx\ny")]])]
-        );
-        assert_eq!(
-            nest(NestedTables::OwnBlock),
-            [
-                Block::Table(vec![vec![cell("x"), cell("y")]]),
-                Block::Table(vec![vec![cell("One")]]),
-            ]
         );
     }
 }

@@ -23,7 +23,7 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::builder::{BlockBuilder, NestedTables, Paragraph, image_run};
+use crate::document::builder::{BlockBuilder, Paragraph, image_run};
 use crate::document::{Block, ListKind, Run, RunStyle, append_run, display_size, is_blank};
 use crate::error::Result;
 use crate::images::{self, Images};
@@ -262,7 +262,7 @@ impl<'a> SlideParser<'a> {
             title: Vec::new(),
             hidden: false,
             shape: None,
-            builder: BlockBuilder::new(NestedTables::OwnBlock),
+            builder: BlockBuilder::new(),
         }
     }
 
@@ -374,12 +374,7 @@ impl XmlHandler for SlideParser<'_> {
                     shape.placeholder = Some(attr(e, "type").unwrap_or_else(|| "body".into()));
                 }
             }
-            // DrawingML paragraphs don't nest, so one inside another, which only a broken
-            // file has, replaces it.
-            "p" if !is_empty => {
-                self.builder.discard_paragraph();
-                self.builder.start_paragraph();
-            }
+            "p" if !is_empty => self.builder.start_paragraph(),
             "pPr" => {
                 if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.level = attr(e, "lvl").and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -626,6 +621,44 @@ mod tests {
                 vec![runs("Q1"), runs("Q2")],
                 vec![Vec::new(), runs("140")],
             ])]
+        );
+    }
+
+    /// PowerPoint never nests paragraphs, but a broken file can. The outer paragraph keeps its
+    /// text, as in DOCX.
+    #[test]
+    fn a_nested_paragraph_keeps_the_text_around_it() {
+        let slide = parse(&shape(
+            None,
+            &format!(
+                r#"<a:p><a:r><a:t xml:space="preserve">First </a:t></a:r>{}<a:r><a:t>Last</a:t></a:r></a:p>"#,
+                para("Inner")
+            ),
+        ));
+        assert_eq!(
+            slide.body,
+            [
+                Block::Paragraph(runs("Inner")),
+                Block::Paragraph(runs("First Last")),
+            ]
+        );
+    }
+
+    /// A DrawingML table cell holds only paragraphs, but a broken file can nest a table in one.
+    /// Its text goes into the outer cell, as in DOCX.
+    #[test]
+    fn a_nested_table_goes_into_the_outer_cell() {
+        let cell =
+            |text: &str| format!("<a:tc><a:txBody>{}</a:txBody><a:tcPr/></a:tc>", para(text));
+        let table = format!(
+            r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tr h="1"><a:tc><a:txBody>{}</a:txBody><a:tbl><a:tr h="1">{}{}</a:tr></a:tbl><a:tcPr/></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+            para("Outer"),
+            cell("x"),
+            cell("y"),
+        );
+        assert_eq!(
+            parse(&table).body,
+            [Block::Table(vec![vec![runs("Outer\nx\ny")]])]
         );
     }
 

@@ -65,7 +65,8 @@ What `officeconv` reads from each kind of file. [Outputs](#outputs) says how it'
 
 A table cell merged across columns keeps its text in the first cell and leaves the others empty,
 so every row keeps all its columns. Markdown has no merged cells, and PDF draws the same separate
-cells rather than one cell across the columns.
+cells rather than one cell across the columns. A table inside a table cell can't be shown either,
+so its text goes into that cell, a line for each of its cells.
 
 Not converted yet: footnotes, comments, and headers and footers; see
 [ADR 0004](adr/0004-document-model.md) for how they'll fit. Headings that use custom style

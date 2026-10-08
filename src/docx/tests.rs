@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::ListKind;
+use crate::document::{ListKind, Run};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,
@@ -103,6 +103,7 @@ fn ignores_fallback_copies() {
 fn sample_package() -> Package {
     let mut package = Package::default();
     package
+        .targets
         .links
         .insert("rId1".into(), "https://example.com".into());
     package.numbering = package::parse_numbering(
@@ -241,6 +242,7 @@ fn ignores_tracked_formatting_changes() {
 fn reads_pictures_with_alt_text() {
     let mut package = Package::default();
     package
+        .targets
         .images
         .insert("rId7".into(), "word/media/image1.png".into());
     let blocks = parse_with(
@@ -274,6 +276,7 @@ fn sized(mut run: Run, cx: u32, cy: u32) -> Run {
 fn reads_picture_sizes_from_their_extent() {
     let mut package = Package::default();
     package
+        .targets
         .images
         .insert("rId7".into(), "word/media/image1.png".into());
     let picture = r#"<a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill>
@@ -310,6 +313,7 @@ fn reads_a_picture_grouped_with_a_text_box() {
     // still in that outer run, so it isn't lost when the first inner run ends.
     let mut package = Package::default();
     package
+        .targets
         .images
         .insert("rId7".into(), "word/media/image1.png".into());
     let blocks = parse_with(

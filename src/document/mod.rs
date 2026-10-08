@@ -1,6 +1,7 @@
 //! A small document model shared by the DOCX and PPTX readers: just enough structure
 //! to write Markdown or a simple PDF.
 
+pub mod builder;
 pub mod markdown;
 
 use std::mem;
@@ -207,7 +208,7 @@ fn resolve_runs(
     Ok(())
 }
 
-/// Collects a table's cells as a reader walks through its rows.
+/// Collects a table's cells as [`builder::BlockBuilder`] walks through its rows.
 #[derive(Debug, Default)]
 pub struct TableBuilder {
     pub rows: Vec<Vec<CellRuns>>,

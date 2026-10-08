@@ -1,6 +1,6 @@
 [package]
 name = "officeconv"
-version = "0.3.8"
+version = "0.3.9"
 edition = "2024"
 # krilla 0.8 needs 1.92. Releases build with exactly this version, and CI tests it.
 rust-version = "1.92.0"

@@ -79,22 +79,23 @@ installed.
     `docs/` and CONTRIBUTING.md take the scope of their topic, such as `docs(pdf):`, and a type
     is never a scope. Use only these scopes, and add one here in the PR that first needs it:
 
-    | Scope     | Area                                |
-    | --------- | ----------------------------------- |
-    | `docx`    | `src/docx/`                         |
-    | `pptx`    | `src/pptx.rs`                       |
-    | `xlsx`    | `src/xlsx/`                         |
-    | `opc`     | `src/opc.rs`                        |
-    | `model`   | `src/document/`                     |
-    | `pdf`     | `src/pdf/`                          |
-    | `writers` | `src/writers.rs`                    |
-    | `cli`     | `src/lib.rs`, `tests/cli/`          |
-    | `fuzz`    | `fuzz/`                             |
-    | `tools`   | `tools/compare/`, `scripts/`        |
-    | `readme`  | `README.md`                         |
-    | `skills`  | `.agents/skills/`, `AGENTS.md`      |
-    | `release` | version bumps, the release workflow |
-    | `deps`    | dependency bumps, `deny.toml`       |
+    | Scope      | Area                                |
+    | ---------- | ----------------------------------- |
+    | `docx`     | `src/docx/`                         |
+    | `pptx`     | `src/pptx.rs`                       |
+    | `xlsx`     | `src/xlsx/`                         |
+    | `opc`      | `src/opc.rs`                        |
+    | `model`    | `src/document/`                     |
+    | `pdf`      | `src/pdf/`                          |
+    | `writers`  | `src/writers.rs`                    |
+    | `markdown` | `src/markdown.rs`                   |
+    | `cli`      | `src/lib.rs`, `tests/cli/`          |
+    | `fuzz`     | `fuzz/`                             |
+    | `tools`    | `tools/compare/`, `scripts/`        |
+    | `readme`   | `README.md`                         |
+    | `skills`   | `.agents/skills/`, `AGENTS.md`      |
+    | `release`  | version bumps, the release workflow |
+    | `deps`     | dependency bumps, `deny.toml`       |
 
   - the subject says what changes, in the imperative;
   - the body explains why and how it was checked;

@@ -23,13 +23,11 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::{
-    Block, ListKind, Run, RunStyle, TableBuilder, append_paragraph, append_run, display_size,
-    is_blank,
-};
+use crate::document::builder::{BlockBuilder, NestedTables, Paragraph, image_run};
+use crate::document::{Block, ListKind, Run, RunStyle, append_run, display_size, is_blank};
 use crate::error::Result;
 use crate::images::{self, Images};
-use crate::opc::{self, Limits, Open, XmlHandler, attr};
+use crate::opc::{self, Limits, Open, Targets, XmlHandler, attr};
 
 const PRESENTATION: &str = "ppt/presentation.xml";
 
@@ -47,15 +45,6 @@ pub struct Slide {
 pub enum Notes {
     Include,
     Skip,
-}
-
-/// What a slide's relationship IDs point at.
-#[derive(Debug, Default)]
-pub struct Targets {
-    /// Relationship ID -> web link.
-    pub links: HashMap<String, String>,
-    /// Relationship ID -> image part (`ppt/media/image1.png`).
-    pub images: HashMap<String, String>,
 }
 
 /// Reads a `.pptx` and returns it as blocks, slide by slide.
@@ -107,11 +96,7 @@ pub fn read_blocks_with_limits<R: Read + Seek>(
             Some(rels) => opc::parse_relationships(&rels)?,
             None => HashMap::new(),
         };
-        let targets = Targets {
-            links: opc::hyperlinks(&slide_relationships),
-            images: opc::image_parts(&slide_relationships, &part),
-        };
-        let mut slide = parse_slide(&xml, &targets)?;
+        let mut slide = parse_slide(&xml, &Targets::new(&slide_relationships, &part))?;
 
         // Speaker notes live in their own part, linked from the slide.
         let notes_part = slide_relationships
@@ -197,7 +182,7 @@ pub fn parse_slide(xml: &str, targets: &Targets) -> Result<Slide> {
     Ok(Slide {
         title: parser.title,
         hidden: parser.hidden,
-        body: parser.blocks,
+        body: parser.builder.into_blocks(),
         notes: Vec::new(),
     })
 }
@@ -207,7 +192,7 @@ pub fn parse_notes(xml: &str) -> Result<Vec<Block>> {
     let targets = Targets::default();
     let mut parser = SlideParser::new(&targets, true);
     opc::walk(xml, &mut parser)?;
-    Ok(parser.blocks)
+    Ok(parser.builder.into_blocks())
 }
 
 /// How a paragraph asked to be bulleted.
@@ -225,7 +210,7 @@ enum Bullet {
 struct Shape {
     /// The placeholder type (`title`, `body`, `subTitle`, ...) if this shape is a placeholder.
     placeholder: Option<String>,
-    paragraphs: Vec<Paragraph>,
+    paragraphs: Vec<Paragraph<ParagraphProps>>,
 }
 
 impl Shape {
@@ -249,11 +234,11 @@ struct Picture {
     size: Option<(u32, u32)>,
 }
 
+/// What a paragraph's properties (`a:pPr`) say about it.
 #[derive(Default)]
-struct Paragraph {
+struct ParagraphProps {
     level: u8,
     bullet: Bullet,
-    runs: Vec<Run>,
 }
 
 struct SlideParser<'a> {
@@ -262,14 +247,10 @@ struct SlideParser<'a> {
     notes: bool,
     title: Vec<Run>,
     hidden: bool,
-    blocks: Vec<Block>,
     shape: Option<Shape>,
     /// The picture (`p:pic`) being read, if any.
     picture: Option<Picture>,
-    paragraph: Option<Paragraph>,
-    tables: Vec<TableBuilder>,
-    style: RunStyle,
-    link: Option<String>,
+    builder: BlockBuilder<ParagraphProps>,
 }
 
 impl<'a> SlideParser<'a> {
@@ -280,34 +261,15 @@ impl<'a> SlideParser<'a> {
             picture: None,
             title: Vec::new(),
             hidden: false,
-            blocks: Vec::new(),
             shape: None,
-            paragraph: None,
-            tables: Vec::new(),
-            style: RunStyle::default(),
-            link: None,
-        }
-    }
-
-    fn push_text(&mut self, text: &str) {
-        if let Some(paragraph) = self.paragraph.as_mut() {
-            let mut run = Run::new(text, self.style);
-            run.link = self.link.clone();
-            append_run(&mut paragraph.runs, run);
+            builder: BlockBuilder::new(NestedTables::OwnBlock),
         }
     }
 
     fn finish_paragraph(&mut self) {
-        let Some(paragraph) = self.paragraph.take() else {
-            return;
-        };
-        if is_blank(&paragraph.runs) {
-            return;
-        }
-
-        if let Some(table) = self.tables.last_mut() {
-            append_paragraph(&mut table.cell, paragraph.runs);
-        } else if let Some(shape) = self.shape.as_mut() {
+        if let Some(paragraph) = self.builder.end_paragraph()
+            && let Some(shape) = self.shape.as_mut()
+        {
             shape.paragraphs.push(paragraph);
         }
     }
@@ -321,12 +283,9 @@ impl<'a> SlideParser<'a> {
             return;
         };
 
-        let mut run = Run::image(part, picture.alt.unwrap_or_default());
-        if let Some(image) = run.image.as_mut() {
-            image.size = picture.size;
-        }
-        run.link = picture.link;
-        self.blocks.push(Block::Paragraph(vec![run]));
+        let alt = picture.alt.unwrap_or_default();
+        let run = image_run(part, alt, picture.size, picture.link);
+        self.builder.push(Block::Paragraph(vec![run]));
     }
 
     fn finish_shape(&mut self) {
@@ -336,9 +295,9 @@ impl<'a> SlideParser<'a> {
 
         if self.notes {
             if shape.placeholder.as_deref() == Some("body") {
-                let paragraphs = shape.paragraphs.into_iter();
-                self.blocks
-                    .extend(paragraphs.map(|p| Block::Paragraph(p.runs)));
+                for paragraph in shape.paragraphs {
+                    self.builder.push(Block::Paragraph(paragraph.runs));
+                }
             }
             return;
         }
@@ -357,16 +316,16 @@ impl<'a> SlideParser<'a> {
 
         let bullets_by_default = shape.bullets_by_default();
         for paragraph in shape.paragraphs {
-            let kind = match paragraph.bullet {
+            let kind = match paragraph.props.bullet {
                 Bullet::None => None,
                 Bullet::Symbol => Some(ListKind::Bullet),
                 Bullet::Numbered => Some(ListKind::Numbered),
                 Bullet::Inherit => bullets_by_default.then_some(ListKind::Bullet),
             };
-            self.blocks.push(match kind {
+            self.builder.push(match kind {
                 Some(kind) => Block::ListItem {
                     kind,
-                    level: paragraph.level,
+                    level: paragraph.props.level,
                     runs: paragraph.runs,
                 },
                 None => Block::Paragraph(paragraph.runs),
@@ -415,14 +374,19 @@ impl XmlHandler for SlideParser<'_> {
                     shape.placeholder = Some(attr(e, "type").unwrap_or_else(|| "body".into()));
                 }
             }
-            "p" if !is_empty => self.paragraph = Some(Paragraph::default()),
+            // DrawingML paragraphs don't nest, so one inside another, which only a broken
+            // file has, replaces it.
+            "p" if !is_empty => {
+                self.builder.discard_paragraph();
+                self.builder.start_paragraph();
+            }
             "pPr" => {
-                if let Some(paragraph) = self.paragraph.as_mut() {
+                if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.level = attr(e, "lvl").and_then(|v| v.parse().ok()).unwrap_or(0);
                 }
             }
             "buNone" | "buChar" | "buBlip" | "buAutoNum" => {
-                if let Some(paragraph) = self.paragraph.as_mut() {
+                if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.bullet = match e.local_name().as_ref() {
                         "buNone" => Bullet::None,
                         "buAutoNum" => Bullet::Numbered,
@@ -432,22 +396,23 @@ impl XmlHandler for SlideParser<'_> {
             }
             // A text field (slide number, date) holds text just like a run.
             "r" | "fld" if !is_empty => {
-                self.style = RunStyle::default();
-                self.link = None;
+                self.builder.style = RunStyle::default();
+                self.builder.link = None;
             }
             "rPr" if in_run(open) => {
-                self.style.bold = is_on(attr(e, "b"));
-                self.style.italic = is_on(attr(e, "i"));
+                self.builder.style.bold = is_on(attr(e, "b"));
+                self.builder.style.italic = is_on(attr(e, "i"));
             }
             "hlinkClick" if in_run(open) => {
-                self.link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
+                self.builder.link =
+                    attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
             }
-            "br" => self.push_text("\n"),
-            "tbl" if !is_empty => self.tables.push(TableBuilder::default()),
+            "br" => self.builder.text("\n"),
+            "tbl" if !is_empty => self.builder.start_table(),
             // A merged cell keeps the cells it covers in the XML, each marked `hMerge` or
             // `vMerge`, so every row already has all its columns; only their text is hidden.
             "tc" if !is_empty => {
-                if let Some(table) = self.tables.last_mut() {
+                if let Some(table) = self.builder.table() {
                     table.covered = is_on(attr(e, "hMerge")) || is_on(attr(e, "vMerge"));
                 }
             }
@@ -459,36 +424,22 @@ impl XmlHandler for SlideParser<'_> {
         match name {
             "r" | "fld" => {
                 // Line breaks sit between runs, so they mustn't inherit the last run's formatting.
-                self.style = RunStyle::default();
-                self.link = None;
+                self.builder.style = RunStyle::default();
+                self.builder.link = None;
             }
             "p" => self.finish_paragraph(),
             "sp" => self.finish_shape(),
             "pic" => self.finish_picture(),
-            "tc" => {
-                if let Some(table) = self.tables.last_mut() {
-                    table.end_cell();
-                }
-            }
-            "tr" => {
-                if let Some(table) = self.tables.last_mut() {
-                    table.end_row();
-                }
-            }
-            "tbl" => {
-                if let Some(table) = self.tables.pop()
-                    && !table.rows.is_empty()
-                {
-                    self.blocks.push(Block::Table(table.rows));
-                }
-            }
+            "tc" => self.builder.end_cell(),
+            "tr" => self.builder.end_row(),
+            "tbl" => self.builder.end_table(),
             _ => {}
         }
     }
 
     fn text(&mut self, text: &str, open: &Open) {
         if open.inside("t") {
-            self.push_text(text);
+            self.builder.text(text);
         }
     }
 }

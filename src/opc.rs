@@ -242,6 +242,25 @@ pub fn image_parts(
         .collect()
 }
 
+/// What a document or slide part's relationship IDs point at.
+#[derive(Debug, Default)]
+pub struct Targets {
+    /// Relationship ID -> web link, from [`hyperlinks`].
+    pub links: HashMap<String, String>,
+    /// Relationship ID -> image part (`word/media/image1.png`), from [`image_parts`].
+    pub images: HashMap<String, String>,
+}
+
+impl Targets {
+    /// The targets in `relationships`, the relationships of `part`.
+    pub fn new(relationships: &HashMap<String, Relationship>, part: &str) -> Self {
+        Targets {
+            links: hyperlinks(relationships),
+            images: image_parts(relationships, part),
+        }
+    }
+}
+
 /// The elements open at a point in [`walk`], by local name (`<w:r>` -> `"r"`).
 ///
 /// Readers decide what an element or piece of text means from where it is, such as "text

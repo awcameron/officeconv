@@ -9,15 +9,13 @@ use std::collections::HashMap;
 
 use crate::document::ListKind;
 use crate::error::Result;
-use crate::opc::{attr, visit_elements};
+use crate::opc::{Targets, attr, visit_elements};
 
 /// Lookup tables built from a document's supporting parts.
 #[derive(Debug, Default)]
 pub struct Package {
-    /// Relationship ID -> link target.
-    pub links: HashMap<String, String>,
-    /// Relationship ID -> image part (`word/media/image1.png`).
-    pub images: HashMap<String, String>,
+    /// What the document's relationship IDs point at.
+    pub targets: Targets,
     pub numbering: Numbering,
     /// Style ID -> style details.
     pub styles: HashMap<String, Style>,

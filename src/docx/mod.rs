@@ -20,10 +20,8 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::{
-    Block, CellRuns, Run, RunStyle, TableBuilder, append_paragraph, append_run, display_size,
-    is_blank,
-};
+use crate::document::builder::{BlockBuilder, NestedTables, Paragraph};
+use crate::document::{Block, RunStyle, display_size};
 use crate::error::Result;
 use crate::images::{self, Images};
 use crate::opc::{self, Limits, Open, XmlHandler, attr};
@@ -50,9 +48,7 @@ pub fn read_blocks_with_limits<R: Read + Seek>(
 
     let mut package = Package::default();
     if let Some(xml) = archive.read_part(&opc::rels_path(DOCUMENT))? {
-        let relationships = opc::parse_relationships(&xml)?;
-        package.links = opc::hyperlinks(&relationships);
-        package.images = opc::image_parts(&relationships, DOCUMENT);
+        package.targets = opc::Targets::new(&opc::parse_relationships(&xml)?, DOCUMENT);
     }
     if let Some(xml) = archive.read_part("word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
@@ -70,7 +66,7 @@ pub fn read_blocks_with_limits<R: Read + Seek>(
 pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block>> {
     let mut parser = Parser::new(package);
     opc::walk(xml, &mut parser)?;
-    Ok(parser.blocks)
+    Ok(parser.builder.into_blocks())
 }
 
 /// The state we track while walking the XML.
@@ -78,27 +74,19 @@ pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block>> {
 /// `'p` is the lifetime of the borrowed [`Package`]: a `Parser` can't outlive it.
 struct Parser<'p> {
     package: &'p Package,
-    blocks: Vec<Block>,
-    /// Paragraphs we're inside. Usually 0 or 1, but text boxes nest paragraphs.
-    paragraphs: Vec<ParagraphBuilder>,
-    /// Tables we're inside. More than one means a table inside a table cell.
-    tables: Vec<TableBuilder>,
-    /// Formatting of the run we're inside.
-    style: RunStyle,
-    /// Target of the hyperlink we're inside, if any.
-    link: Option<String>,
+    builder: BlockBuilder<ParagraphProps>,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
     /// Display size of the picture being read, from its `wp:extent`.
     image_size: Option<(u32, u32)>,
 }
 
+/// What a paragraph's properties (`w:pPr`) say about it.
 #[derive(Default)]
-struct ParagraphBuilder {
+struct ParagraphProps {
     style_id: Option<String>,
     num_id: Option<String>,
     list_level: u8,
-    runs: Vec<Run>,
 }
 
 impl XmlHandler for Parser<'_> {
@@ -115,29 +103,30 @@ impl XmlHandler for Parser<'_> {
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
         let in_run = open.inside("r");
         match e.local_name().as_ref() {
-            "p" if !is_empty => self.paragraphs.push(ParagraphBuilder::default()),
+            "p" if !is_empty => self.builder.start_paragraph(),
             "pStyle" => {
-                if let Some(paragraph) = self.paragraphs.last_mut() {
+                if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.style_id = attr(e, "val");
                 }
             }
             "numId" => {
-                if let Some(paragraph) = self.paragraphs.last_mut() {
+                if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.num_id = attr(e, "val");
                 }
             }
             "ilvl" => {
-                if let Some(paragraph) = self.paragraphs.last_mut() {
+                if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.list_level = attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(0);
                 }
             }
             "hyperlink" if !is_empty => {
                 // External links have an `r:id`; links to bookmarks inside the document don't.
-                self.link = attr(e, "id").and_then(|id| self.package.links.get(&id).cloned());
+                self.builder.link =
+                    attr(e, "id").and_then(|id| self.package.targets.links.get(&id).cloned());
             }
-            "r" if !is_empty => self.style = RunStyle::default(),
-            "b" if in_run => self.style.bold = is_on(e),
-            "i" if in_run => self.style.italic = is_on(e),
+            "r" if !is_empty => self.builder.style = RunStyle::default(),
+            "b" if in_run => self.builder.style.bold = is_on(e),
+            "i" if in_run => self.builder.style.italic = is_on(e),
             // A picture: `wp:extent` carries its size and `wp:docPr` its alt text, then `a:blip`
             // points at the image. Each drawing starts afresh, so a size can't carry over.
             "inline" | "anchor" if in_run => {
@@ -159,21 +148,21 @@ impl XmlHandler for Parser<'_> {
                 let alt = attr(e, "title").unwrap_or_default();
                 self.push_image(attr(e, "id"), alt, None);
             }
-            "tab" if in_run => self.push_text(" "),
+            "tab" if in_run => self.builder.text(" "),
             "br" | "cr" if in_run => {
                 // Page and column breaks don't mean anything in Markdown.
                 if !matches!(attr(e, "type").as_deref(), Some("page" | "column")) {
-                    self.push_text("\n");
+                    self.builder.text("\n");
                 }
             }
-            "tbl" if !is_empty => self.tables.push(TableBuilder::default()),
+            "tbl" if !is_empty => self.builder.start_table(),
             "gridCol" => {
-                if let Some(table) = self.tables.last_mut() {
+                if let Some(table) = self.builder.table() {
                     table.columns += 1;
                 }
             }
             "gridSpan" if open.inside("tcPr") => {
-                if let Some(table) = self.tables.last_mut() {
+                if let Some(table) = self.builder.table() {
                     table.span = attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(1);
                 }
             }
@@ -183,34 +172,23 @@ impl XmlHandler for Parser<'_> {
 
     fn end(&mut self, name: &str) {
         match name {
-            "hyperlink" => self.link = None,
+            "hyperlink" => self.builder.link = None,
             "p" => {
-                if let Some(paragraph) = self.paragraphs.pop() {
-                    self.finish_paragraph(paragraph);
+                if let Some(paragraph) = self.builder.end_paragraph() {
+                    let block = self.classify(paragraph);
+                    self.builder.push(block);
                 }
             }
-            "tc" => {
-                if let Some(table) = self.tables.last_mut() {
-                    table.end_cell();
-                }
-            }
-            "tr" => {
-                if let Some(table) = self.tables.last_mut() {
-                    table.end_row();
-                }
-            }
-            "tbl" => {
-                if let Some(table) = self.tables.pop() {
-                    self.finish_table(table.rows);
-                }
-            }
+            "tc" => self.builder.end_cell(),
+            "tr" => self.builder.end_row(),
+            "tbl" => self.builder.end_table(),
             _ => {}
         }
     }
 
     fn text(&mut self, text: &str, open: &Open) {
         if open.inside("t") {
-            self.push_text(text);
+            self.builder.text(text);
         }
     }
 }
@@ -219,107 +197,52 @@ impl<'p> Parser<'p> {
     fn new(package: &'p Package) -> Self {
         Parser {
             package,
-            blocks: Vec::new(),
-            paragraphs: Vec::new(),
-            tables: Vec::new(),
-            style: RunStyle::default(),
-            link: None,
+            // Markdown tables can't nest, so an inner table's text goes into the outer cell.
+            builder: BlockBuilder::new(NestedTables::IntoOuterCell),
             image_alt: None,
             image_size: None,
         }
     }
 
-    /// Adds text to the current paragraph, extending the last run if the formatting matches.
-    fn push_text(&mut self, text: &str) {
-        let Some(paragraph) = self.paragraphs.last_mut() else {
-            return;
-        };
-
-        let mut run = Run::new(text, self.style);
-        run.link = self.link.clone();
-        append_run(&mut paragraph.runs, run);
-    }
-
     /// Adds the image with relationship ID `id`, if it's one stored in the document.
     fn push_image(&mut self, id: Option<String>, alt: String, size: Option<(u32, u32)>) {
-        let part = id.and_then(|id| self.package.images.get(&id));
-        let (Some(part), Some(paragraph)) = (part, self.paragraphs.last_mut()) else {
-            return;
-        };
-
-        let mut run = Run::image(part.clone(), alt);
-        if let Some(image) = run.image.as_mut() {
-            image.size = size;
+        if let Some(part) = id.and_then(|id| self.package.targets.images.get(&id)) {
+            self.builder.image(part.clone(), alt, size);
         }
-        run.link = self.link.clone();
-        append_run(&mut paragraph.runs, run);
-    }
-
-    fn finish_paragraph(&mut self, paragraph: ParagraphBuilder) {
-        if is_blank(&paragraph.runs) {
-            return;
-        }
-
-        // Inside a table, the paragraph becomes part of the current cell.
-        if let Some(table) = self.tables.last_mut() {
-            append_paragraph(&mut table.cell, paragraph.runs);
-            return;
-        }
-
-        let block = self.classify(paragraph);
-        self.blocks.push(block);
     }
 
     /// Decides whether a paragraph is a heading, a list item, or plain text.
-    fn classify(&self, paragraph: ParagraphBuilder) -> Block {
-        let style = paragraph
+    fn classify(&self, paragraph: Paragraph<ParagraphProps>) -> Block {
+        let Paragraph { props, runs } = paragraph;
+        let style = props
             .style_id
             .as_ref()
             .and_then(|id| self.package.styles.get(id));
 
         // Style IDs can be localized ("Kop1" in Dutch Word), but the style name is not.
-        let heading = paragraph
+        let heading = props
             .style_id
             .as_deref()
             .and_then(heading_level)
             .or_else(|| style.and_then(|s| heading_level(&s.name)));
         if let Some(level) = heading {
-            return Block::Heading {
-                level,
-                runs: paragraph.runs,
-            };
+            return Block::Heading { level, runs };
         }
 
         // Numbering set on the paragraph wins over numbering from its style.
-        let num_id = paragraph
+        let num_id = props
             .num_id
             .as_deref()
             .or_else(|| style.and_then(|s| s.num_id.as_deref()));
-        let kind = num_id.and_then(|id| self.package.numbering.kind(id, paragraph.list_level));
+        let kind = num_id.and_then(|id| self.package.numbering.kind(id, props.list_level));
         match kind {
             Some(kind) => Block::ListItem {
                 kind,
-                level: paragraph.list_level,
-                runs: paragraph.runs,
+                level: props.list_level,
+                runs,
             },
-            None => Block::Paragraph(paragraph.runs),
+            None => Block::Paragraph(runs),
         }
-    }
-
-    fn finish_table(&mut self, rows: Vec<Vec<CellRuns>>) {
-        if rows.is_empty() {
-            return;
-        }
-
-        // Markdown tables can't nest, so an inner table's text goes into the outer cell.
-        if let Some(outer) = self.tables.last_mut() {
-            for cell in rows.into_iter().flatten() {
-                append_paragraph(&mut outer.cell, cell);
-            }
-            return;
-        }
-
-        self.blocks.push(Block::Table(rows));
     }
 }
 

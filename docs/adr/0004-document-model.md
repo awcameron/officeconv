@@ -80,7 +80,8 @@ Rules that come with it:
   stay inside the table, sizes inside a sane range, and something referred to many times, such
   as a note, is read once. Clamping happens in one place where possible, such as
   `TableBuilder` for spans.
-- **Each writer says what it drops**, in the README section for that output.
+- **Each writer says what it drops**, in the README section for that output. *(2026-10-07:
+  these sections moved to [docs/formats.md](../formats.md) in #142.)*
 
 The sketches below show how the first two features fit. They're designs, not code: #132 and
 #133 implement them and can change details.
@@ -159,7 +160,8 @@ EMU is what both formats store, and keeping integers lets `Run` stay `Eq`.
 ## Consequences
 
 - **Every writer handles every field.** A new field means deciding what each writer does with
-  it, and saying so in the README.
+  it, and saying so in the README. *(2026-10-07: now in [docs/formats.md](../formats.md), since
+  #142.)*
 - **The model grows, feature by feature.** Each of #132–#136 adds to it, and the readers and
   writers that use the new field change with it.
 - **Readers own the bounds.** A writer can assume spans fit the table and sizes are sane; a

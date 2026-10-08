@@ -135,6 +135,7 @@ tools/compare/       compares the output of two builds on generated files
 scripts/check.sh     the checks to run before committing
 build.rs             compresses the fonts in assets/fonts/ before they're built into the binary
 assets/fonts/        Noto Sans, built into the binary for PDF output, and its license
+docs/                the user guide beyond the README: installing, usage, and formats
 docs/adr/            design decisions, one record each
 .devcontainer/       a Linux image to build, test and fuzz in, for Docker, VS Code and Codespaces
 .github/             CI, release and dev container workflows, Dependabot, and release notes
@@ -145,7 +146,7 @@ CLAUDE.md            imports AGENTS.md for Claude Code
 Cargo.toml           the package, its dependencies, features and minimum Rust version
 Cargo.lock           the exact dependency versions builds and CI use
 deny.toml            which licenses, advisories and sources cargo deny allows
-README.md            how to install and use officeconv
+README.md            what officeconv does, and how to install it and start using it
 CONTRIBUTING.md      this file
 SECURITY.md          what officeconv protects against, and how to report a vulnerability
 LICENSE              MIT

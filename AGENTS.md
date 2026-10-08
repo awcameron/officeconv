@@ -53,7 +53,7 @@ installed.
 - **Document model.** `Block` holds everything at least one writer can show, and each writer
   drops what it can't ([ADR 0004](docs/adr/0004-document-model.md)). A new field defaults to
   today's behavior, the reader bounds its value, Markdown output doesn't change unless the issue
-  says so, and the README says what each output does with it.
+  says so, and [docs/formats.md](docs/formats.md) says what each output does with it.
 - **Errors.** Each `ConvertError` variant picks its exit code in `ConvertError::exit_code`. The
   match is exhaustive, so a new variant has to choose one.
 - **Tests.** Tests build their own fixtures in temporary directories; don't commit binary test
@@ -76,9 +76,10 @@ installed.
 - **PRs:** say what changed and why, call out any behavior change, and list how it was checked.
 - **Code:** match the surrounding code's naming, idioms and comment density. Comments explain
   why, not what.
-- **Docs:** update the README for anything a user sees, and CONTRIBUTING.md for anything a
-  contributor does. Record a design decision with real
-  alternatives as an ADR in [`docs/adr/`](docs/adr/README.md).
+- **Docs:** update the user docs for anything a user sees: the README for what it does, how to
+  install it and its options, and `docs/` for the details. Update CONTRIBUTING.md for anything a
+  contributor does. Record a design decision with real alternatives as an ADR in
+  [`docs/adr/`](docs/adr/README.md).
 - **Fuzzing** needs nightly and cargo-fuzz, and runs from `fuzz/`; see
   [Fuzzing](CONTRIBUTING.md#fuzzing).
 

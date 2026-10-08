@@ -33,9 +33,15 @@ it protects against. It's written in Rust as a learning project.
   See [PDF](#pdf).
 - **Formulas aren't calculated.** A spreadsheet cell shows the result Excel last saved, or
   nothing if there isn't one. See [XLSX](#xlsx).
+- **PDF shows only what Markdown can, for now.** A merged table cell is drawn as separate cells,
+  and a picture at its pixel size rather than the size the document gives it.
 - **Not converted yet:** footnotes, comments, and headers and footers in DOCX
   ([DOCX](#docx)); charts, SmartArt, and anything from the slide master or layout in PPTX
   ([PPTX](#pptx)); charts, shapes and in-cell pictures as images ([Images](#images)).
+
+[ADR 0004](docs/adr/0004-document-model.md) sets out how these will be added: the converted
+document holds everything at least one output can show, and each output leaves out what it
+can't.
 
 ## Install
 
@@ -347,7 +353,8 @@ its text is kept without the link, in Markdown and PDF.
 Markdown has no merged cells, so a cell merged across columns keeps its text in the first one and
 leaves the others empty. Every row keeps all its columns.
 
-Not converted yet: footnotes, comments, and headers and footers. Headings that use custom style
+Not converted yet: footnotes, comments, and headers and footers; see
+[ADR 0004](docs/adr/0004-document-model.md) for how they'll fit. Headings that use custom style
 names aren't detected. Every numbered item is written as `1.` because Markdown renumbers lists
 when it renders them.
 
@@ -383,7 +390,7 @@ Mention the EMEA team.
 Pictures become their own paragraph where they sit on the slide, but only with `--images DIR`.
 
 Not converted yet: charts, SmartArt, and text or pictures inherited from the slide master or
-layout.
+layout; see [ADR 0004](docs/adr/0004-document-model.md) for how new content fits.
 
 ### PDF
 

@@ -50,6 +50,10 @@ installed.
   `tools/compare/compare.sh`, which compares the working tree with `main` on generated files,
   and explain every difference it lists. The readers decide from the stack of open elements
   (`opc::Open`), not from per-reader flags.
+- **Document model.** `Block` holds everything at least one writer can show, and each writer
+  drops what it can't ([ADR 0004](docs/adr/0004-document-model.md)). A new field defaults to
+  today's behavior, the reader bounds its value, Markdown output doesn't change unless the issue
+  says so, and the README says what each output does with it.
 - **Errors.** Each `ConvertError` variant picks its exit code in `ConvertError::exit_code`. The
   match is exhaustive, so a new variant has to choose one.
 - **Tests.** Tests build their own fixtures in temporary directories; don't commit binary test

@@ -20,6 +20,8 @@ modules:
 - `src/docx/`, `src/pptx.rs`, `src/xlsx/`: the readers. DOCX and PPTX build their blocks
   through `document::builder`, which owns open paragraphs and tables.
 - `src/document/`, `src/writers.rs`, `src/pdf/`: the outputs.
+- `src/markdown.rs`: Markdown escaping and tables, shared by the spreadsheet and document
+  Markdown writers.
 - `tests/cli/`: end-to-end tests that run the binary.
 - `fuzz/`: cargo-fuzz targets.
 - `tools/compare/`: compares two builds' output.

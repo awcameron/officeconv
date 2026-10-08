@@ -62,7 +62,7 @@ and prints the command that undoes it. Report the failure; don't undo it or retr
 Then:
 
 - **Commit** `Cargo.toml` and `Cargo.lock`:
-  - subject: `chore: release X.Y.Z`;
+  - subject: `chore(release): release X.Y.Z`;
   - body: the user-visible changes with their PR numbers. Call out breaking ones.
 - **PR:** push, then open it with the same title and `--label release`, which leaves it out of
   the release notes GitHub writes (see `.github/release.yml`).

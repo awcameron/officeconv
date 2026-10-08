@@ -51,9 +51,10 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    isn't installed, say so in the report: CI's `deny` job is the first to check them.
 6. Commit only the files you changed. The user keeps untracked files in the repo root that
    aren't part of the project, so never `git add -A` or `git add .` there.
-   - Subject: a conventional commit, such as `fix: keep a picture grouped with a text box`.
-     Write it in the imperative, saying what changes for the user where there's something to
-     see.
+   - Subject: a conventional commit, such as
+     `fix(docx): keep a picture grouped with a text box`. Write it in the imperative, saying
+     what changes for the user where there's something to see. The scope is optional and comes
+     from the list in `AGENTS.md`; leave it off when the change spans several areas.
    - Body: why the change was needed, what changed, and how it was checked. Use plain prose and
      wrap at 72 columns.
    - End the body with `Closes #N`, then any attribution lines your agent adds.
@@ -69,9 +70,10 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 1. Push: `git push -u origin <branch>`.
 2. Open the PR with `gh pr create`:
    - The title is the commit subject.
-   - The label comes from the commit type, so the release notes group the PR (see
-     `.github/release.yml`): `feat` → `--label enhancement`, `fix` → `--label bug`, `docs` →
-     `--label documentation`. Other types get no label and are listed under "Other changes".
+   - The label comes from the commit type, whatever the scope, so the release notes group the
+     PR (see `.github/release.yml`): `feat` → `--label enhancement`, `fix` → `--label bug`,
+     `docs` → `--label documentation`. Other types get no label and are listed under "Other
+     changes".
    - The body has these parts, in this order:
      - `Closes #N.`
      - Why the change was needed.

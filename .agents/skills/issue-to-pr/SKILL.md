@@ -26,7 +26,7 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    - Add or update tests for any behavior change. CLI behavior is tested in `tests/cli/`,
      which runs the real binary. Reader details are tested in unit tests next to the code.
    - Update the docs the change touches:
-     - the README for anything a user sees;
+     - the README or `docs/` (install, usage, formats) for anything a user sees;
      - `SECURITY.md` when the change affects how untrusted input is handled;
      - a new ADR in `docs/adr/` (see its README) for a design decision with real alternatives.
 4. If the change touches a reader (`src/opc.rs`, `src/docx/`, `src/pptx.rs`, `src/xlsx/`) or

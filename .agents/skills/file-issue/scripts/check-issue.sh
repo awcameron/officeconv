@@ -17,8 +17,8 @@ problem() {
 }
 
 first=$(grep -m1 -v '^[[:space:]]*$' "$body")
-echo "$first" | grep -Eq '^(Split from #[0-9]+\. )?Priority: \*\*P[123]\*\*' ||
-    problem "the first line must start with 'Priority: **P1**' (or P2, P3), or with 'Split from #N. Priority: ...'; it is: $first"
+echo "$first" | grep -Eq '^(Split from #[0-9]+\. )?Priority: \*\*P[0-3]\*\*' ||
+    problem "the first line must start with 'Priority: **P0**' (to P3), or with 'Split from #N. Priority: ...'; it is: $first"
 
 change=$(grep -n -m1 '^## Change$' "$body" | cut -d: -f1)
 criteria=$(grep -n -m1 '^## Acceptance criteria$' "$body" | cut -d: -f1)

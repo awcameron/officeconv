@@ -86,11 +86,12 @@ each led by a bold phrase. -->
 
 ## Priorities
 
-| Priority | Meaning                                                                     | Example                                     |
-| -------- | --------------------------------------------------------------------------- | ------------------------------------------- |
-| **P1**   | Broken or unsafe behavior, or a decision that other planned work depends on | #131, the ADR the format features build on  |
-| **P2**   | A clear improvement users would notice                                      | #132, merged cells drawn as one cell in PDF |
-| **P3**   | Nothing broken: new content, friction removed, or docs                      | #142, restructuring the README              |
+| Priority | Meaning                                                                         | Example                                     |
+| -------- | ------------------------------------------------------------------------------- | ------------------------------------------- |
+| **P0**   | Before anything else: a broken or unsafe release, or a safeguard others need    | #50, fuzzing the archive and the readers    |
+| **P1**   | Next: a decision other planned work depends on, or a hardening gap              | #131, the ADR the format features build on  |
+| **P2**   | A clear improvement users would notice                                          | #132, merged cells drawn as one cell in PDF |
+| **P3**   | Nothing broken: new content, friction removed, or docs                          | #142, restructuring the README              |
 
 A security vulnerability isn't filed as an issue at all: point the user to the private report in
 SECURITY.md.

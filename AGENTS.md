@@ -24,6 +24,7 @@ modules:
 - `fuzz/`: cargo-fuzz targets.
 - `tools/compare/`: compares two builds' output.
 - `scripts/check.sh`: the checks to run before committing.
+- `scripts/smoke.sh`: the smoke test the Release workflow runs on every binary.
 
 ## Checks
 

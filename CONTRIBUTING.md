@@ -133,6 +133,7 @@ tests/cli/           end-to-end tests that run the real binary
 fuzz/                fuzz targets for the zip reader and the four readers (cargo-fuzz)
 tools/compare/       compares the output of two builds on generated files
 scripts/check.sh     the checks to run before committing
+scripts/smoke.sh     runs a built binary once for each kind of input, as releases do
 build.rs             compresses the fonts in assets/fonts/ before they're built into the binary
 assets/fonts/        Noto Sans, built into the binary for PDF output, and its license
 docs/                the user guide beyond the README: installing, usage, and formats
@@ -158,10 +159,11 @@ LICENSE              MIT
 Bump `version` in `Cargo.toml` (and `Cargo.lock`, with `cargo update -w`) in a PR, and merge
 it. That's all: there's no tag to push.
 
-On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, tags the
-commit `vX.Y.Z`, and publishes a GitHub Release with a binary for Linux (x86_64 and arm64, each
-linked against glibc and statically with musl), macOS (Apple Silicon, Intel) and Windows (x86_64,
-arm64), each with a SHA-256 checksum. The archives' names have no
+On the merge, the [release workflow](.github/workflows/release.yml) runs the tests, builds a
+binary for Linux (x86_64 and arm64, each linked against glibc and statically with musl), macOS
+(Apple Silicon, Intel) and Windows (x86_64, arm64), and smoke-tests each one on a runner of its
+own platform. Only when every binary has passed does it tag the commit `vX.Y.Z` and publish a
+GitHub Release with all of them, each with a SHA-256 checksum. The archives' names have no
 version, so the `releases/latest/download/` links in the README's
 [Install](README.md#download-a-binary) section always get the newest release. A merge that
 changes `Cargo.toml` but not the version finds the tag already there and publishes nothing.
@@ -171,9 +173,17 @@ The release notes are GitHub's generated list of PRs, grouped by label as
 [`.github/release.yml`](.github/release.yml) sets out: features, fixes, documentation, then other
 changes. The version-bump PR, labeled `release`, is left out.
 
-Nothing is tagged until the tests pass. If a build fails after that, use "Re-run failed jobs"
-in the Actions tab: re-running every job would find the tag already there and stop. One
-platform failing doesn't cancel the others.
+The smoke test, [`scripts/smoke.sh`](scripts/smoke.sh), runs a built binary once for each kind
+of input, including PDF output, and checks its version and its usage exit code. Run it on your
+own build with `scripts/smoke.sh target/release/officeconv`. It needs Python 3, which writes
+its inputs. PRs that change the release workflow or the smoke test build and smoke-test every
+platform without publishing anything.
+
+Nothing is tagged or published until the tests and every smoke test pass. If a build or smoke
+test fails, nothing is public yet: use "Re-run failed jobs" in the Actions tab for a flaky
+failure. If publishing fails after the release was created, "Re-run failed jobs" replaces its
+files; re-running every job would find the tag already there and stop. One platform failing
+doesn't cancel the others.
 
 Releases build with exactly the Rust version in `rust-version` in `Cargo.toml`, not whatever
 `stable` is that day, so the same commit always builds the same way. CI's `msrv` job runs the

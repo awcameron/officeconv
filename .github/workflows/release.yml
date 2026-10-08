@@ -2,14 +2,15 @@ name: Release
 
 # Merging a change to `version` in Cargo.toml publishes a GitHub Release, tagged vX.Y.Z on the
 # merge commit, with a binary for each platform. A push to main whose version already has a
-# tag, such as a dependency update, publishes nothing. PRs that change this file build every
-# platform without publishing anything.
+# tag, such as a dependency update, publishes nothing. Every binary is smoke-tested on its own
+# platform before anything is published. PRs that change this file or the smoke test build and
+# smoke-test every platform without publishing anything.
 on:
   push:
     branches: [main]
     paths: [Cargo.toml]
   pull_request:
-    paths: [.github/workflows/release.yml]
+    paths: [.github/workflows/release.yml, scripts/smoke.sh, scripts/smoke-inputs.py]
 
 # Runs on main wait for each other, so two merges can't both see a tag missing and both try to
 # release it. A new push to a PR cancels that PR's older run.
@@ -65,34 +66,15 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-  create-release:
+  build:
     needs: check
-    if: needs.check.outputs.tag != ''
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Creates the tag too, on the commit this run tested. A tag created with GITHUB_TOKEN
-      # doesn't start other workflows, so the binaries are built by the job below.
-      - name: Create release
-        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.check.outputs.tag }}
-
-  upload:
-    needs: [check, create-release]
-    # Runs on PRs too, where create-release is skipped, to check that every platform builds.
+    # Runs on PRs too, where check finds no tag, to check that every platform builds.
     if: >-
       !failure() && !cancelled()
       && (github.event_name == 'pull_request' || needs.check.outputs.tag != '')
     runs-on: ${{ matrix.os }}
-    # Job permissions replace the workflow's, so contents: write (uploading) is repeated here.
-    # id-token and attestations let the attest step sign with a short-lived Sigstore
-    # certificate and store the attestation.
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     strategy:
       # One platform failing leaves the others to finish, so "Re-run failed jobs" repeats only
       # that one.
@@ -132,8 +114,10 @@ jobs:
           toolchain: ${{ needs.check.outputs.toolchain }}
           targets: ${{ matrix.target }}
 
+      # Builds the archive and its checksum without uploading them: publish uploads them once
+      # every platform's binary has passed the smoke test.
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
-        id: upload
+        id: build
         with:
           bin: officeconv
           target: ${{ matrix.target }}
@@ -145,17 +129,111 @@ jobs:
           include: LICENSE,README.md,assets/fonts/OFL.txt
           checksum: sha256
           locked: true
-          # The run is on main, not the tag, so name the tag. Empty on PRs, which don't use it.
-          ref: ${{ needs.check.outputs.tag && format('refs/tags/{0}', needs.check.outputs.tag) || '' }}
-          dry-run: ${{ github.event_name == 'pull_request' }}
+          dry-run: true
           dry-run-intended: true
-          token: ${{ github.token }}
 
-      # Records, signed through Sigstore, that this workflow built the archive from this commit,
-      # so `gh attestation verify` can check a download came from here and not just that it
-      # matches a checksum on the same page. Only on releases: PR builds aren't published.
-      - name: Attest the archive
-        if: needs.check.outputs.tag != ''
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: officeconv-${{ matrix.target }}
+          path: |
+            ${{ steps.build.outputs.tar || steps.build.outputs.zip }}
+            ${{ steps.build.outputs.sha256 }}
+          if-no-files-found: error
+
+  smoke-test:
+    # Skipped with build, on a push to main that has nothing to release.
+    needs: build
+    # Each binary runs on a runner of its own platform, so the archive users download is the
+    # one tested. These are the build job's targets, with the runner that can run each one.
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+    steps:
+      # For scripts/smoke.sh and the version in Cargo.toml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: officeconv-${{ matrix.target }}
+          path: dist
+      - name: Smoke test
+        shell: bash
+        run: |
+          mkdir unpacked
+          case "$TARGET" in
+            # Python, which smoke.sh needs anyway, unzips on every Windows runner.
+            *-windows-*)
+              python=$(command -v python3 || command -v python)
+              "$python" -m zipfile -e "dist/officeconv-$TARGET.zip" unpacked
+              bin=unpacked/officeconv.exe
+              ;;
+            *)
+              tar -xzf "dist/officeconv-$TARGET.tar.gz" -C unpacked
+              bin=unpacked/officeconv
+              ;;
+          esac
+          scripts/smoke.sh "$bin"
+        env:
+          TARGET: ${{ matrix.target }}
+
+  publish:
+    needs: [check, smoke-test]
+    if: needs.check.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    # id-token and attestations let the attest step sign with a short-lived Sigstore
+    # certificate and store the attestation.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: officeconv-*
+          path: dist
+          merge-multiple: true
+
+      # Creates the tag too, on the commit this run tested, only now that every binary has
+      # passed: a release is never public with a binary missing or broken. If the release
+      # already exists, this is "Re-run failed jobs" after a failed attest step, so the files are
+      # replaced instead.
+      - name: Create release
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$TAG" --generate-notes
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+
+      # Records, signed through Sigstore, that this workflow built each archive from this
+      # commit, so `gh attestation verify` can check a download came from here and not just that
+      # it matches a checksum on the same page.
+      - name: Attest the archives
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.upload.outputs.tar || steps.upload.outputs.zip }}
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip

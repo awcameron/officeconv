@@ -23,8 +23,9 @@ pub enum Block {
         level: u8,
         runs: Vec<Run>,
     },
-    /// Rows of cells. The first row is treated as the header row.
-    Table(Vec<Vec<CellRuns>>),
+    /// Rows of cells. The first row is treated as the header row. Every span stays inside the
+    /// table, and every covered cell belongs to exactly one cell above or to its left.
+    Table(Vec<Vec<TableCell>>),
     /// A horizontal rule, such as the break between two slides.
     Rule,
 }
@@ -32,6 +33,38 @@ pub enum Block {
 /// The formatted text of one document table cell. Paragraphs inside the cell are separated by
 /// `"\n"`. Not to be confused with [`crate::table::Cell`], a typed spreadsheet value.
 pub type CellRuns = Vec<Run>;
+
+/// One position in a document table's grid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableCell {
+    /// A cell starting here, `cols` columns wide and `rows` rows tall: 1 and 1 unless merged.
+    Content {
+        runs: CellRuns,
+        cols: usize,
+        rows: usize,
+    },
+    /// Part of a merged cell that starts above or to the left.
+    Covered,
+}
+
+impl TableCell {
+    /// A cell that isn't merged with any other.
+    pub fn new(runs: CellRuns) -> Self {
+        TableCell::Content {
+            runs,
+            cols: 1,
+            rows: 1,
+        }
+    }
+
+    /// The cell's text, or nothing if it's covered.
+    pub fn runs(&self) -> &[Run] {
+        match self {
+            TableCell::Content { runs, .. } => runs,
+            TableCell::Covered => &[],
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListKind {
@@ -174,7 +207,9 @@ pub fn resolve_images(
             }
             Block::Table(rows) => {
                 for cell in rows.iter_mut().flatten() {
-                    resolve_runs(cell, &mut export)?;
+                    if let TableCell::Content { runs, .. } = cell {
+                        resolve_runs(runs, &mut export)?;
+                    }
                 }
             }
             Block::Rule => {}
@@ -211,43 +246,160 @@ fn resolve_runs(
 /// Collects a table's cells as [`builder::BlockBuilder`] walks through its rows.
 #[derive(Debug, Default)]
 pub struct TableBuilder {
-    pub rows: Vec<Vec<CellRuns>>,
-    row: Vec<CellRuns>,
+    rows: Vec<Vec<Slot>>,
+    row: Vec<Slot>,
     /// The cell being filled in; add paragraphs to it with [`append_paragraph`].
     pub cell: CellRuns,
     /// How many columns the table's grid declares (`<w:gridCol>` or `<a:gridCol>`). A merged
     /// cell never spans past them.
     pub columns: usize,
-    /// How many grid columns the cell being filled in covers, from Word's `<w:gridSpan>`.
-    /// Reset after each cell.
+    /// Whether the file lists every cell a merge covers, as PowerPoint does, marking each with
+    /// `hMerge` or `vMerge`. Word instead leaves out the columns a `gridSpan` covers, so
+    /// [`end_cell`](Self::end_cell) adds them.
+    pub lists_merged_cells: bool,
+    /// How many columns the cell being filled in says it spans (`gridSpan`). Reset after each
+    /// cell.
     pub span: usize,
-    /// Whether the cell being filled in is covered by a merged neighbor, as PowerPoint marks
-    /// with `hMerge` or `vMerge`. PowerPoint hides its text, so it's read as empty. Reset
-    /// after each cell.
-    pub covered: bool,
+    /// How many rows the cell being filled in says it spans (PowerPoint's `rowSpan`). Word
+    /// doesn't say, so a Word cell spans as many rows as continue it. Reset after each cell.
+    pub row_span: usize,
+    /// Whether the cell being filled in is marked as part of a neighbor. Reset after each cell.
+    pub merged: Merged,
+}
+
+/// How a table cell is marked as part of a merged cell that starts elsewhere.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Merged {
+    #[default]
+    No,
+    /// Part of the cell to its left: PowerPoint's `hMerge`.
+    Left,
+    /// Part of the cell above: PowerPoint's `vMerge`, or Word's `<w:vMerge/>` without
+    /// `restart`.
+    Up,
+    /// Part of a cell above and to the left: both `hMerge` and `vMerge`.
+    Both,
+}
+
+/// One position in the grid as the file marks it, before [`TableBuilder::finish`] works out
+/// which cell covers what.
+#[derive(Debug)]
+enum Slot {
+    Cell {
+        runs: CellRuns,
+        cols: usize,
+        rows: usize,
+    },
+    Merged(Merged),
 }
 
 impl TableBuilder {
-    /// Moves the finished cell into the current row. A cell merged across columns fills the
-    /// first of them, and the rest stay empty so later cells keep their columns.
+    /// Moves the finished cell into the current row. In a Word table, a cell spanning several
+    /// columns is followed by cells marking the columns it covers.
     pub fn end_cell(&mut self) {
-        let cell = mem::take(&mut self.cell);
-        if mem::take(&mut self.covered) {
-            self.row.push(CellRuns::new());
-        } else {
-            self.row.push(cell);
+        let runs = mem::take(&mut self.cell);
+        let span = mem::take(&mut self.span).max(1);
+        let rows = mem::take(&mut self.row_span).max(1);
+        let merged = match mem::take(&mut self.merged) {
+            // Word shows the text of a cell that continues a merge, so keep it as a cell of its
+            // own rather than lose it.
+            Merged::Up if !self.lists_merged_cells && !is_blank(&runs) => Merged::No,
+            merged => merged,
+        };
+        self.row.push(match merged {
+            Merged::No => Slot::Cell {
+                runs,
+                cols: span,
+                rows: if self.lists_merged_cells {
+                    rows
+                } else {
+                    usize::MAX
+                },
+            },
+            merged => Slot::Merged(merged),
+        });
+        if !self.lists_merged_cells {
+            // Bounded by the grid, which costs the file bytes for every column, so a huge
+            // `gridSpan` value can't make a huge row.
+            let room = self.columns.saturating_sub(self.row.len());
+            let extra = (span - 1).min(room);
+            self.row
+                .extend((0..extra).map(|_| Slot::Merged(Merged::Left)));
         }
-        // Bounded by the grid, which costs the file bytes for every column, so a huge
-        // `gridSpan` value can't make a huge row.
-        let room = self.columns.saturating_sub(self.row.len());
-        let extra = mem::take(&mut self.span).saturating_sub(1).min(room);
-        self.row.resize(self.row.len() + extra, CellRuns::new());
     }
 
     /// Moves the finished row into the table.
     pub fn end_row(&mut self) {
         let row = mem::take(&mut self.row);
         self.rows.push(row);
+    }
+
+    /// The finished table: each cell spans as far as the cells marked as part of it go, up to
+    /// the span it declares.
+    ///
+    /// Merges only ever claim cells the file marks as merged, so no span passes the table or
+    /// overlaps another cell, and a merged mark nothing claims becomes an empty cell. It's one
+    /// pass: each cell is claimed at most once, and a failed claim stops at the first cell
+    /// that isn't marked.
+    pub fn finish(self) -> Vec<Vec<TableCell>> {
+        let slots = self.rows;
+        let mut claimed: Vec<Vec<bool>> = slots.iter().map(|row| vec![false; row.len()]).collect();
+        let mut spans = Vec::new();
+        for (r, row) in slots.iter().enumerate() {
+            for (c, slot) in row.iter().enumerate() {
+                let &Slot::Cell { cols, rows, .. } = slot else {
+                    continue;
+                };
+                let width = 1 + row[c + 1..]
+                    .iter()
+                    .zip(&claimed[r][c + 1..])
+                    .take(cols - 1)
+                    .take_while(|&(slot, &claimed)| {
+                        matches!(slot, Slot::Merged(Merged::Left)) && !claimed
+                    })
+                    .count();
+                claimed[r][c + 1..c + width].fill(true);
+
+                let mut height = 1;
+                while height < rows {
+                    let below = r + height;
+                    let Some(next) = slots.get(below) else {
+                        break;
+                    };
+                    let covers = next.len() >= c + width
+                        && matches!(next[c], Slot::Merged(Merged::Up | Merged::Both))
+                        && next[c + 1..c + width]
+                            .iter()
+                            .all(|slot| matches!(slot, Slot::Merged(_)))
+                        && claimed[below][c..c + width].iter().all(|&claimed| !claimed);
+                    if !covers {
+                        break;
+                    }
+                    claimed[below][c..c + width].fill(true);
+                    height += 1;
+                }
+                spans.push((width, height));
+            }
+        }
+
+        let mut spans = spans.into_iter();
+        slots
+            .into_iter()
+            .zip(claimed)
+            .map(|(row, claimed)| {
+                row.into_iter()
+                    .zip(claimed)
+                    .map(|(slot, claimed)| match slot {
+                        Slot::Cell { runs, .. } => {
+                            let (cols, rows) = spans.next().expect("a span for every cell");
+                            TableCell::Content { runs, cols, rows }
+                        }
+                        Slot::Merged(_) if claimed => TableCell::Covered,
+                        Slot::Merged(_) => TableCell::new(CellRuns::new()),
+                    })
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -270,7 +422,10 @@ mod tests {
                 Run::image("word/media/logo.png", "Logo"),
             ]),
             Block::Paragraph(vec![Run::image("word/media/missing.emf", "")]),
-            Block::Table(vec![vec![vec![Run::image("word/media/logo.png", "again")]]]),
+            Block::Table(vec![vec![TableCell::new(vec![Run::image(
+                "word/media/logo.png",
+                "again",
+            )])]]),
         ];
 
         resolve_images(&mut blocks, |part| {
@@ -285,7 +440,10 @@ mod tests {
                     Run::new("Logo: ", RunStyle::default()),
                     Run::image("img/logo.png", "Logo"),
                 ]),
-                Block::Table(vec![vec![vec![Run::image("img/logo.png", "again")]]]),
+                Block::Table(vec![vec![TableCell::new(vec![Run::image(
+                    "img/logo.png",
+                    "again"
+                )])]]),
             ]
         );
     }

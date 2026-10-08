@@ -1,6 +1,6 @@
 //! Rendering [`Block`]s as Markdown.
 
-use super::{Block, CellRuns, ListKind, Run, RunStyle, append_run};
+use super::{Block, ListKind, Run, RunStyle, TableCell, append_run};
 use crate::table::Table;
 use crate::writers::{MarkdownCells, escape_markdown_text, write_markdown};
 
@@ -57,14 +57,16 @@ fn render_list_item(kind: ListKind, level: u8, runs: &[Run]) -> String {
     format!("{indent}{marker} {text}")
 }
 
-/// Renders a table with the same Markdown writer the XLSX converter uses.
-fn render_table(rows: &[Vec<CellRuns>]) -> String {
+/// Renders a table with the same Markdown writer the XLSX converter uses. Markdown has no
+/// merged cells, so a merged cell's text goes in its first cell and the cells it covers are
+/// left empty.
+fn render_table(rows: &[Vec<TableCell>]) -> String {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
             row.iter()
                 // The table writer turns each "\n" into "<br>".
-                .map(|cell| render_runs(cell).replace("  \n", "\n"))
+                .map(|cell| render_runs(cell.runs()).replace("  \n", "\n"))
                 .collect()
         })
         .collect();
@@ -299,7 +301,7 @@ mod tests {
 
     #[test]
     fn renders_tables_with_line_breaks_and_pipes() {
-        let cell = |text: &str| vec![run(text, false, false)];
+        let cell = |text: &str| TableCell::new(vec![run(text, false, false)]);
         let blocks = [Block::Table(vec![
             vec![cell("Team"), cell("Members")],
             vec![cell("A|B"), cell("Bobby\nDon")],
@@ -310,6 +312,29 @@ mod tests {
 | Team | Members      |
 | ---- | ------------ |
 | A\\|B | Bobby<br>Don |
+"
+        );
+    }
+
+    #[test]
+    fn writes_a_merged_cell_in_its_first_cell() {
+        let blocks = [Block::Table(vec![
+            vec![
+                TableCell::Content {
+                    runs: vec![run("Wide and tall", false, false)],
+                    cols: 2,
+                    rows: 2,
+                },
+                TableCell::Covered,
+            ],
+            vec![TableCell::Covered, TableCell::Covered],
+        ])];
+        assert_eq!(
+            render(&blocks),
+            "\
+| Wide and tall |     |
+| ------------- | --- |
+|               |     |
 "
         );
     }

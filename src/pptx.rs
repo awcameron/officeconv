@@ -24,7 +24,7 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
-use crate::document::{Block, ListKind, Run, RunStyle, append_run, display_size, is_blank};
+use crate::document::{Block, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank};
 use crate::error::Result;
 use crate::images::{self, Images};
 use crate::opc::{self, Limits, Open, Targets, XmlHandler, attr};
@@ -403,12 +403,26 @@ impl XmlHandler for SlideParser<'_> {
                     attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
             }
             "br" => self.builder.text("\n"),
-            "tbl" if !is_empty => self.builder.start_table(),
+            "tbl" if !is_empty => {
+                self.builder.start_table();
+                if let Some(table) = self.builder.table() {
+                    table.lists_merged_cells = true;
+                }
+            }
             // A merged cell keeps the cells it covers in the XML, each marked `hMerge` or
             // `vMerge`, so every row already has all its columns; only their text is hidden.
+            // The cell the merge starts from says how far it goes.
             "tc" if !is_empty => {
                 if let Some(table) = self.builder.table() {
-                    table.covered = is_on(attr(e, "hMerge")) || is_on(attr(e, "vMerge"));
+                    let span = |name| attr(e, name).and_then(|v| v.parse().ok()).unwrap_or(1);
+                    table.span = span("gridSpan");
+                    table.row_span = span("rowSpan");
+                    table.merged = match (is_on(attr(e, "hMerge")), is_on(attr(e, "vMerge"))) {
+                        (false, false) => Merged::No,
+                        (true, false) => Merged::Left,
+                        (false, true) => Merged::Up,
+                        (true, true) => Merged::Both,
+                    };
                 }
             }
             _ => {}
@@ -452,6 +466,7 @@ fn is_on(value: Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::TableCell;
 
     const PLAIN: RunStyle = RunStyle {
         bold: false,
@@ -590,38 +605,103 @@ mod tests {
         assert_eq!(
             slide.body,
             [Block::Table(vec![
-                vec![runs("Region"), runs("Growth")],
-                vec![runs("EMEA"), runs("18%")],
+                vec![
+                    TableCell::new(runs("Region")),
+                    TableCell::new(runs("Growth"))
+                ],
+                vec![TableCell::new(runs("EMEA")), TableCell::new(runs("18%"))],
             ])]
         );
     }
 
     #[test]
     fn a_merged_cell_hides_the_cells_it_covers() {
-        let cell = |attrs: &str, text: &str| {
-            format!(
-                "<a:tc{attrs}><a:txBody><a:bodyPr/>{}</a:txBody><a:tcPr/></a:tc>",
-                para(text)
-            )
+        let table = merged_table(&[
+            &[
+                (r#" gridSpan="2""#, "Sales 2026"),
+                (r#" hMerge="1""#, "hidden"),
+            ],
+            &[(r#" rowSpan="2""#, "Q1"), ("", "Q2")],
+            &[(r#" vMerge="1""#, "hidden"), ("", "140")],
+        ]);
+        let merged = |text: &str, cols, rows| TableCell::Content {
+            runs: runs(text),
+            cols,
+            rows,
         };
-        let table = format!(
-            r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="1"/><a:gridCol w="1"/></a:tblGrid><a:tr h="1">{}{}</a:tr><a:tr h="1">{}{}</a:tr><a:tr h="1">{}{}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
-            cell(r#" gridSpan="2""#, "Sales 2026"),
-            cell(r#" hMerge="1""#, "hidden"),
-            cell(r#" rowSpan="2""#, "Q1"),
-            cell("", "Q2"),
-            cell(r#" vMerge="1""#, "hidden"),
-            cell("", "140"),
-        );
-        let slide = parse(&table);
         assert_eq!(
-            slide.body,
+            parse(&table).body,
             [Block::Table(vec![
-                vec![runs("Sales 2026"), Vec::new()],
-                vec![runs("Q1"), runs("Q2")],
-                vec![Vec::new(), runs("140")],
+                vec![merged("Sales 2026", 2, 1), TableCell::Covered],
+                vec![merged("Q1", 1, 2), TableCell::new(runs("Q2"))],
+                vec![TableCell::Covered, TableCell::new(runs("140"))],
             ])]
         );
+    }
+
+    #[test]
+    fn a_span_larger_than_the_table_is_clamped_to_it() {
+        let table = merged_table(&[
+            &[
+                (r#" gridSpan="2" rowSpan="4000000000""#, "Both"),
+                (r#" hMerge="1""#, ""),
+            ],
+            &[(r#" hMerge="1" vMerge="1""#, ""), (r#" vMerge="1""#, "")],
+        ]);
+        assert_eq!(
+            parse(&table).body,
+            [Block::Table(vec![
+                vec![
+                    TableCell::Content {
+                        runs: runs("Both"),
+                        cols: 2,
+                        rows: 2,
+                    },
+                    TableCell::Covered,
+                ],
+                vec![TableCell::Covered, TableCell::Covered],
+            ])]
+        );
+    }
+
+    /// A merge mark nothing claims, such as one past the span the merged cell declares, is an
+    /// empty cell of its own.
+    #[test]
+    fn a_merge_never_passes_the_span_it_declares() {
+        let table = merged_table(&[
+            &[("", "One"), (r#" hMerge="1""#, "hidden")],
+            &[(r#" vMerge="1""#, "hidden"), ("", "Two")],
+        ]);
+        let empty = || TableCell::new(Vec::new());
+        assert_eq!(
+            parse(&table).body,
+            [Block::Table(vec![
+                vec![TableCell::new(runs("One")), empty()],
+                vec![empty(), TableCell::new(runs("Two"))],
+            ])]
+        );
+    }
+
+    /// A slide holding one table: each row is a list of cells' attributes and text.
+    fn merged_table(rows: &[&[(&str, &str)]]) -> String {
+        let rows: String = rows
+            .iter()
+            .map(|cells| {
+                let cells: String = cells
+                    .iter()
+                    .map(|(attrs, text)| {
+                        format!(
+                            "<a:tc{attrs}><a:txBody><a:bodyPr/>{}</a:txBody><a:tcPr/></a:tc>",
+                            para(text)
+                        )
+                    })
+                    .collect();
+                format!(r#"<a:tr h="1">{cells}</a:tr>"#)
+            })
+            .collect();
+        format!(
+            r#"<p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="1"/><a:gridCol w="1"/></a:tblGrid>{rows}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#
+        )
     }
 
     /// PowerPoint never nests paragraphs, but a broken file can. The outer paragraph keeps its
@@ -658,7 +738,9 @@ mod tests {
         );
         assert_eq!(
             parse(&table).body,
-            [Block::Table(vec![vec![runs("Outer\nx\ny")]])]
+            [Block::Table(vec![vec![TableCell::new(runs(
+                "Outer\nx\ny"
+            ))]])]
         );
     }
 

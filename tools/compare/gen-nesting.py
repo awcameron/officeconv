@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes valid .docx, .pptx and .xlsx files whose XML nests the elements the readers care about
 at random: mostly the way Office does, sometimes not (runs in runs, text outside runs, tables in
-odd places, Fallback anywhere). compare.sh converts them with two builds of officeconv.
+odd places, Fallback anywhere). Table cells are merged at random too, sometimes past the table. compare.sh converts them with two builds of officeconv.
 
 Fuzz corpus inputs rarely get this far: most are broken zips. These are always valid packages,
 so every one reaches the XML readers.
@@ -70,6 +70,8 @@ W = {
     "w:rPrChange": a(), "w:drawing": a(), "wp:docPr": a(descr=["Logo", ""], title=["T"]),
     "a:blip": a(r_embed=["rId2", "rId9"]), "v:imagedata": a(r_id=["rId2"], o_title=["Old"]),
     "w:txbxContent": a(), "m:r": a(), "m:t": a(), "w:delText": a(), "x:other": a(),
+    "w:tblGrid": a(), "w:gridCol": a(), "w:tcPr": a(), "w:tcPrChange": a(),
+    "w:gridSpan": a(w_val=["1", "2", "3", "x", "4000000000"]), "w:vMerge": a(w_val=["restart", "continue"]),
 }
 W_CHILDREN = {
     None: ["w:p", "w:p", "w:tbl"], "w:body": ["w:p", "w:tbl"],
@@ -77,7 +79,8 @@ W_CHILDREN = {
     "w:pPr": ["w:pStyle", "w:numPr", "w:pPrChange"], "w:numPr": ["w:numId", "w:ilvl"],
     "w:r": ["w:rPr", "w:t", "w:t", "w:tab", "w:br", "w:drawing", "mc:AlternateContent"],
     "w:rPr": ["w:b", "w:i", "w:rPrChange"], "w:t": [], "w:hyperlink": ["w:r"],
-    "w:tbl": ["w:tr"], "w:tr": ["w:tc"], "w:tc": ["w:p", "w:tbl"],
+    "w:tbl": ["w:tblGrid", "w:tr", "w:tr"], "w:tblGrid": ["w:gridCol"], "w:tr": ["w:tc"],
+    "w:tc": ["w:tcPr", "w:p", "w:tbl"], "w:tcPr": ["w:gridSpan", "w:vMerge", "w:tcPrChange"],
     "mc:AlternateContent": ["mc:Choice", "mc:Fallback"], "mc:Choice": ["w:r", "w:drawing"],
     "mc:Fallback": ["w:r", "w:t"], "w:drawing": ["wp:docPr", "a:blip", "w:txbxContent"],
     "w:txbxContent": ["w:p"],
@@ -105,7 +108,10 @@ P = {
     "a:p": a(), "a:pPr": a(lvl=["0", "1", "x"]), "a:buNone": a(), "a:buChar": a(),
     "a:buAutoNum": a(), "a:r": a(), "a:rPr": a(b=["0", "1", "true"], i=["1"]),
     "a:hlinkClick": a(r_id=["rId2", "rId9"]), "a:t": a(), "a:br": a(), "a:fld": a(),
-    "p:graphicFrame": a(), "a:tbl": a(), "a:tr": a(), "a:tc": a(), "p:pic": a(),
+    "p:graphicFrame": a(), "a:tbl": a(), "a:tblGrid": a(), "a:gridCol": a(), "a:tr": a(),
+    "a:tc": a(gridSpan=["1", "2", "3", "x", "4000000000"], rowSpan=["1", "2", "3", "4000000000"],
+              hMerge=["1", "0"], vMerge=["1", "true"]),
+    "p:pic": a(),
     "p:nvPicPr": a(), "p:blipFill": a(), "a:blip": a(r_embed=["rId3", "rId9"]),
     "mc:AlternateContent": a(), "mc:Choice": a(), "mc:Fallback": a(), "x:other": a(),
 }
@@ -115,7 +121,8 @@ P_CHILDREN = {
     "p:txBody": ["a:p"], "a:p": ["a:pPr", "a:r", "a:r", "a:br", "a:fld"],
     "a:pPr": ["a:buNone", "a:buChar", "a:buAutoNum"], "a:r": ["a:rPr", "a:t"],
     "a:fld": ["a:rPr", "a:t"], "a:rPr": ["a:hlinkClick"], "a:t": [],
-    "p:graphicFrame": ["a:tbl"], "a:tbl": ["a:tr"], "a:tr": ["a:tc"], "a:tc": ["p:txBody"],
+    "p:graphicFrame": ["a:tbl"], "a:tbl": ["a:tblGrid", "a:tr", "a:tr"], "a:tblGrid": ["a:gridCol"],
+    "a:tr": ["a:tc"], "a:tc": ["p:txBody"],
     "p:pic": ["p:nvPicPr", "p:blipFill"], "p:nvPicPr": ["p:cNvPr"], "p:cNvPr": ["a:hlinkClick"],
     "p:blipFill": ["a:blip"], "mc:AlternateContent": ["mc:Choice", "mc:Fallback"],
     "mc:Choice": ["p:sp", "p:pic"], "mc:Fallback": ["p:sp", "p:pic"],

@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::{ListKind, Run};
+use crate::document::{ListKind, Run, TableCell};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,
@@ -222,8 +222,8 @@ fn reads_tables_and_flattens_nested_ones() {
         parse(&body),
         [
             Block::Table(vec![
-                vec![text_block("Team"), text_block("Members")],
-                vec![text_block("One"), text_block("Bobby\nDon\nx\ny")],
+                vec![cell_of("Team"), cell_of("Members")],
+                vec![cell_of("One"), cell_of("Bobby\nDon\nx\ny")],
             ]),
             Block::Paragraph(text_block("After")),
         ]
@@ -344,28 +344,107 @@ fn maps_heading_styles() {
     assert_eq!(heading_level("Normal"), None);
 }
 
+/// A table cell holding `text`, merged across `cols` columns and `rows` rows.
+fn merged(text: &str, cols: usize, rows: usize) -> TableCell {
+    TableCell::Content {
+        runs: text_block(text),
+        cols,
+        rows,
+    }
+}
+
+fn cell_of(text: &str) -> TableCell {
+    TableCell::new(text_block(text))
+}
+
+/// A table cell with properties `props` holding `text`, or an empty paragraph.
+fn tc(props: &str, text: &str) -> String {
+    format!(r#"<w:tc><w:tcPr>{props}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#)
+}
+
+/// A table with `columns` grid columns and these rows of cells.
+fn grid_table(columns: usize, rows: &[&[String]]) -> String {
+    let rows: String = rows
+        .iter()
+        .map(|cells| format!("<w:tr>{}</w:tr>", cells.concat()))
+        .collect();
+    format!(
+        "<w:tbl><w:tblGrid>{}</w:tblGrid>{rows}</w:tbl>",
+        "<w:gridCol/>".repeat(columns)
+    )
+}
+
 #[test]
-fn a_merged_cell_fills_its_first_column_and_keeps_the_rest() {
-    let cell = |span: u32, text: &str| {
-        format!(
-            r#"<w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
-        )
-    };
-    let row = |cells: &[String]| format!("<w:tr>{}</w:tr>", cells.concat());
-    let body = format!(
-        r#"<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid>{}{}{}</w:tbl>"#,
-        row(&[cell(3, "Sales 2026")]),
-        row(&[cell(1, "Q1"), cell(1, "Q2"), cell(1, "Q3")]),
-        row(&[cell(2, "H1"), cell(1, "260")]),
+fn a_cell_merged_across_columns_covers_the_rest() {
+    let span = |n: u32| format!(r#"<w:gridSpan w:val="{n}"/>"#);
+    let body = grid_table(
+        3,
+        &[
+            &[tc(&span(3), "Sales 2026")],
+            &[tc("", "Q1"), tc("", "Q2"), tc("", "Q3")],
+            &[tc(&span(2), "H1"), tc("", "260")],
+        ],
     );
 
-    let empty = Vec::new;
     assert_eq!(
         parse(&body),
         [Block::Table(vec![
-            vec![text_block("Sales 2026"), empty(), empty()],
-            vec![text_block("Q1"), text_block("Q2"), text_block("Q3")],
-            vec![text_block("H1"), empty(), text_block("260")],
+            vec![
+                merged("Sales 2026", 3, 1),
+                TableCell::Covered,
+                TableCell::Covered
+            ],
+            vec![cell_of("Q1"), cell_of("Q2"), cell_of("Q3")],
+            vec![merged("H1", 2, 1), TableCell::Covered, cell_of("260")],
+        ])]
+    );
+}
+
+#[test]
+fn a_cell_merged_down_rows_covers_the_cells_that_continue_it() {
+    let restart = r#"<w:gridSpan w:val="2"/><w:vMerge w:val="restart"/>"#;
+    let continued = r#"<w:gridSpan w:val="2"/><w:vMerge/>"#;
+    let body = grid_table(
+        3,
+        &[
+            &[tc(restart, "North"), tc("", "Q1")],
+            &[tc(continued, ""), tc("", "Q2")],
+            &[tc(continued, ""), tc("", "Q3")],
+            &[tc("", "South"), tc("", ""), tc("", "Q1")],
+        ],
+    );
+
+    assert_eq!(
+        parse(&body),
+        [Block::Table(vec![
+            vec![merged("North", 2, 3), TableCell::Covered, cell_of("Q1")],
+            vec![TableCell::Covered, TableCell::Covered, cell_of("Q2")],
+            vec![TableCell::Covered, TableCell::Covered, cell_of("Q3")],
+            vec![cell_of("South"), TableCell::new(Vec::new()), cell_of("Q1")],
+        ])]
+    );
+}
+
+/// Word hides nothing a continuing cell holds, so neither do we: it ends the merge instead.
+#[test]
+fn a_continuing_cell_with_text_keeps_it() {
+    let body = grid_table(
+        1,
+        &[
+            &[tc(r#"<w:vMerge w:val="restart"/>"#, "Top")],
+            &[tc("<w:vMerge/>", "")],
+            &[tc("<w:vMerge/>", "Kept")],
+            &[tc("<w:vMerge/>", "")],
+        ],
+    );
+
+    assert_eq!(
+        parse(&body),
+        [Block::Table(vec![
+            vec![merged("Top", 1, 2)],
+            vec![TableCell::Covered],
+            vec![merged("Kept", 1, 2)],
+            vec![TableCell::Covered],
         ])]
     );
 }
@@ -375,6 +454,32 @@ fn a_merged_cell_never_spans_past_the_grid() {
     let body = r#"<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/><w:tblGridChange><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="4000000000"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     assert_eq!(
         parse(body),
-        [Block::Table(vec![vec![text_block("x"), Vec::new()]])]
+        [Block::Table(vec![vec![
+            merged("x", 2, 1),
+            TableCell::Covered
+        ]])]
+    );
+}
+
+/// A merge that continues past the last row, or a continuing cell with nothing to continue,
+/// stays inside the table.
+#[test]
+fn a_merge_down_ends_with_the_table() {
+    let body = grid_table(
+        2,
+        &[
+            &[
+                tc("<w:vMerge/>", ""),
+                tc(r#"<w:vMerge w:val="restart"/>"#, "x"),
+            ],
+            &[tc("", "y"), tc("<w:vMerge/>", "")],
+        ],
+    );
+    assert_eq!(
+        parse(&body),
+        [Block::Table(vec![
+            vec![TableCell::new(Vec::new()), merged("x", 1, 2)],
+            vec![cell_of("y"), TableCell::Covered],
+        ])]
     );
 }

@@ -139,7 +139,7 @@ docs/                the user guide beyond the README: installing, usage, and fo
 docs/adr/            design decisions, one record each
 .devcontainer/       a Linux image to build, test and fuzz in, for Docker, VS Code and Codespaces
 .github/             CI, release and dev container workflows, Dependabot, and release notes
-.agents/skills/      agent skills for this repo's workflows: issue to PR, and releasing
+.agents/skills/      agent skills for this repo's workflows: filing issues, issue to PR, releasing
 .claude/skills       a symlink to .agents/skills, so Claude Code finds them too
 AGENTS.md            the rules and checks for coding agents
 CLAUDE.md            imports AGENTS.md for Claude Code

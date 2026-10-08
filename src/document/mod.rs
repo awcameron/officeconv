@@ -1,5 +1,10 @@
 //! A small document model shared by the DOCX and PPTX readers: just enough structure
 //! to write Markdown or a simple PDF.
+//!
+//! The model is generic over its images. A reader builds blocks of [`ImagePart`]s, naming each
+//! image's part inside the package; [`resolve_images`] turns them into [`ImageRef`]s, the
+//! links or keys a writer shows. The writers take only the second kind, so a block whose
+//! images haven't been resolved can't reach one.
 
 pub mod builder;
 pub mod markdown;
@@ -8,38 +13,38 @@ use std::mem;
 
 use crate::error::Result;
 
-/// One top-level piece of a document.
+/// One top-level piece of a document, with images of type `I`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Block {
+pub enum Block<I = ImageRef> {
     /// A heading, level 1 (largest) to 6.
     Heading {
         level: u8,
-        runs: Vec<Run>,
+        runs: Vec<Run<I>>,
     },
-    Paragraph(Vec<Run>),
+    Paragraph(Vec<Run<I>>),
     /// A bulleted or numbered list item; `level` 0 is the outermost list.
     ListItem {
         kind: ListKind,
         level: u8,
-        runs: Vec<Run>,
+        runs: Vec<Run<I>>,
     },
     /// Rows of cells. The first row is treated as the header row. Every span stays inside the
     /// table, and every covered cell belongs to exactly one cell above or to its left.
-    Table(Vec<Vec<TableCell>>),
+    Table(Vec<Vec<TableCell<I>>>),
     /// A horizontal rule, such as the break between two slides.
     Rule,
 }
 
 /// The formatted text of one document table cell. Paragraphs inside the cell are separated by
 /// `"\n"`. Not to be confused with [`crate::table::Cell`], a typed spreadsheet value.
-pub type CellRuns = Vec<Run>;
+pub type CellRuns<I = ImageRef> = Vec<Run<I>>;
 
 /// One position in a document table's grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TableCell {
+pub enum TableCell<I = ImageRef> {
     /// A cell starting here, `cols` columns wide and `rows` rows tall: 1 and 1 unless merged.
     Content {
-        runs: CellRuns,
+        runs: CellRuns<I>,
         cols: usize,
         rows: usize,
     },
@@ -47,9 +52,9 @@ pub enum TableCell {
     Covered,
 }
 
-impl TableCell {
+impl<I> TableCell<I> {
     /// A cell that isn't merged with any other.
-    pub fn new(runs: CellRuns) -> Self {
+    pub fn new(runs: CellRuns<I>) -> Self {
         TableCell::Content {
             runs,
             cols: 1,
@@ -58,7 +63,7 @@ impl TableCell {
     }
 
     /// The cell's text, or nothing if it's covered.
-    pub fn runs(&self) -> &[Run] {
+    pub fn runs(&self) -> &[Run<I>] {
         match self {
             TableCell::Content { runs, .. } => runs,
             TableCell::Covered => &[],
@@ -75,25 +80,59 @@ pub enum ListKind {
 /// A stretch of text that shares the same formatting (and link, if any).
 ///
 /// A run can instead be an image: then `image` says where it is, and `text` is its alt text.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Run {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run<I = ImageRef> {
     pub text: String,
     pub style: RunStyle,
     pub link: Option<String>,
-    pub image: Option<ImageRef>,
+    pub image: Option<I>,
 }
 
-/// An image in a run.
+impl<I> Default for Run<I> {
+    fn default() -> Self {
+        Run::new("", RunStyle::default())
+    }
+}
+
+/// An image as a reader finds it: the part inside the package that holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePart {
+    /// The image's part inside the package (`word/media/image1.png`).
+    pub part: String,
+    /// The size the document shows it at, width then height, in EMU (914,400 to the inch).
+    /// `None` if the document doesn't give one, or gives one [`display_size`] rejects.
+    pub size: Option<(u32, u32)>,
+}
+
+/// An image as a writer shows it, once [`resolve_images`] has dealt with its part.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageRef {
-    /// While reading: the image's part inside the package (`word/media/image1.png`).
-    /// After [`resolve_images`]: the link written into the Markdown, or for a PDF, the key of
-    /// its bytes in [`EmbeddedImages`](crate::images::EmbeddedImages).
+    /// The link written into the Markdown, or for a PDF, the key of its bytes in
+    /// [`EmbeddedImages`](crate::images::EmbeddedImages).
     pub source: String,
-    /// The size the document shows it at, width then height, in EMU (914,400 to the inch).
-    /// `None` if the document doesn't give one, or gives one [`display_size`] rejects. Only PDF
-    /// uses it: Markdown image syntax has no size.
+    /// The [`ImagePart`]'s size. Only PDF uses it: Markdown image syntax has no size.
     pub size: Option<(u32, u32)>,
+}
+
+impl ImagePart {
+    /// The image stored at `part`, with no display size until a reader sets one.
+    pub fn new(part: impl Into<String>) -> Self {
+        ImagePart {
+            part: part.into(),
+            size: None,
+        }
+    }
+}
+
+impl ImageRef {
+    /// An image found at `source`, with no display size.
+    #[cfg(test)]
+    pub fn new(source: impl Into<String>) -> Self {
+        ImageRef {
+            source: source.into(),
+            size: None,
+        }
+    }
 }
 
 /// EMU per point: Office measures sizes in English Metric Units.
@@ -121,7 +160,7 @@ pub struct RunStyle {
     pub italic: bool,
 }
 
-impl Run {
+impl<I> Run<I> {
     pub fn new(text: impl Into<String>, style: RunStyle) -> Self {
         Run {
             text: text.into(),
@@ -131,15 +170,11 @@ impl Run {
         }
     }
 
-    /// An image run: `source` is where the image is, `alt` describes it. It has no display
-    /// size until a reader sets one.
-    pub fn image(source: impl Into<String>, alt: impl Into<String>) -> Self {
+    /// An image run: `image` says where the image is, `alt` describes it.
+    pub fn image(image: I, alt: impl Into<String>) -> Self {
         Run {
             text: alt.into(),
-            image: Some(ImageRef {
-                source: source.into(),
-                size: None,
-            }),
+            image: Some(image),
             ..Run::default()
         }
     }
@@ -155,7 +190,7 @@ impl Run {
 
     /// True if `other` has the same formatting and link, so the two can be merged.
     /// Images never merge: each one is its own run.
-    pub fn same_format(&self, other: &Run) -> bool {
+    pub fn same_format(&self, other: &Run<I>) -> bool {
         self.image.is_none()
             && other.image.is_none()
             && self.style == other.style
@@ -167,7 +202,7 @@ impl Run {
 ///
 /// Office apps often split one word across several runs (spell-check, edits), so merging
 /// keeps the Markdown clean: `**Hello**`, not `**Hel****lo**`.
-pub fn append_run(runs: &mut Vec<Run>, run: Run) {
+pub fn append_run<I>(runs: &mut Vec<Run<I>>, run: Run<I>) {
     match runs.last_mut() {
         Some(last) if last.same_format(&run) => last.text.push_str(&run.text),
         _ => runs.push(run),
@@ -175,7 +210,7 @@ pub fn append_run(runs: &mut Vec<Run>, run: Run) {
 }
 
 /// Adds a paragraph's runs to a table cell, on a new line if the cell already has text.
-pub fn append_paragraph(cell: &mut CellRuns, runs: Vec<Run>) {
+pub fn append_paragraph<I>(cell: &mut CellRuns<I>, runs: Vec<Run<I>>) {
     if is_blank(&runs) {
         return;
     }
@@ -188,59 +223,94 @@ pub fn append_paragraph(cell: &mut CellRuns, runs: Vec<Run>) {
 }
 
 /// True if the runs contain nothing but whitespace (an image counts as content).
-pub fn is_blank(runs: &[Run]) -> bool {
+pub fn is_blank<I>(runs: &[Run<I>]) -> bool {
     runs.iter()
         .all(|r| r.image.is_none() && r.text.trim().is_empty())
 }
 
-/// Replaces each image's package part with the link `export` returns for it.
+/// Turns each image's package part into the link or key `export` returns for it.
 ///
 /// `export` returns `None` to leave an image out. Blocks left with nothing in them are removed.
 pub fn resolve_images(
-    blocks: &mut Vec<Block>,
+    blocks: Vec<Block<ImagePart>>,
     mut export: impl FnMut(&str) -> Result<Option<String>>,
-) -> Result<()> {
-    for block in blocks.iter_mut() {
-        match block {
+) -> Result<Vec<Block>> {
+    let mut resolved = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        let block = match block {
+            Block::Heading { level, runs } => Block::Heading {
+                level,
+                runs: resolve_runs(runs, &mut export)?,
+            },
+            Block::Paragraph(runs) => Block::Paragraph(resolve_runs(runs, &mut export)?),
+            Block::ListItem { kind, level, runs } => Block::ListItem {
+                kind,
+                level,
+                runs: resolve_runs(runs, &mut export)?,
+            },
+            Block::Table(rows) => Block::Table(
+                rows.into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|cell| resolve_cell(cell, &mut export))
+                            .collect()
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            Block::Rule => Block::Rule,
+        };
+        let empty = match &block {
             Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
-                resolve_runs(runs, &mut export)?;
+                is_blank(runs)
             }
-            Block::Table(rows) => {
-                for cell in rows.iter_mut().flatten() {
-                    if let TableCell::Content { runs, .. } = cell {
-                        resolve_runs(runs, &mut export)?;
-                    }
-                }
-            }
-            Block::Rule => {}
+            Block::Table(_) | Block::Rule => false,
+        };
+        if !empty {
+            resolved.push(block);
         }
     }
+    Ok(resolved)
+}
 
-    blocks.retain(|block| match block {
-        Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
-            !is_blank(runs)
-        }
-        Block::Table(_) | Block::Rule => true,
-    });
-    Ok(())
+fn resolve_cell(
+    cell: TableCell<ImagePart>,
+    export: &mut impl FnMut(&str) -> Result<Option<String>>,
+) -> Result<TableCell> {
+    Ok(match cell {
+        TableCell::Content { runs, cols, rows } => TableCell::Content {
+            runs: resolve_runs(runs, export)?,
+            cols,
+            rows,
+        },
+        TableCell::Covered => TableCell::Covered,
+    })
 }
 
 fn resolve_runs(
-    runs: &mut Vec<Run>,
+    runs: Vec<Run<ImagePart>>,
     export: &mut impl FnMut(&str) -> Result<Option<String>>,
-) -> Result<()> {
+) -> Result<Vec<Run>> {
     let mut resolved = Vec::with_capacity(runs.len());
-    for mut run in runs.drain(..) {
-        if let Some(image) = &mut run.image {
-            match export(&image.source)? {
-                Some(link) => image.source = link,
+    for run in runs {
+        let image = match run.image {
+            Some(image) => match export(&image.part)? {
+                Some(source) => Some(ImageRef {
+                    source,
+                    size: image.size,
+                }),
                 None => continue,
-            }
-        }
+            },
+            None => None,
+        };
+        let run = Run {
+            text: run.text,
+            style: run.style,
+            link: run.link,
+            image,
+        };
         append_run(&mut resolved, run);
     }
-    *runs = resolved;
-    Ok(())
+    Ok(resolved)
 }
 
 /// Collects a table's cells as [`builder::BlockBuilder`] walks through its rows.
@@ -249,7 +319,7 @@ pub struct TableBuilder {
     rows: Vec<Vec<Slot>>,
     row: Vec<Slot>,
     /// The cell being filled in; add paragraphs to it with [`append_paragraph`].
-    pub cell: CellRuns,
+    pub cell: CellRuns<ImagePart>,
     /// How many columns the table's grid declares (`<w:gridCol>` or `<a:gridCol>`). A merged
     /// cell never spans past them.
     pub columns: usize,
@@ -286,7 +356,7 @@ pub enum Merged {
 #[derive(Debug)]
 enum Slot {
     Cell {
-        runs: CellRuns,
+        runs: CellRuns<ImagePart>,
         cols: usize,
         rows: usize,
     },
@@ -341,7 +411,7 @@ impl TableBuilder {
     /// overlaps another cell, and a merged mark nothing claims becomes an empty cell. It's one
     /// pass: each cell is claimed at most once, and a failed claim stops at the first cell
     /// that isn't marked.
-    pub fn finish(self) -> Vec<Vec<TableCell>> {
+    pub fn finish(self) -> Vec<Vec<TableCell<ImagePart>>> {
         let slots = self.rows;
         let mut claimed: Vec<Vec<bool>> = slots.iter().map(|row| vec![false; row.len()]).collect();
         let mut spans = Vec::new();
@@ -409,41 +479,40 @@ mod tests {
 
     #[test]
     fn images_are_content_and_never_merge() {
-        let image = Run::image("word/media/a.png", "");
+        let image = Run::image(ImagePart::new("word/media/a.png"), "");
         assert!(!is_blank(std::slice::from_ref(&image)));
-        assert!(!image.same_format(&Run::image("word/media/a.png", "")));
+        assert!(!image.same_format(&Run::image(ImagePart::new("word/media/a.png"), "")));
     }
 
     #[test]
     fn resolve_images_links_exports_and_drops_the_rest() {
-        let mut blocks = vec![
+        let part = |part: &str, alt: &str| Run::image(ImagePart::new(part), alt);
+        let blocks = vec![
             Block::Paragraph(vec![
                 Run::new("Logo: ", RunStyle::default()),
-                Run::image("word/media/logo.png", "Logo"),
+                part("word/media/logo.png", "Logo"),
             ]),
-            Block::Paragraph(vec![Run::image("word/media/missing.emf", "")]),
-            Block::Table(vec![vec![TableCell::new(vec![Run::image(
-                "word/media/logo.png",
-                "again",
-            )])]]),
+            Block::Paragraph(vec![part("word/media/missing.emf", "")]),
+            Block::Table(vec![vec![
+                TableCell::new(vec![part("word/media/logo.png", "again")]),
+                TableCell::Covered,
+            ]]),
         ];
 
-        resolve_images(&mut blocks, |part| {
+        let blocks = resolve_images(blocks, |part| {
             Ok(part.ends_with(".png").then(|| "img/logo.png".to_string()))
         })
         .unwrap();
 
+        let link = |alt: &str| Run::image(ImageRef::new("img/logo.png"), alt);
         assert_eq!(
             blocks,
             [
-                Block::Paragraph(vec![
-                    Run::new("Logo: ", RunStyle::default()),
-                    Run::image("img/logo.png", "Logo"),
-                ]),
-                Block::Table(vec![vec![TableCell::new(vec![Run::image(
-                    "img/logo.png",
-                    "again"
-                )])]]),
+                Block::Paragraph(vec![Run::new("Logo: ", RunStyle::default()), link("Logo")]),
+                Block::Table(vec![vec![
+                    TableCell::new(vec![link("again")]),
+                    TableCell::Covered,
+                ]]),
             ]
         );
     }
@@ -464,17 +533,18 @@ mod tests {
 
     #[test]
     fn resolving_an_image_keeps_its_size() {
-        let mut image = Run::image("word/media/logo.png", "Logo");
-        image.image.as_mut().unwrap().size = Some((914_400, 457_200));
-        let mut blocks = vec![Block::Paragraph(vec![image])];
-
-        resolve_images(&mut blocks, |_| Ok(Some("img/logo.png".to_string()))).unwrap();
-
-        let Block::Paragraph(runs) = &blocks[0] else {
-            panic!("{blocks:?}");
+        let image = ImagePart {
+            part: "word/media/logo.png".into(),
+            size: Some((914_400, 457_200)),
         };
-        let image = runs[0].image.as_ref().unwrap();
-        assert_eq!(image.source, "img/logo.png");
-        assert_eq!(image.size, Some((914_400, 457_200)));
+        let blocks = vec![Block::Paragraph(vec![Run::image(image, "Logo")])];
+
+        let blocks = resolve_images(blocks, |_| Ok(Some("img/logo.png".to_string()))).unwrap();
+
+        let image = ImageRef {
+            source: "img/logo.png".into(),
+            size: Some((914_400, 457_200)),
+        };
+        assert_eq!(blocks, [Block::Paragraph(vec![Run::image(image, "Logo")])]);
     }
 }

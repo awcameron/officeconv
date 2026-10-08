@@ -181,6 +181,7 @@ fn ordered_list_prefix(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::ImageRef;
 
     fn run(text: &str, bold: bool, italic: bool) -> Run {
         Run::new(text, RunStyle { bold, italic })
@@ -318,7 +319,7 @@ mod tests {
     fn renders_images_with_alt_text() {
         let runs = [
             run("See ", false, false),
-            Run::image("img/chart 1.png", "Sales [Q3]\nchart"),
+            Run::image(ImageRef::new("img/chart 1.png"), "Sales [Q3]\nchart"),
         ];
         assert_eq!(
             render_runs(&runs),
@@ -328,7 +329,8 @@ mod tests {
 
     #[test]
     fn renders_linked_images() {
-        let runs = [Run::image("img/logo.png", "Logo").linked("https://example.com")];
+        let runs =
+            [Run::image(ImageRef::new("img/logo.png"), "Logo").linked("https://example.com")];
         assert_eq!(
             render_runs(&runs),
             "[![Logo](img/logo.png)](https://example.com)"

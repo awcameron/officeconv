@@ -32,14 +32,14 @@ pub mod fuzzing {
     };
     pub use crate::document::Block;
     pub use crate::document::markdown::render as render_markdown;
-    pub use crate::docx::read_blocks_with_limits as read_docx;
+    pub use crate::docx::read_blocks as read_docx;
     pub use crate::format::OutputFormat;
-    pub use crate::images::{EmbeddedImages, Images};
+    pub use crate::images::{EmbeddedImages, Images, resolve as resolve_images};
     pub use crate::input::InputKind;
     pub use crate::opc::{Archive, Limits, parse_relationships};
     #[cfg(feature = "pdf")]
     pub use crate::pdf::{layout::PageSetup, render as render_pdf};
-    pub use crate::pptx::{Notes, read_blocks_with_limits as read_pptx};
+    pub use crate::pptx::{Notes, read_blocks as read_pptx};
     pub use crate::writers::{JsonValues, write_table};
     pub use crate::xlsx::pictures::read_pictures;
     pub use crate::xlsx::read_all_sheets_with_limits as read_xlsx;
@@ -154,17 +154,18 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
         (_, None) => Images::Skip,
     };
 
-    let reader = source.reader()?;
+    let mut archive = opc::Archive::open(source.reader()?)?;
     let blocks = if kind == InputKind::Pptx {
         let notes = if cli.no_notes {
             pptx::Notes::Skip
         } else {
             pptx::Notes::Include
         };
-        pptx::read_blocks(reader, notes, images)?
+        pptx::read_blocks(&mut archive, notes)?
     } else {
-        docx::read_blocks(reader, images)?
+        docx::read_blocks(&mut archive)?
     };
+    let blocks = images::resolve(blocks, &mut archive, images)?;
 
     if cli.to == OutputFormat::Pdf {
         return write_pdf(cli, kind, &blocks, &embedded);
@@ -311,7 +312,12 @@ fn write_sheet(
     };
     let pictures = match &sheet.part {
         Some(part) => {
-            xlsx::pictures::export_sheet_pictures(&mut images.archive, part, &mut images.export)?
+            let pictures = xlsx::pictures::sheet_pictures(&mut images.archive, part)?;
+            images::resolve(
+                pictures,
+                &mut images.archive,
+                Images::Save(&mut images.export),
+            )?
         }
         None => Vec::new(),
     };

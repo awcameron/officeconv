@@ -9,6 +9,7 @@ why, and when to reconsider it.
 | [0002](0002-untrusted-input.md) | officeconv supports untrusted input, within limits | Accepted | 2026-10-05 |
 | [0003](0003-binary-only.md) | officeconv is a binary, with no public library API | Accepted | 2026-10-06 |
 | [0004](0004-document-model.md) | The document model is as rich as the most capable output | Accepted | 2026-10-07 |
+| [0005](0005-image-types.md) | Images a reader finds and images a writer shows are different types | Accepted | 2026-10-08 |
 
 ## Adding one
 

@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::{ListKind, Run, TableCell};
+use crate::document::{ImagePart, ListKind, Run, TableCell};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,
@@ -13,11 +13,11 @@ const PLAIN: RunStyle = RunStyle {
 };
 
 /// Wraps body XML in the `w:document` element Word uses.
-fn parse(body: &str) -> Vec<Block> {
+fn parse(body: &str) -> Vec<Block<ImagePart>> {
     parse_with(body, &Package::default())
 }
 
-fn parse_with(body: &str, package: &Package) -> Vec<Block> {
+fn parse_with(body: &str, package: &Package) -> Vec<Block<ImagePart>> {
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
@@ -131,7 +131,7 @@ fn sample_package() -> Package {
     package
 }
 
-fn text_block(text: &str) -> Vec<Run> {
+fn text_block(text: &str) -> Vec<Run<ImagePart>> {
     vec![Run::new(text, PLAIN)]
 }
 
@@ -259,15 +259,18 @@ fn reads_pictures_with_alt_text() {
         [
             Block::Paragraph(vec![
                 Run::new("Chart: ", PLAIN),
-                Run::image("word/media/image1.png", "Sales by region"),
+                Run::image(ImagePart::new("word/media/image1.png"), "Sales by region"),
             ]),
-            Block::Paragraph(vec![Run::image("word/media/image1.png", "Old style")]),
+            Block::Paragraph(vec![Run::image(
+                ImagePart::new("word/media/image1.png"),
+                "Old style"
+            )]),
         ]
     );
 }
 
 /// `run`, an image run, with the display size the document gives it.
-fn sized(mut run: Run, cx: u32, cy: u32) -> Run {
+fn sized(mut run: Run<ImagePart>, cx: u32, cy: u32) -> Run<ImagePart> {
     run.image.as_mut().unwrap().size = Some((cx, cy));
     run
 }
@@ -295,14 +298,20 @@ fn reads_picture_sizes_from_their_extent() {
         [
             // 2 by 1 inches. The `a:ext` inside the graphic isn't the displayed size.
             Block::Paragraph(vec![sized(
-                Run::image("word/media/image1.png", ""),
+                Run::image(ImagePart::new("word/media/image1.png"), ""),
                 1_828_800,
                 914_400
             )]),
             // A size of zero is ignored.
-            Block::Paragraph(vec![Run::image("word/media/image1.png", "")]),
+            Block::Paragraph(vec![Run::image(
+                ImagePart::new("word/media/image1.png"),
+                ""
+            )]),
             // The chart's size doesn't carry over to the next picture, which has none.
-            Block::Paragraph(vec![Run::image("word/media/image1.png", "")]),
+            Block::Paragraph(vec![Run::image(
+                ImagePart::new("word/media/image1.png"),
+                ""
+            )]),
         ]
     );
 }
@@ -330,7 +339,10 @@ fn reads_a_picture_grouped_with_a_text_box() {
         blocks,
         [
             Block::Paragraph(vec![Run::new("Caption", PLAIN)]),
-            Block::Paragraph(vec![Run::image("word/media/image1.png", "Team photo")]),
+            Block::Paragraph(vec![Run::image(
+                ImagePart::new("word/media/image1.png"),
+                "Team photo"
+            )]),
         ]
     );
 }
@@ -345,7 +357,7 @@ fn maps_heading_styles() {
 }
 
 /// A table cell holding `text`, merged across `cols` columns and `rows` rows.
-fn merged(text: &str, cols: usize, rows: usize) -> TableCell {
+fn merged(text: &str, cols: usize, rows: usize) -> TableCell<ImagePart> {
     TableCell::Content {
         runs: text_block(text),
         cols,
@@ -353,7 +365,7 @@ fn merged(text: &str, cols: usize, rows: usize) -> TableCell {
     }
 }
 
-fn cell_of(text: &str) -> TableCell {
+fn cell_of(text: &str) -> TableCell<ImagePart> {
     TableCell::new(text_block(text))
 }
 

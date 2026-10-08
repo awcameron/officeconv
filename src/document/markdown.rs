@@ -1,8 +1,7 @@
 //! Rendering [`Block`]s as Markdown.
 
 use super::{Block, ListKind, Run, RunStyle, TableCell, append_run};
-use crate::table::Table;
-use crate::writers::{MarkdownCells, escape_markdown_text, write_markdown};
+use crate::markdown::{escape_text, escape_url, write_table};
 
 /// Renders blocks as Markdown, separated by blank lines.
 ///
@@ -31,7 +30,7 @@ fn render_block(block: &Block) -> String {
     match block {
         Block::Heading { level, runs } => {
             // Headings already render bold, and a line break would end the heading early.
-            let text = render_runs(&without_bold(runs)).replace("  \n", " ");
+            let text = render_inline(&without_bold(runs)).replace('\n', " ");
             format!("{} {}", "#".repeat(usize::from(*level)), text)
         }
         Block::Paragraph(runs) => escape_block_start(&render_runs(runs)),
@@ -63,21 +62,11 @@ fn render_list_item(kind: ListKind, level: u8, runs: &[Run]) -> String {
 fn render_table(rows: &[Vec<TableCell>]) -> String {
     let rows: Vec<Vec<String>> = rows
         .iter()
-        .map(|row| {
-            row.iter()
-                // The table writer turns each "\n" into "<br>".
-                .map(|cell| render_runs(cell.runs()).replace("  \n", "\n"))
-                .collect()
-        })
+        .map(|row| row.iter().map(|cell| render_inline(cell.runs())).collect())
         .collect();
 
     let mut buffer = Vec::new();
-    write_markdown(
-        &Table::from_rows(rows),
-        MarkdownCells::Markdown,
-        &mut buffer,
-    )
-    .expect("writing to a Vec can't fail");
+    write_table(&rows, &mut buffer).expect("writing to a Vec can't fail");
     String::from_utf8(buffer)
         .expect("the table writer only writes the UTF-8 it was given")
         .trim_end()
@@ -103,8 +92,15 @@ fn without_bold(runs: &[Run]) -> Vec<Run> {
     merged
 }
 
-/// Renders runs as one line of Markdown, wrapping each stretch of linked runs in `[...](url)`.
+/// Renders runs as Markdown for a paragraph or list item, where a line break is two spaces
+/// then a newline.
 fn render_runs(runs: &[Run]) -> String {
+    render_inline(runs).replace('\n', "  \n")
+}
+
+/// Renders runs as Markdown, wrapping each stretch of linked runs in `[...](url)`. Line breaks
+/// stay as `"\n"`, for the caller to write as its kind of block can hold them.
+fn render_inline(runs: &[Run]) -> String {
     let mut text = String::new();
     for group in runs.chunk_by(|a, b| a.link == b.link) {
         let inner: String = group.iter().map(render_run).collect();
@@ -120,8 +116,7 @@ fn render_runs(runs: &[Run]) -> String {
         }
     }
 
-    // A line break inside a paragraph is two spaces then a newline in Markdown.
-    text.trim().replace('\n', "  \n")
+    text.trim().to_string()
 }
 
 /// Wraps a run in `**`/`*`, keeping surrounding spaces outside the markers.
@@ -130,7 +125,7 @@ fn render_runs(runs: &[Run]) -> String {
 fn render_run(run: &Run) -> String {
     if let Some(image) = &run.image {
         // Alt text can't span lines in Markdown.
-        let alt = escape_markdown_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
+        let alt = escape_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
         return format!("![{alt}]({})", escape_url(&image.source));
     }
 
@@ -143,12 +138,9 @@ fn render_run(run: &Run) -> String {
 
     let (leading, inner, trailing) = split_edges(&run.text);
     if marker.is_empty() || inner.is_empty() {
-        return escape_markdown_text(&run.text);
+        return escape_text(&run.text);
     }
-    format!(
-        "{leading}{marker}{}{marker}{trailing}",
-        escape_markdown_text(inner)
-    )
+    format!("{leading}{marker}{}{marker}{trailing}", escape_text(inner))
 }
 
 /// Splits `text` into (leading whitespace, the rest, trailing whitespace).
@@ -156,34 +148,6 @@ fn split_edges(text: &str) -> (&str, &str, &str) {
     let inner = text.trim();
     let start = text.len() - text.trim_start().len();
     (&text[..start], inner, &text[start + inner.len()..])
-}
-
-/// Percent-encodes what would end a Markdown link target early or change its meaning:
-/// whitespace (including line breaks), control characters, `<`, `>`, `"`, `(`, `)` and `\`.
-/// `&` becomes `&amp;`.
-///
-/// Without this, a newline in a link from the document would end the link, and whatever
-/// followed, such as raw HTML, would become part of the Markdown. Renderers also decode
-/// `&#58;` in a link target to `:`, so `javascript&#58;` would become a `javascript:` link; with
-/// `&amp;`, the browser sees the literal text `&#58;` instead.
-fn escape_url(url: &str) -> String {
-    let mut out = String::with_capacity(url.len());
-    for c in url.chars() {
-        if c == '&' {
-            out.push_str("&amp;");
-        } else if c.is_whitespace()
-            || c.is_control()
-            || matches!(c, '<' | '>' | '"' | '(' | ')' | '\\')
-        {
-            let mut bytes = [0; 4];
-            for byte in c.encode_utf8(&mut bytes).bytes() {
-                out.push_str(&format!("%{byte:02X}"));
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// Stops a paragraph that starts like `# x`, `> x`, `- x` or `1. x` turning into a heading,
@@ -340,29 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn escapes_ampersands_in_link_targets() {
-        // Renderers decode `&#58;` in a link target to `:`, so an unescaped `&` could turn
-        // `javascript&#58;` into `javascript:`. `&amp;` decodes back to a plain `&`.
-        let link =
-            |url: &str| render(&[Block::Paragraph(vec![run("a", false, false).linked(url)])]);
-        assert_eq!(
-            link("javascript&#58;alert"),
-            "[a](javascript&amp;#58;alert)\n"
-        );
-        assert_eq!(
-            link("https://x.com/?a=1&b=2"),
-            "[a](https://x.com/?a=1&amp;b=2)\n"
-        );
-    }
-
-    #[test]
-    fn escapes_link_targets_that_would_end_the_link() {
+    fn escapes_link_targets() {
         let blocks = [Block::Paragraph(vec![
-            run("a", false, false).linked("https://x.com/a b\n<i>\u{2028}(\"\\)"),
+            run("a", false, false).linked("https://x.com/?a=1&b=2 (x)"),
         ])];
         assert_eq!(
             render(&blocks),
-            "[a](https://x.com/a%20b%0A%3Ci%3E%E2%80%A8%28%22%5C%29)\n"
+            "[a](https://x.com/?a=1&amp;b=2%20%28x%29)\n"
         );
     }
 

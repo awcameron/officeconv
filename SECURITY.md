@@ -25,7 +25,7 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Writing outside the output folder | Saved images use only the last segment of their name inside the package, with unsafe characters replaced, so `../../x` can't leave the folder. The same goes for sheet names with `--all-sheets`. | `ImageExport::export`, `output::safe_file_name` |
 | Writing files that aren't images | `--images` saves only files whose bytes are a recognized image format, and names them with that format's extension, so a document can't save an `.html` page with a script. | `ImageFormat::detect` |
 | Links that run code or open local files | Only `http`, `https`, `mailto` and relative links are kept. Other links, such as `javascript:`, `data:` or `file:`, become plain text. | `opc::is_safe_link` |
-| Text that turns into Markdown or HTML | Text, table cells and link targets are escaped, so the Markdown shows what the document holds instead of new formatting, raw HTML or a different link. | `writers::escape_markdown_text`, `document::markdown::escape_url` |
+| Text that turns into Markdown or HTML | Text, table cells and link targets are escaped, so the Markdown shows what the document holds instead of new formatting, raw HTML or a different link. | `markdown::escape_text`, `markdown::escape_url` |
 
 CI also runs [`cargo deny`](deny.toml) to check every dependency against the RustSec advisory
 database. The zip reader and the four readers are fuzzed, with what they read rendered in every

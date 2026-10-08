@@ -12,6 +12,7 @@ mod error;
 mod format;
 mod images;
 mod input;
+mod markdown;
 mod opc;
 mod output;
 #[cfg(feature = "pdf")]

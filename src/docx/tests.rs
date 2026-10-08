@@ -264,6 +264,46 @@ fn reads_pictures_with_alt_text() {
     );
 }
 
+/// `run`, an image run, with the display size the document gives it.
+fn sized(mut run: Run, cx: u32, cy: u32) -> Run {
+    run.image.as_mut().unwrap().size = Some((cx, cy));
+    run
+}
+
+#[test]
+fn reads_picture_sizes_from_their_extent() {
+    let mut package = Package::default();
+    package
+        .images
+        .insert("rId7".into(), "word/media/image1.png".into());
+    let picture = r#"<a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill>
+                       <pic:spPr><a:xfrm><a:ext cx="1" cy="1"/></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic>"#;
+    let blocks = parse_with(
+        &format!(
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="a"/>{picture}</wp:inline></w:drawing></w:r></w:p>
+               <w:p><w:r><w:drawing><wp:anchor><wp:extent cx="0" cy="914400"/><wp:docPr id="2" name="b"/>{picture}</wp:anchor></w:drawing></w:r></w:p>
+               <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="3" name="chart"/></wp:inline></w:drawing></w:r></w:p>
+               <w:p><w:r><w:drawing><wp:inline><wp:docPr id="4" name="c"/>{picture}</wp:inline></w:drawing></w:r></w:p>"#
+        ),
+        &package,
+    );
+    assert_eq!(
+        blocks,
+        [
+            // 2 by 1 inches. The `a:ext` inside the graphic isn't the displayed size.
+            Block::Paragraph(vec![sized(
+                Run::image("word/media/image1.png", ""),
+                1_828_800,
+                914_400
+            )]),
+            // A size of zero is ignored.
+            Block::Paragraph(vec![Run::image("word/media/image1.png", "")]),
+            // The chart's size doesn't carry over to the next picture, which has none.
+            Block::Paragraph(vec![Run::image("word/media/image1.png", "")]),
+        ]
+    );
+}
+
 #[test]
 fn reads_a_picture_grouped_with_a_text_box() {
     // The text box's runs sit inside the run that holds the drawing. The picture after them is

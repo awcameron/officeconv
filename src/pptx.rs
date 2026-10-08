@@ -24,7 +24,8 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::{
-    Block, ListKind, Run, RunStyle, TableBuilder, append_paragraph, append_run, is_blank,
+    Block, ListKind, Run, RunStyle, TableBuilder, append_paragraph, append_run, display_size,
+    is_blank,
 };
 use crate::error::Result;
 use crate::images::{self, Images};
@@ -243,6 +244,9 @@ struct Picture {
     alt: Option<String>,
     part: Option<String>,
     link: Option<String>,
+    /// From the picture's own `a:xfrm`. In a group that was resized after the picture was
+    /// added, this is the size before the group was resized.
+    size: Option<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -318,6 +322,9 @@ impl<'a> SlideParser<'a> {
         };
 
         let mut run = Run::image(part, picture.alt.unwrap_or_default());
+        if let Some(image) = run.image.as_mut() {
+            image.size = picture.size;
+        }
         run.link = picture.link;
         self.blocks.push(Block::Paragraph(vec![run]));
     }
@@ -386,6 +393,13 @@ impl XmlHandler for SlideParser<'_> {
                 if let Some(picture) = self.picture.as_mut() {
                     picture.part =
                         attr(e, "embed").and_then(|id| self.targets.images.get(&id).cloned());
+                }
+            }
+            // The picture's size is `a:ext` in its `a:xfrm`. Extensions (`a:extLst`) also have
+            // `a:ext` elements, which aren't sizes.
+            "ext" if open.inside("xfrm") => {
+                if let Some(picture) = self.picture.as_mut() {
+                    picture.size = display_size(attr(e, "cx"), attr(e, "cy"));
                 }
             }
             // Clicking a picture can open a link.
@@ -691,6 +705,43 @@ mod tests {
                     Run::image("ppt/media/image1.png", "Team photo").linked("https://example.com")
                 ]),
                 Block::Paragraph(vec![Run::image("ppt/media/image1.png", "")]),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_picture_sizes_from_their_xfrm() {
+        let targets = Targets {
+            images: HashMap::from([("rId3".to_string(), "ppt/media/image1.png".to_string())]),
+            ..Targets::default()
+        };
+        let picture = |sp_pr: &str| {
+            format!(
+                r#"<p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/></p:blipFill><p:spPr>{sp_pr}</p:spPr></p:pic>"#
+            )
+        };
+        let xml = slide_xml(&format!(
+            "{}{}",
+            picture(r#"<a:xfrm><a:off x="0" y="0"/><a:ext cx="3657600" cy="1828800"/></a:xfrm>"#),
+            picture(concat!(
+                r#"<a:xfrm><a:ext cx="914400" cy="914400"/></a:xfrm>"#,
+                r#"<a:extLst><a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}"/></a:extLst>"#
+            )),
+        ));
+
+        let slide = parse_slide(&xml, &targets).unwrap();
+        let sized = |cx, cy| {
+            let mut run = Run::image("ppt/media/image1.png", "");
+            run.image.as_mut().unwrap().size = Some((cx, cy));
+            Block::Paragraph(vec![run])
+        };
+        assert_eq!(
+            slide.body,
+            [
+                // 4 by 2 inches.
+                sized(3_657_600, 1_828_800),
+                // An extension's `a:ext` after the size isn't a size, so it doesn't replace it.
+                sized(914_400, 914_400),
             ]
         );
     }

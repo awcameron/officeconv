@@ -33,8 +33,8 @@ it protects against. It's written in Rust as a learning project.
   See [PDF](#pdf).
 - **Formulas aren't calculated.** A spreadsheet cell shows the result Excel last saved, or
   nothing if there isn't one. See [XLSX](#xlsx).
-- **PDF shows only what Markdown can, for now.** A merged table cell is drawn as separate cells,
-  and a picture at its pixel size rather than the size the document gives it.
+- **Merged table cells in PDF** are drawn as separate cells, as in Markdown, rather than as one
+  cell across the rows or columns it covers.
 - **Not converted yet:** footnotes, comments, and headers and footers in DOCX
   ([DOCX](#docx)); charts, SmartArt, and anything from the slide master or layout in PPTX
   ([PPTX](#pptx)); charts, shapes and in-cell pictures as images ([Images](#images)).
@@ -408,6 +408,10 @@ links, tables, line breaks, and pictures.
 - Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
   are kept; other formats, such as EMF or TIFF, are left out with a warning. So are pictures
   larger than 50 megapixels, which could take gigabytes of memory to decode.
+- Pictures are drawn at the size the document shows them, scaled down if they don't fit the
+  page. A picture with no size, or one over 100 inches, is drawn at its pixel size at 96 dpi.
+  Cropping isn't applied: the whole picture is drawn, fitted inside the cropped size without
+  being stretched.
 - Text is set in [Noto Sans](https://notofonts.github.io), which is built in and covers Latin,
   Greek and Cyrillic. Characters it doesn't have, such as Chinese, Japanese, Korean or emoji, are
   drawn with a font installed on your computer. macOS and Windows always have one; on Linux, install

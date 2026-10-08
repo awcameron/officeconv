@@ -83,7 +83,7 @@ installed.
 - **Fuzzing** needs nightly and cargo-fuzz, and runs from `fuzz/`; see
   [Fuzzing](CONTRIBUTING.md#fuzzing).
 
-Skills for this repo's two main workflows live in `.agents/skills/`: taking an issue to a merged
-PR, and cutting a release. Codex, Cursor and other agents that support
+Skills for this repo's three main workflows live in `.agents/skills/`: filing an issue, taking
+an issue to a merged PR, and cutting a release. Codex, Cursor and other agents that support
 [Agent Skills](https://agentskills.io) read them from there; `.claude/skills` is a symlink to
 the same directory for Claude Code.

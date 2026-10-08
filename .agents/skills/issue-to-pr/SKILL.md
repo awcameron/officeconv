@@ -14,7 +14,8 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
 
 1. Read the issue: `gh issue view N`. Its acceptance criteria are the definition of done. If it
    leaves a decision open and the code doesn't settle it, pick the option the issue recommends
-   and say so in the report. Ask only if the choice is the user's to make.
+   and say so in the report. Ask only if the choice is the user's to make. A change with no
+   issue yet gets one first, filed with the `file-issue` skill.
 2. Start from an up-to-date `main`, then branch:
 
    ```sh

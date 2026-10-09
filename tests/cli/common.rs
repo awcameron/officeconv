@@ -150,6 +150,55 @@ pub fn sample_docx_with_parts(body_xml: &str, parts: &[(String, Vec<u8>)]) -> (T
     sample_package("notes.docx", &all)
 }
 
+/// A `.docx` whose body refers to footnote 1 twice and endnote 1 once. Footnote 1 links to
+/// example.com through its own part's relationships. The footnotes part also holds Word's
+/// separator, and a footnote 2 that nothing refers to.
+pub fn sample_docx_with_notes() -> (TempDir, PathBuf) {
+    let body = r#"<w:p><w:r><w:t>Water boils at 100 °C</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r><w:r><w:t xml:space="preserve"> at sea level</w:t></w:r><w:r><w:endnoteReference w:id="1"/></w:r><w:r><w:t>.</w:t></w:r></w:p>
+           <w:p><w:r><w:t>Again</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#;
+    let note = |kind: &str, id: &str, content: &str| {
+        format!(
+            r#"<w:{kind} w:id="{id}"><w:p><w:r><w:{kind}Ref/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>{content}</w:p></w:{kind}>"#
+        )
+    };
+    let text = |t: &str| format!("<w:r><w:t>{t}</w:t></w:r>");
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{WORD_NS}" xmlns:r="{REL}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>{}{}</w:footnotes>"#,
+        note(
+            "footnote",
+            "1",
+            &format!(
+                r#"{}<w:hyperlink r:id="rId1">{}</w:hyperlink>"#,
+                text("See "),
+                text("the table")
+            )
+        ),
+        note("footnote", "2", &text("Never referred to."))
+    );
+    let endnotes = format!(
+        r#"<w:endnotes xmlns:w="{WORD_NS}">{}</w:endnotes>"#,
+        note("endnote", "1", &text("Standard pressure."))
+    );
+    sample_docx_with_parts(
+        body,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[
+                    ("rId8", "footnotes", "footnotes.xml"),
+                    ("rId9", "endnotes", "endnotes.xml"),
+                ]),
+            ),
+            part("word/footnotes.xml", footnotes),
+            part(
+                "word/_rels/footnotes.xml.rels",
+                rels(&[("rId1", "hyperlink", "https://example.com/")]),
+            ),
+            part("word/endnotes.xml", endnotes),
+        ],
+    )
+}
+
 /// A slide (or notes) part holding `shapes`.
 pub fn slide(shapes: &str) -> String {
     let ns = pptx_ns();

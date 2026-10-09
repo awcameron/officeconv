@@ -495,3 +495,117 @@ fn a_merge_down_ends_with_the_table() {
         ])]
     );
 }
+
+/// A footnotes part holding Word's two separators, then `notes`.
+fn footnotes(notes: &str) -> String {
+    format!(
+        r#"<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+             <w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+             <w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>
+             {notes}
+           </w:footnotes>"#
+    )
+}
+
+/// A note with ID `id` holding one paragraph: Word's mark for the note, then `text`.
+fn note(id: &str, text: &str) -> String {
+    format!(
+        r#"<w:footnote w:id="{id}"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> {text}</w:t></w:r></w:p></w:footnote>"#
+    )
+}
+
+#[test]
+fn reads_notes_and_skips_separators() {
+    let xml = footnotes(&format!(
+        r#"{}<w:footnote w:id="2"><w:p><w:r><w:t>Cites</w:t><w:footnoteReference w:id="1"/></w:r></w:p></w:footnote>"#,
+        note("1", "Source.")
+    ));
+    let notes = parse_notes(&xml, &Package::default(), &Targets::default()).unwrap();
+    assert_eq!(
+        notes,
+        [
+            (
+                "1".to_string(),
+                vec![Block::Paragraph(text_block(" Source."))]
+            ),
+            // A reference inside a note is dropped.
+            ("2".to_string(), vec![Block::Paragraph(text_block("Cites"))]),
+        ]
+    );
+}
+
+/// A package holding footnotes 1 and 2 and endnote 1, each one paragraph naming itself.
+fn package_with_notes() -> Package {
+    let paragraph = |text: &str| vec![Block::Paragraph(text_block(text))];
+    Package {
+        notes: HashMap::from([
+            ((NoteKind::Footnote, "1".into()), paragraph("footnote 1")),
+            ((NoteKind::Footnote, "2".into()), paragraph("footnote 2")),
+            ((NoteKind::Endnote, "1".into()), paragraph("endnote 1")),
+        ]),
+        ..Package::default()
+    }
+}
+
+#[test]
+fn numbers_notes_in_the_order_the_body_first_refers_to_them() {
+    let blocks = parse_with(
+        r#"<w:p><w:r><w:t>A</w:t><w:footnoteReference w:id="2"/></w:r>
+               <w:r><w:t>B</w:t><w:endnoteReference w:id="1"/></w:r>
+               <w:r><w:t>C</w:t><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &package_with_notes(),
+    );
+    let note = |number, text: &str| Block::Note {
+        number,
+        blocks: vec![Block::Paragraph(text_block(text))],
+    };
+    assert_eq!(
+        blocks,
+        [
+            Block::Paragraph(vec![
+                Run::new("A", PLAIN),
+                Run::note(1),
+                Run::new("B", PLAIN),
+                Run::note(2),
+                Run::new("C", PLAIN),
+                Run::note(3),
+            ]),
+            note(1, "footnote 2"),
+            note(2, "endnote 1"),
+            note(3, "footnote 1"),
+        ]
+    );
+}
+
+#[test]
+fn adds_a_note_once_however_often_it_is_referred_to() {
+    let body = r#"<w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#.repeat(1000);
+    let blocks = parse_with(&body, &package_with_notes());
+
+    let notes: Vec<_> = blocks
+        .iter()
+        .filter(|b| matches!(b, Block::Note { .. }))
+        .collect();
+    assert_eq!(
+        notes,
+        [&Block::Note {
+            number: 1,
+            blocks: vec![Block::Paragraph(text_block("footnote 1"))],
+        }]
+    );
+    assert_eq!(blocks.len(), 1001);
+    assert!(
+        blocks[..1000]
+            .iter()
+            .all(|b| *b == Block::Paragraph(vec![Run::note(1)]))
+    );
+}
+
+#[test]
+fn drops_references_to_notes_the_file_does_not_have() {
+    let blocks = parse_with(
+        r#"<w:p><w:r><w:t>Text</w:t><w:footnoteReference w:id="9"/><w:endnoteReference w:id="2"/><w:footnoteReference/></w:r></w:p>"#,
+        &package_with_notes(),
+    );
+    assert_eq!(blocks, [Block::Paragraph(text_block("Text"))]);
+}

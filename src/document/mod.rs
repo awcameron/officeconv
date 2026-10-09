@@ -33,6 +33,12 @@ pub enum Block<I = ImageRef> {
     Table(Vec<Vec<TableCell<I>>>),
     /// A horizontal rule, such as the break between two slides.
     Rule,
+    /// A footnote or endnote, numbered as the runs that refer to it are. Notes come after the
+    /// blocks that refer to them, and never hold notes of their own.
+    Note {
+        number: usize,
+        blocks: Vec<Block<I>>,
+    },
 }
 
 /// The formatted text of one document table cell. Paragraphs inside the cell are separated by
@@ -80,12 +86,14 @@ pub enum ListKind {
 /// A stretch of text that shares the same formatting (and link, if any).
 ///
 /// A run can instead be an image: then `image` says where it is, and `text` is its alt text.
+/// Or it can refer to a note: then `note` is the [`Block::Note`]'s number, and `text` is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run<I = ImageRef> {
     pub text: String,
     pub style: RunStyle,
     pub link: Option<String>,
     pub image: Option<I>,
+    pub note: Option<usize>,
 }
 
 impl<I> Default for Run<I> {
@@ -167,6 +175,15 @@ impl<I> Run<I> {
             style,
             link: None,
             image: None,
+            note: None,
+        }
+    }
+
+    /// A reference to the note numbered `number`.
+    pub fn note(number: usize) -> Self {
+        Run {
+            note: Some(number),
+            ..Run::default()
         }
     }
 
@@ -189,10 +206,12 @@ impl<I> Run<I> {
     }
 
     /// True if `other` has the same formatting and link, so the two can be merged.
-    /// Images never merge: each one is its own run.
+    /// Images and note references never merge: each one is its own run.
     pub fn same_format(&self, other: &Run<I>) -> bool {
         self.image.is_none()
             && other.image.is_none()
+            && self.note.is_none()
+            && other.note.is_none()
             && self.style == other.style
             && self.link == other.link
     }
@@ -222,48 +241,61 @@ pub fn append_paragraph<I>(cell: &mut CellRuns<I>, runs: Vec<Run<I>>) {
     }
 }
 
-/// True if the runs contain nothing but whitespace (an image counts as content).
+/// True if the runs contain nothing but whitespace (an image or a note reference counts as
+/// content).
 pub fn is_blank<I>(runs: &[Run<I>]) -> bool {
     runs.iter()
-        .all(|r| r.image.is_none() && r.text.trim().is_empty())
+        .all(|r| r.image.is_none() && r.note.is_none() && r.text.trim().is_empty())
 }
 
 /// Turns each image's package part into the link or key `export` returns for it.
 ///
-/// `export` returns `None` to leave an image out. Blocks left with nothing in them are removed.
+/// `export` returns `None` to leave an image out. Blocks left with nothing in them are removed,
+/// except notes, which stay so that the runs referring to them still have something to refer to.
 pub fn resolve_images(
     blocks: Vec<Block<ImagePart>>,
     mut export: impl FnMut(&str) -> Result<Option<String>>,
+) -> Result<Vec<Block>> {
+    resolve_blocks(blocks, &mut export)
+}
+
+fn resolve_blocks(
+    blocks: Vec<Block<ImagePart>>,
+    export: &mut impl FnMut(&str) -> Result<Option<String>>,
 ) -> Result<Vec<Block>> {
     let mut resolved = Vec::with_capacity(blocks.len());
     for block in blocks {
         let block = match block {
             Block::Heading { level, runs } => Block::Heading {
                 level,
-                runs: resolve_runs(runs, &mut export)?,
+                runs: resolve_runs(runs, export)?,
             },
-            Block::Paragraph(runs) => Block::Paragraph(resolve_runs(runs, &mut export)?),
+            Block::Paragraph(runs) => Block::Paragraph(resolve_runs(runs, export)?),
             Block::ListItem { kind, level, runs } => Block::ListItem {
                 kind,
                 level,
-                runs: resolve_runs(runs, &mut export)?,
+                runs: resolve_runs(runs, export)?,
             },
             Block::Table(rows) => Block::Table(
                 rows.into_iter()
                     .map(|row| {
                         row.into_iter()
-                            .map(|cell| resolve_cell(cell, &mut export))
+                            .map(|cell| resolve_cell(cell, export))
                             .collect()
                     })
                     .collect::<Result<_>>()?,
             ),
             Block::Rule => Block::Rule,
+            Block::Note { number, blocks } => Block::Note {
+                number,
+                blocks: resolve_blocks(blocks, export)?,
+            },
         };
         let empty = match &block {
             Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
                 is_blank(runs)
             }
-            Block::Table(_) | Block::Rule => false,
+            Block::Table(_) | Block::Rule | Block::Note { .. } => false,
         };
         if !empty {
             resolved.push(block);
@@ -307,6 +339,7 @@ fn resolve_runs(
             style: run.style,
             link: run.link,
             image,
+            note: run.note,
         };
         append_run(&mut resolved, run);
     }
@@ -513,6 +546,35 @@ mod tests {
                     TableCell::new(vec![link("again")]),
                     TableCell::Covered,
                 ]]),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_images_reaches_into_notes_and_keeps_them() {
+        let blocks = vec![
+            Block::Paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
+            Block::Note {
+                number: 1,
+                blocks: vec![Block::Paragraph(vec![Run::image(
+                    ImagePart::new("word/media/chart.emf"),
+                    "",
+                )])],
+            },
+        ];
+
+        let blocks = resolve_images(blocks, |_| Ok(None)).unwrap();
+
+        // The note's only paragraph is gone with its image, but the note stays for the
+        // reference to point at.
+        assert_eq!(
+            blocks,
+            [
+                Block::Paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
+                Block::Note {
+                    number: 1,
+                    blocks: vec![],
+                },
             ]
         );
     }

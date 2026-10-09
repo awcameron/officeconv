@@ -4,10 +4,12 @@
 //!   (parsed by [`crate::opc::parse_relationships`]).
 //! - `word/numbering.xml`: numbering IDs to bullet or numbered list formats.
 //! - `word/styles.xml`: style IDs to style names, and any list numbering a style applies.
+//! - `word/footnotes.xml` and `word/endnotes.xml`: note IDs to the notes' text, converted by
+//!   [`super::parse_notes`].
 
 use std::collections::HashMap;
 
-use crate::document::ListKind;
+use crate::document::{Block, ImagePart, ListKind};
 use crate::error::Result;
 use crate::opc::{Targets, attr, visit_elements};
 
@@ -19,6 +21,46 @@ pub struct Package {
     pub numbering: Numbering,
     /// Style ID -> style details.
     pub styles: HashMap<String, Style>,
+    /// The footnotes and endnotes, already converted, by kind and ID.
+    pub notes: HashMap<NoteId, Vec<Block<ImagePart>>>,
+}
+
+/// Which note a reference points at. Word numbers footnotes and endnotes separately, so each
+/// kind has its own IDs.
+pub type NoteId = (NoteKind, String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NoteKind {
+    Footnote,
+    Endnote,
+}
+
+impl NoteKind {
+    /// The relationship type that points from the document at this kind's part.
+    pub fn relationship(self) -> &'static str {
+        match self {
+            NoteKind::Footnote => "footnotes",
+            NoteKind::Endnote => "endnotes",
+        }
+    }
+
+    /// The kind whose notes are `name` elements (`w:footnote`) in its part.
+    pub fn of_note(name: &str) -> Option<Self> {
+        match name {
+            "footnote" => Some(NoteKind::Footnote),
+            "endnote" => Some(NoteKind::Endnote),
+            _ => None,
+        }
+    }
+
+    /// The kind a reference element in the body (`w:footnoteReference`) points at.
+    pub fn of_reference(name: &str) -> Option<Self> {
+        match name {
+            "footnoteReference" => Some(NoteKind::Footnote),
+            "endnoteReference" => Some(NoteKind::Endnote),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

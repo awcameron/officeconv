@@ -15,6 +15,24 @@ fn converts_docx_to_markdown() {
     );
 }
 
+#[test]
+fn converts_footnotes_and_endnotes() {
+    let (_dir, path) = sample_docx_with_notes();
+
+    assert_eq!(
+        convert(&path, "md"),
+        "\
+Water boils at 100 °C[^1] at sea level[^2].
+
+Again[^1]
+
+[^1]: See [the table](https://example.com/)
+
+[^2]: Standard pressure.
+"
+    );
+}
+
 /// A document with one hyperlink, `click me`, whose target is `target` as written in the XML.
 fn docx_linking_to(target: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     sample_docx_with_parts(

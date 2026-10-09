@@ -54,8 +54,8 @@ officeconv talk.pptx --to pdf -o talk.pdf   # a slide deck as PDF
 - **Formulas aren't calculated.** A cell shows the result Excel last saved.
 - **Right-to-left text in PDF**, such as Arabic or Hebrew, comes out in the wrong order.
 - **Merged table cells** can't be shown in Markdown, which has none. PDF draws each as one cell.
-- **Not converted yet:** footnotes, comments, and headers and footers in DOCX; charts, SmartArt,
-  and the slide master and layout in PPTX; charts, shapes and in-cell pictures as images.
+- **Not converted yet:** comments, and headers and footers in DOCX; charts, SmartArt, and the
+  slide master and layout in PPTX; charts, shapes and in-cell pictures as images.
 
 [docs/formats.md](docs/formats.md) has the details for each format.
 [ADR 0004](docs/adr/0004-document-model.md) sets out how the missing pieces will be added.

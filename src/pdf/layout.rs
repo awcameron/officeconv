@@ -6,6 +6,7 @@
 //!
 //! Coordinates are in points (1/72 inch), measured from the top-left corner of the page.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -226,6 +227,12 @@ impl<'a> Layout<'a> {
 
     /// Lays out every block, returning the pages and how many images were left out.
     pub fn run(mut self, blocks: &[Block]) -> (Vec<Page>, SkippedImages) {
+        self.place_blocks(blocks);
+        (self.pages, self.skipped_images)
+    }
+
+    /// Lays out blocks one under another, each after a gap that depends on what came before it.
+    fn place_blocks(&mut self, blocks: &[Block]) {
         let body = self.setup.body_size;
         // How many numbered items came before at each list level, for "1.", "2.", ...
         let mut numbers: Vec<u32> = Vec::new();
@@ -271,22 +278,32 @@ impl<'a> Layout<'a> {
                 Block::Table(rows) => self.place_table(rows),
                 Block::Rule => match self.setup.rule {
                     RuleStyle::PageBreak => self.new_page(),
-                    RuleStyle::Line => {
-                        self.ensure_space(1.0);
-                        let (x1, x2) = (self.setup.margin, self.setup.width - self.setup.margin);
-                        let y = self.y;
-                        self.page().items.push(Item::Line {
-                            x1,
-                            y1: y,
-                            x2,
-                            y2: y,
-                        });
-                    }
+                    RuleStyle::Line => self.draw_line(),
                 },
+                Block::Note { number, blocks } => {
+                    // A line sets the notes apart from the document, as Word does above them.
+                    if !matches!(previous, Some(Block::Note { .. })) {
+                        self.draw_line();
+                        self.add_gap(gap);
+                    }
+                    self.place_blocks(&with_note_marker(*number, blocks));
+                }
             }
             previous = Some(block);
         }
-        (self.pages, self.skipped_images)
+    }
+
+    /// A horizontal line across the page.
+    fn draw_line(&mut self) {
+        self.ensure_space(1.0);
+        let (x1, x2) = (self.setup.margin, self.setup.width - self.setup.margin);
+        let y = self.y;
+        self.page().items.push(Item::Line {
+            x1,
+            y1: y,
+            x2,
+            y2: y,
+        });
     }
 
     fn page(&mut self) -> &mut Page {
@@ -752,12 +769,16 @@ impl Paragraph {
         let mut text = String::new();
         let mut glyphs = Vec::new();
         for (r, run) in runs.iter().enumerate() {
+            let run_text = match run.note {
+                Some(number) => Cow::Owned(note_marker(number)),
+                None => Cow::Borrowed(run.text.as_str()),
+            };
             let offset = text.len();
-            text.push_str(&run.text);
+            text.push_str(&run_text);
 
             // Split the run where the font changes, and shape each piece.
             let mut pieces: Vec<(FontId, Range<usize>)> = Vec::new();
-            for (i, c) in run.text.char_indices() {
+            for (i, c) in run_text.char_indices() {
                 let font = fonts.font_for(c, run.style);
                 let at = offset + i;
                 match pieces.last_mut() {
@@ -969,6 +990,31 @@ fn row_groups(cells: &[TableBox], rows: usize) -> Vec<Range<usize>> {
 /// A cell's runs, made bold in the header row.
 fn cell_runs(cell: &CellRuns, header: bool) -> Vec<Run> {
     if header { all_bold(cell) } else { cell.clone() }
+}
+
+/// How a note reference reads in the text, and the marker before the note: `[1]`. The layout
+/// draws every run on one baseline, so the number isn't raised as Word raises it.
+fn note_marker(number: usize) -> String {
+    format!("[{number}]")
+}
+
+/// A note's blocks, with its marker at the start of the first: `[1] The note.`
+fn with_note_marker(number: usize, blocks: &[Block]) -> Vec<Block> {
+    let marker = Run::new(format!("{} ", note_marker(number)), RunStyle::default());
+    let mut blocks = blocks.to_vec();
+    match blocks.first_mut() {
+        Some(
+            Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. },
+        ) => {
+            // Word puts a space between its own marker and the note's text.
+            if let Some(first) = runs.first_mut() {
+                first.text = first.text.trim_start().to_string();
+            }
+            runs.insert(0, marker);
+        }
+        _ => blocks.insert(0, Block::Paragraph(vec![marker])),
+    }
+    blocks
 }
 
 fn heading_scale(level: u8) -> f32 {
@@ -1370,6 +1416,50 @@ mod tests {
         let cells = [cell(0, 3, 50.0), cell(1, 1, 20.0), cell(3, 1, 5.0)];
         assert_eq!(row_heights(&cells, 4, 10.0), [10.0, 20.0, 20.0, 10.0]);
         assert_eq!(row_groups(&cells, 4), [0..3, 3..4]);
+    }
+
+    #[test]
+    fn writes_notes_after_a_line_with_their_numbers() {
+        let note = |number, text: &str| Block::Note {
+            number,
+            blocks: vec![Block::Paragraph(vec![Run::new(text, RunStyle::default())])],
+        };
+        let blocks = [
+            Block::Paragraph(vec![
+                Run::new("Claim", RunStyle::default()),
+                Run::note(1),
+                Run::new(" and more", RunStyle::default()),
+                Run::note(2),
+            ]),
+            note(1, " Source."),
+            note(2, "Another."),
+        ];
+        let pages = lay_out(&blocks, PageSetup::DOCUMENT);
+
+        assert_eq!(
+            page_lines(&pages[0]),
+            ["Claim[1] and more[2]", "[1] Source.", "[2] Another."]
+        );
+        let lines: Vec<f32> = pages[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Line { y1, .. } => Some(*y1),
+                _ => None,
+            })
+            .collect();
+        // One line, between the text and the first note.
+        let baseline = |t: &str| {
+            pages[0].items.iter().find_map(|item| match item {
+                Item::Text(item) if item.text.contains(t) => Some(item.baseline),
+                _ => None,
+            })
+        };
+        let (claim, first) = (baseline("Claim").unwrap(), baseline("Source").unwrap());
+        assert!(
+            matches!(lines.as_slice(), [y] if claim < *y && *y < first),
+            "{lines:?}"
+        );
     }
 
     #[test]

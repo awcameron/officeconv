@@ -30,7 +30,7 @@ step "private docs" env RUSTDOCFLAGS="-D warnings" \
     cargo doc --locked --no-deps --document-private-items
 
 if cargo deny --version > /dev/null 2>&1; then
-    step dependencies cargo deny check
+    step dependencies cargo deny --all-features check
 else
     echo "==> dependencies: skipped, cargo-deny isn't installed (CI runs it)"
 fi

@@ -11,7 +11,7 @@ FROM rust:1.92.0-slim-bookworm@sha256:f1f73538ebe623fd3673a35aff3df358ae1084c64c
 ARG CARGO_FUZZ_VERSION=0.13.2
 ARG CARGO_DENY_VERSION=0.20.2
 # SHA-256 of cargo-deny's prebuilt archives, as its release publishes them. Change them with the
-# version above.
+# version above. CI's deny job installs the same version, reading it and the amd64 hash from here.
 ARG CARGO_DENY_SHA256_AMD64=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
 ARG CARGO_DENY_SHA256_ARM64=995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d
 

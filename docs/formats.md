@@ -60,6 +60,7 @@ What `officeconv` reads from each kind of file. [Outputs](#outputs) says how it'
 - tables, with the first row as the header;
 - line breaks;
 - footnotes and endnotes;
+- headers and footers, in PDF only;
 - pictures, with `--images DIR` or in PDF. See [Images](#images).
 
 [Markdown](#markdown) shows how each is written.
@@ -69,6 +70,12 @@ them, and all of them go at the end of the document. A note referred to more tha
 its number, and is written once. Notes nothing refers to are left out, and so is a reference to
 a note the file doesn't have.
 
+PDF repeats the first section's header and footer on every page. Word can give a section a
+different header for its first page or for even pages, and each section its own; those aren't
+used. Page numbers in a header or footer are left out, since the number saved in the file is the
+page Word last drew it on: "Page 3 of 9" comes out as "Page of". Markdown leaves headers and
+footers out, and `--images` doesn't save their pictures.
+
 A table cell merged across columns or down rows keeps its text in its first cell, so every row
 keeps all its columns. Markdown has no merged cells, so it leaves the cells the merge covers
 empty. PDF draws the merged cell once, across all its columns and rows. A merge never reaches
@@ -76,7 +83,7 @@ past the table, however far the file says it goes, and a continuing cell that ho
 own starts a new cell rather than lose it. A table inside a table cell can't be shown either, so
 its text goes into that cell, a line for each of its cells.
 
-Not converted yet: comments, and headers and footers; see
+Not converted yet: comments; see
 [ADR 0004](adr/0004-document-model.md) for how they'll fit. Headings that use custom style
 names aren't detected.
 
@@ -165,6 +172,7 @@ can't hold larger integers exactly.
   start an entity such as `&copy;`, so the text shows exactly as written.
 - In tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
 - A note of more than one paragraph indents the rest by 4 spaces, so they stay in the note.
+- DOCX headers and footers are left out: a Markdown file has no pages to repeat them on.
 - [PPTX](#pptx) shows how slides are laid out.
 
 ### PDF
@@ -183,6 +191,9 @@ links, tables, line breaks, footnotes and endnotes, and pictures.
 - A merged table cell is drawn once, across its columns and rows, and the rows it joins go onto
   the same page. If they're too tall to fit on any page, they're drawn as separate rows instead,
   with the text in the first, as in Markdown.
+- A DOCX header is drawn at the top of every page and a footer at the bottom, in the margins:
+  from halfway into the margin, as Word places them, to just short of the text. A header or
+  footer taller than that is cut to what fits, rather than pushing the text down as Word does.
 - A footnote or endnote reference is written as its number in brackets, `[1]`, on the line rather
   than raised. The notes go at the end of the document, below a line, each starting with its
   number. They aren't put at the foot of the page that refers to them.

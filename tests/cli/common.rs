@@ -199,6 +199,43 @@ pub fn sample_docx_with_notes() -> (TempDir, PathBuf) {
     )
 }
 
+/// A `.docx` with `paragraphs` numbered body paragraphs, whose section has a header ("Annual
+/// report" and a logo) and a footer ("Page " and a page number field showing 7).
+pub fn sample_docx_with_header_and_footer(paragraphs: usize) -> (TempDir, PathBuf) {
+    let mut body: String = (0..paragraphs)
+        .map(|i| format!("<w:p><w:r><w:t>Paragraph {i}</w:t></w:r></w:p>"))
+        .collect();
+    body.push_str(
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rId1"/><w:footerReference w:type="default" r:id="rId2"/></w:sectPr>"#,
+    );
+    let logo = r#"<w:r><w:drawing><wp:inline xmlns:wp="wp"><wp:extent cx="114300" cy="114300"/><wp:docPr id="1" name="Logo" descr="Logo"/><a:graphic xmlns:a="a"><a:graphicData><pic:pic xmlns:pic="pic"><pic:blipFill><a:blip r:embed="rId1"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let header = format!(
+        r#"<w:hdr xmlns:w="{WORD_NS}" xmlns:r="{REL}"><w:p><w:r><w:t>Annual report</w:t></w:r>{logo}</w:p></w:hdr>"#
+    );
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{WORD_NS}"><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>7</w:t></w:r></w:fldSimple></w:p></w:ftr>"#
+    );
+    sample_docx_with_parts(
+        &body,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[
+                    ("rId1", "header", "header1.xml"),
+                    ("rId2", "footer", "footer1.xml"),
+                ]),
+            ),
+            part("word/header1.xml", header),
+            part(
+                "word/_rels/header1.xml.rels",
+                rels(&[("rId1", "image", "media/logo.png")]),
+            ),
+            part("word/media/logo.png", RED_PNG),
+            part("word/footer1.xml", footer),
+        ],
+    )
+}
+
 /// A slide (or notes) part holding `shapes`.
 pub fn slide(shapes: &str) -> String {
     let ns = pptx_ns();

@@ -148,7 +148,7 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
     };
 
     let mut archive = opc::Archive::open(source.reader()?)?;
-    let blocks = if kind == InputKind::Pptx {
+    let mut blocks = if kind == InputKind::Pptx {
         let notes = if cli.no_notes {
             pptx::Notes::Skip
         } else {
@@ -158,6 +158,10 @@ fn convert_document(cli: &Cli, source: &Source, kind: InputKind) -> Result<()> {
     } else {
         docx::read_blocks(&mut archive)?
     };
+    if cli.to != OutputFormat::Pdf {
+        // Markdown leaves headers and footers out, so `--images` mustn't save their pictures.
+        blocks.retain(|block| !block.is_page_furniture());
+    }
     let blocks = images::resolve(blocks, &mut archive, images)?;
 
     if cli.to == OutputFormat::Pdf {

@@ -609,3 +609,112 @@ fn drops_references_to_notes_the_file_does_not_have() {
     );
     assert_eq!(blocks, [Block::Paragraph(text_block("Text"))]);
 }
+
+/// A section's properties, referring to its headers and footers as `(element, type, id)`.
+fn sect_pr(references: &[(&str, &str, &str)]) -> String {
+    let references: String = references
+        .iter()
+        .map(|(element, kind, id)| format!(r#"<w:{element} w:type="{kind}" r:id="{id}"/>"#))
+        .collect();
+    format!("<w:sectPr>{references}</w:sectPr>")
+}
+
+#[test]
+fn finds_the_first_sections_default_header_and_footer() {
+    let first = sect_pr(&[
+        ("headerReference", "first", "rIdFirst"),
+        ("headerReference", "default", "rIdHeader"),
+        ("footerReference", "even", "rIdEven"),
+        ("footerReference", "default", "rIdFooter"),
+    ]);
+    let second = sect_pr(&[
+        ("headerReference", "default", "rIdLater"),
+        ("footerReference", "default", "rIdLater"),
+    ]);
+    let xml = format!(
+        r#"<w:document xmlns:w="w" xmlns:r="r"><w:body><w:p><w:pPr>{first}</w:pPr></w:p>{second}</w:body></w:document>"#
+    );
+    assert_eq!(
+        first_section_parts(&xml).unwrap(),
+        (Some("rIdHeader".into()), Some("rIdFooter".into()))
+    );
+
+    // A first section without a default footer has none, whatever later sections have.
+    let xml = format!(
+        r#"<w:document xmlns:w="w" xmlns:r="r"><w:body><w:p><w:pPr>{}</w:pPr></w:p>{second}</w:body></w:document>"#,
+        sect_pr(&[("headerReference", "default", "rIdHeader")])
+    );
+    assert_eq!(
+        first_section_parts(&xml).unwrap(),
+        (Some("rIdHeader".into()), None)
+    );
+}
+
+/// Header XML holding one paragraph of `content`.
+fn header(content: &str) -> String {
+    format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>{content}</w:p></w:hdr>"#
+    )
+}
+
+#[test]
+fn leaves_page_numbers_out_of_headers_and_footers() {
+    let xml = header(
+        r#"<w:r><w:t xml:space="preserve">Report, page </w:t></w:r>
+           <w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>4</w:t></w:r></w:fldSimple>
+           <w:r><w:t xml:space="preserve"> of </w:t></w:r>
+           <w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>
+           <w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>
+           <w:r><w:t xml:space="preserve">, </w:t></w:r>
+           <w:fldSimple w:instr="AUTHOR"><w:r><w:t>Ada</w:t></w:r></w:fldSimple>"#,
+    );
+    let blocks = parse_page_furniture(&xml, &Package::default(), &Targets::default()).unwrap();
+    assert_eq!(
+        blocks,
+        [Block::Paragraph(text_block("Report, page  of , Ada"))]
+    );
+}
+
+#[test]
+fn keeps_page_numbers_in_the_body() {
+    let blocks = parse(
+        r#"<w:p><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>4</w:t></w:r></w:fldSimple></w:p>"#,
+    );
+    assert_eq!(blocks, [Block::Paragraph(text_block("See page 4"))]);
+}
+
+#[test]
+fn reads_a_header_once_however_many_sections_refer_to_it() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let section = sect_pr(&[
+        ("headerReference", "default", "rId1"),
+        ("headerReference", "first", "rId1"),
+        ("headerReference", "even", "rId1"),
+    ]);
+    let body = format!("<w:p><w:pPr>{section}</w:pPr></w:p>").repeat(1000);
+    let document = format!(
+        r#"<w:document xmlns:w="{w}" xmlns:r="{rel}"><w:body>{body}</w:body></w:document>"#
+    );
+    let rels = format!(
+        r#"<Relationships><Relationship Id="rId1" Type="{rel}/header" Target="header1.xml"/></Relationships>"#
+    );
+    let padding = "x".repeat(100_000);
+    let header = header(&format!("<w:r><w:t>Title</w:t></w:r><!--{padding}-->"));
+
+    // Enough to read every part once, but not the header twice.
+    let total = (document.len() + rels.len() + header.len() * 3 / 2) as u64;
+    let package = crate::opc::test_package(&[
+        ("word/document.xml", document.as_bytes()),
+        ("word/_rels/document.xml.rels", rels.as_bytes()),
+        ("word/header1.xml", header.as_bytes()),
+    ]);
+    let mut archive =
+        Archive::with_limits(package, crate::opc::Limits { part: total, total }).unwrap();
+
+    let blocks = read_blocks(&mut archive).unwrap();
+    assert_eq!(
+        blocks,
+        [Block::Header(vec![Block::Paragraph(text_block("Title"))])]
+    );
+}

@@ -92,6 +92,23 @@ fn writes_footnotes_and_endnotes_at_the_end() {
 }
 
 #[test]
+fn repeats_the_header_and_footer_on_every_page() {
+    let (_dir, path) = sample_docx_with_header_and_footer(120);
+    let (pdf, _) = convert_to_pdf(&path, &[]);
+
+    let pages = page_texts(&pdf);
+    assert!(pages.len() >= 2, "{pages:?}");
+    for page in &pages {
+        assert!(page.starts_with("Annual report"), "{page:?}");
+        // The page number Word saved is left out.
+        assert!(page.ends_with(" Page"), "{page:?}");
+        assert!(!page.contains("Page 7"), "{page:?}");
+    }
+    // The logo is drawn on every page.
+    assert_eq!(image_sizes(&pdf).len(), pages.len());
+}
+
+#[test]
 fn numbers_lists_and_draws_tables() {
     let numbering = format!(
         r#"<w:numbering xmlns:w="{WORD_NS}">

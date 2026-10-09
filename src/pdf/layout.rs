@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::mem;
 use std::ops::Range;
 
 use krilla::Data;
@@ -205,6 +206,13 @@ pub struct SkippedImages {
     pub too_large: usize,
 }
 
+/// Which margin [`Layout::repeat`] draws in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Top,
+    Bottom,
+}
+
 /// Why [`decode_image`] left an image out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LeftOut {
@@ -228,7 +236,74 @@ impl<'a> Layout<'a> {
     /// Lays out every block, returning the pages and how many images were left out.
     pub fn run(mut self, blocks: &[Block]) -> (Vec<Page>, SkippedImages) {
         self.place_blocks(blocks);
+        for block in blocks {
+            match block {
+                Block::Header(header) => self.repeat(header, Edge::Top),
+                Block::Footer(footer) => self.repeat(footer, Edge::Bottom),
+                _ => {}
+            }
+        }
         (self.pages, self.skipped_images)
+    }
+
+    /// Draws `blocks` in the margin at `edge` of every page, as Word draws a header or footer:
+    /// from halfway into the margin, and no further than a short gap from the text.
+    fn repeat(&mut self, blocks: &[Block], edge: Edge) {
+        let margin = self.setup.margin;
+        let room = margin / 2.0 - self.setup.body_size / 2.0;
+        if room <= 0.0 {
+            return;
+        }
+        let (laid_out, height) = self.lay_out_apart(blocks, room);
+        let top = match edge {
+            Edge::Top => margin / 2.0,
+            Edge::Bottom => self.setup.height - margin / 2.0 - height,
+        };
+        for page in &mut self.pages {
+            // Drawn in reading order, so a PDF reader's text starts with the header and ends
+            // with the footer.
+            let items = laid_out
+                .items
+                .iter()
+                .map(|item| item.clone().moved(margin, top));
+            let at = match edge {
+                Edge::Top => 0,
+                Edge::Bottom => page.items.len(),
+            };
+            page.items.splice(at..at, items);
+            page.links.extend(laid_out.links.iter().map(|link| Link {
+                x: link.x + margin,
+                y: link.y + top,
+                ..link.clone()
+            }));
+        }
+    }
+
+    /// Lays out `blocks` once, apart from the pages, in a box as wide as the text and `height`
+    /// tall. Returns what fits, at positions inside the box, and the height it takes up.
+    ///
+    /// What doesn't fit is left out, so a header can't cover the page, and repeating it on every
+    /// page costs the same however long the file makes it.
+    fn lay_out_apart(&mut self, blocks: &[Block], height: f32) -> (Page, f32) {
+        let setup = PageSetup {
+            width: self.setup.content_width(),
+            height,
+            margin: 0.0,
+            ..self.setup
+        };
+        let setup = mem::replace(&mut self.setup, setup);
+        let pages = mem::replace(&mut self.pages, vec![Page::default()]);
+        let y = mem::replace(&mut self.y, 0.0);
+
+        self.place_blocks(blocks);
+        // Only the first page is kept. If the blocks ran onto another, the first is full.
+        let used = if self.pages.len() > 1 { height } else { self.y };
+        let first = mem::take(&mut self.pages[0]);
+
+        self.setup = setup;
+        self.pages = pages;
+        self.y = y;
+        (first, used.min(height))
     }
 
     /// Lays out blocks one under another, each after a gap that depends on what came before it.
@@ -239,6 +314,10 @@ impl<'a> Layout<'a> {
         let mut previous: Option<&Block> = None;
 
         for (i, block) in blocks.iter().enumerate() {
+            // Headers and footers go in the margins, once every page is laid out.
+            if block.is_page_furniture() {
+                continue;
+            }
             if !matches!(block, Block::ListItem { .. }) {
                 numbers.clear();
             }
@@ -288,6 +367,7 @@ impl<'a> Layout<'a> {
                     }
                     self.place_blocks(&with_note_marker(*number, blocks));
                 }
+                Block::Header(_) | Block::Footer(_) => {}
             }
             previous = Some(block);
         }
@@ -1460,6 +1540,68 @@ mod tests {
             matches!(lines.as_slice(), [y] if claim < *y && *y < first),
             "{lines:?}"
         );
+    }
+
+    /// The baseline of each text item reading `t` on `page`.
+    fn baselines_of(page: &Page, t: &str) -> Vec<f32> {
+        page.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Text(item) if item.text == t => Some(item.baseline),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn repeats_headers_and_footers_in_the_margins_of_every_page() {
+        let setup = PageSetup::DOCUMENT;
+        let mut blocks = vec![
+            Block::Header(vec![Block::Paragraph(text("Report"))]),
+            Block::Footer(vec![Block::Paragraph(text("Confidential"))]),
+        ];
+        blocks.extend((0..80).map(|i| Block::Paragraph(text(&format!("Paragraph {i}")))));
+        let pages = lay_out(&blocks, setup);
+
+        assert!(pages.len() > 1);
+        for page in &pages {
+            let [header] = baselines_of(page, "Report")[..] else {
+                panic!("not one header: {:?}", page_lines(page));
+            };
+            let [footer] = baselines_of(page, "Confidential")[..] else {
+                panic!("not one footer: {:?}", page_lines(page));
+            };
+            assert!(setup.margin / 2.0 < header && header < setup.margin);
+            assert!(setup.bottom() < footer && footer < setup.height - setup.margin / 2.0);
+        }
+        // The body starts where it would without them.
+        let alone = lay_out(&blocks[2..], setup);
+        assert_eq!(
+            text_at(&pages[0], "Paragraph 0"),
+            text_at(&alone[0], "Paragraph 0")
+        );
+    }
+
+    #[test]
+    fn cuts_a_header_to_what_fits_in_the_margin() {
+        let lines: Vec<Block> = (0..50)
+            .map(|i| Block::Paragraph(text(&format!("Line {i}"))))
+            .collect();
+        let blocks = [Block::Header(lines), Block::Paragraph(text("Body"))];
+        let pages = lay_out(&blocks, PageSetup::DOCUMENT);
+
+        assert_eq!(pages.len(), 1);
+        let shown = page_lines(&pages[0]);
+        assert!(shown.contains(&"Line 0".to_string()), "{shown:?}");
+        assert!(!shown.contains(&"Line 2".to_string()), "{shown:?}");
+        let (_, body) = text_at(&pages[0], "Body");
+        for item in &pages[0].items {
+            if let Item::Text(t) = item
+                && t.text.starts_with("Line")
+            {
+                assert!(t.baseline < body, "{} overlaps the body", t.text);
+            }
+        }
     }
 
     #[test]

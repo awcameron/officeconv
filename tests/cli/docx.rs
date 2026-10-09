@@ -33,6 +33,13 @@ Again[^1]
     );
 }
 
+#[test]
+fn leaves_headers_and_footers_out_of_markdown() {
+    let (_dir, path) = sample_docx_with_header_and_footer(2);
+
+    assert_eq!(convert(&path, "md"), "Paragraph 0\n\nParagraph 1\n");
+}
+
 /// A document with one hyperlink, `click me`, whose target is `target` as written in the XML.
 fn docx_linking_to(target: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     sample_docx_with_parts(

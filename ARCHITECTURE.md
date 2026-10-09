@@ -86,8 +86,10 @@ readers share:
 - **`Archive`** reads parts and counts every byte it decompresses against `Limits`, so a zip
   bomb fails on the bytes actually read, whatever its headers claim. Every part a reader uses,
   images included, comes through it.
-- **`Archive::relationships` and `Targets`** turn a part's relationship IDs into links and image
-  parts. Links are filtered here, by `is_safe_link`, so a reader never sees a `javascript:` URL.
+- **`Archive::relationships`** returns a part's `Relationships`, which find the parts it links
+  to: by ID or by kind, only of the kind the reader asks for, and never through an external
+  target. `Relationships::targets` turns the IDs into links and image parts for the reader.
+  Links are filtered here, by `is_safe_link`, so a reader never sees a `javascript:` URL.
 - **`walk()`** streams through one part's XML and calls an `XmlHandler` for each tag and piece
   of text, never building a tree. With each call comes `Open`, the stack of elements open around
   it. A reader decides what something means from where it is ("text inside `t` inside `r`")

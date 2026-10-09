@@ -1,7 +1,7 @@
 //! The supporting parts of a `.docx` that `document.xml` refers to by ID.
 //!
 //! - `word/_rels/document.xml.rels`: relationship IDs (`rId5`) to link targets
-//!   (parsed by [`crate::opc::parse_relationships`]).
+//!   (read by [`crate::opc::Archive::relationships`]).
 //! - `word/numbering.xml`: numbering IDs to bullet or numbered list formats.
 //! - `word/styles.xml`: style IDs to style names, and any list numbering a style applies.
 //! - `word/footnotes.xml` and `word/endnotes.xml`: note IDs to the notes' text, converted by

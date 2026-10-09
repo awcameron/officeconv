@@ -5,7 +5,8 @@ Bug reports, ideas and pull requests are welcome. Report a vulnerability private
 
 [AGENTS.md](AGENTS.md) holds the rules a change has to follow, such as staying safe on untrusted
 input, and the conventions for branches, commits and PRs. It's written for coding agents, but
-the rules are the same for people.
+the rules are the same for people. [ARCHITECTURE.md](ARCHITECTURE.md) describes how a conversion
+moves through the code.
 
 - [Development](#development)
 - [Developing in a container](#developing-in-a-container)
@@ -123,8 +124,8 @@ the top of the script.
 
 ## Layout
 
-Every top-level file and directory in the repository. [AGENTS.md](AGENTS.md#what-this-is) names
-the main modules in `src/`, and each module's doc comment says what it does, so
+Every top-level file and directory in the repository. [ARCHITECTURE.md](ARCHITECTURE.md) shows
+how the modules in `src/` fit together, and each module's doc comment says what it does, so
 `cargo doc --document-private-items --open` is a map of the code.
 
 ```text
@@ -149,6 +150,7 @@ Cargo.lock           the exact dependency versions builds and CI use
 deny.toml            which licenses, advisories and sources cargo deny allows
 README.md            what officeconv does, and how to install it and start using it
 CONTRIBUTING.md      this file
+ARCHITECTURE.md      how a conversion moves through the code, from options to output
 SECURITY.md          what officeconv protects against, and how to report a vulnerability
 LICENSE              MIT
 .gitignore           build output and editor files

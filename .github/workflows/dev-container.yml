@@ -2,7 +2,8 @@ name: Dev container
 
 # Builds the contributor image (.devcontainer/) and checks that each of its tools runs, when
 # the image changes. The full checks aren't repeated here: CI's check job already runs them on
-# every PR. CI's msrv job checks that the image's Rust matches rust-version.
+# every PR. CI's msrv job checks that the image's Rust matches rust-version. The base image is
+# pulled through a mirror of Docker Hub, whose limit on anonymous pulls failed this workflow.
 #
 # Weekly, and on demand, it also builds the fuzz targets in the image. The image takes whichever
 # nightly is current, so that catches a new nightly that breaks fuzzing without slowing any PR.
@@ -32,6 +33,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Docker Hub limits anonymous pulls, and runners share that limit, so the base image comes
+      # through Google's public cache of Docker Hub instead. Its digest is pinned in the
+      # Dockerfile, so it's the same image either way, and Docker falls back to Docker Hub if
+      # the mirror fails. Debug logging records which registry served it. The runner's
+      # daemon.json already holds settings, so the mirror is added to them.
+      - name: Use a Docker Hub mirror
+        run: |
+          config=/etc/docker/daemon.json
+          current=$(sudo cat "$config" 2>/dev/null || echo '{}')
+          echo "$current" \
+            | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"], "debug": true}' \
+            | sudo tee "$config"
+          sudo systemctl restart docker
+          docker info --format 'Registry mirrors: {{.RegistryConfig.Mirrors}}'
+
+      # Pulled before the build, which then uses it, so the log shows where it came from. The
+      # runner is logged in to Docker Hub, and Docker sends those credentials to the mirror too,
+      # which refuses them; an empty config pulls without them.
+      - name: Pull the base image
+        run: |
+          base=$(sed -n 's/^FROM //p' .devcontainer/Dockerfile)
+          since=$(date '+%Y-%m-%d %H:%M:%S')
+          status=0
+          DOCKER_CONFIG=$(mktemp -d) docker pull "$base" || status=$?
+          sudo journalctl -u docker --since "$since" --no-pager \
+            | grep -E 'Trying to pull|next endpoint|Not continuing' || true
+          exit "$status"
 
       - name: Build the image
         run: docker build -t officeconv-dev .devcontainer

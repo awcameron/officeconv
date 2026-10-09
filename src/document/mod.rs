@@ -39,6 +39,18 @@ pub enum Block<I = ImageRef> {
         number: usize,
         blocks: Vec<Block<I>>,
     },
+    /// Blocks repeated at the top of every page, which come before the document's own. They
+    /// never hold headers, footers or notes.
+    Header(Vec<Block<I>>),
+    /// Blocks repeated at the bottom of every page, as for [`Block::Header`].
+    Footer(Vec<Block<I>>),
+}
+
+impl<I> Block<I> {
+    /// True for a header or footer, which only a paged output can show.
+    pub fn is_page_furniture(&self) -> bool {
+        matches!(self, Block::Header(_) | Block::Footer(_))
+    }
 }
 
 /// The formatted text of one document table cell. Paragraphs inside the cell are separated by
@@ -290,11 +302,14 @@ fn resolve_blocks(
                 number,
                 blocks: resolve_blocks(blocks, export)?,
             },
+            Block::Header(blocks) => Block::Header(resolve_blocks(blocks, export)?),
+            Block::Footer(blocks) => Block::Footer(resolve_blocks(blocks, export)?),
         };
         let empty = match &block {
             Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
                 is_blank(runs)
             }
+            Block::Header(blocks) | Block::Footer(blocks) => blocks.is_empty(),
             Block::Table(_) | Block::Rule | Block::Note { .. } => false,
         };
         if !empty {

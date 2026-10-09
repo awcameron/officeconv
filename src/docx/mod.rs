@@ -16,7 +16,8 @@
 //!
 //! Footnotes and endnotes live in parts of their own, which the body refers to by ID
 //! (`<w:footnoteReference w:id="2"/>`). They're read first, then numbered as the body refers to
-//! them and added after it.
+//! them and added after it. So do headers and footers: the first section's default header and
+//! footer come before the body, for a paged output to repeat.
 
 pub mod package;
 
@@ -71,7 +72,70 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
     }
     package.notes = notes;
 
-    parse_document(&document, &package)
+    // Read once each, however many sections refer to them.
+    let mut blocks = Vec::new();
+    let (header, footer) = first_section_parts(&document)?;
+    for (id, kind) in [(header, "header"), (footer, "footer")] {
+        let Some(part) = id
+            .and_then(|id| relationships.get(&id))
+            .filter(|r| r.kind == kind && !r.external)
+            .map(|r| opc::resolve_target(DOCUMENT, &r.target))
+        else {
+            continue;
+        };
+        let Some(xml) = archive.read_part(&part)? else {
+            continue;
+        };
+        let targets = Targets::new(&archive.relationships(&part)?, &part);
+        let content = parse_page_furniture(&xml, &package, &targets)?;
+        if !content.is_empty() {
+            blocks.push(match kind {
+                "header" => Block::Header(content),
+                _ => Block::Footer(content),
+            });
+        }
+    }
+
+    blocks.extend(parse_document(&document, &package)?);
+    Ok(blocks)
+}
+
+/// The relationship IDs of the first section's default header and footer, from the first
+/// `w:sectPr` in `word/document.xml`. Each section's properties come at its end, so the first
+/// ones found are the first section's.
+fn first_section_parts(xml: &str) -> Result<(Option<String>, Option<String>)> {
+    let (mut sections, mut header, mut footer) = (0, None, None);
+    opc::visit_elements(xml, |e| {
+        let name = e.local_name();
+        let reference = match name.as_ref() {
+            "sectPr" => {
+                sections += 1;
+                return;
+            }
+            "headerReference" => &mut header,
+            "footerReference" => &mut footer,
+            _ => return,
+        };
+        // A section can also have a header for its first page, and one for even pages.
+        let default = attr(e, "type").is_none_or(|kind| kind == "default");
+        if sections == 1 && default && reference.is_none() {
+            *reference = attr(e, "id");
+        }
+    })?;
+    Ok((header, footer))
+}
+
+/// Parses a header or footer part. Page numbers are left out: the number saved in the file is
+/// the page Word last drew it on, not the page it's repeated on. Note references are dropped.
+pub fn parse_page_furniture(
+    xml: &str,
+    package: &Package,
+    targets: &Targets,
+) -> Result<Vec<Block<ImagePart>>> {
+    let mut parser = Parser::new(package, targets, None);
+    parser.drop_page_numbers = true;
+    opc::walk(xml, &mut parser)?;
+    Ok(parser.builder.into_blocks())
 }
 
 /// Parses the contents of `word/document.xml`, looking up IDs in `package`. The notes the body
@@ -122,6 +186,13 @@ struct Parser<'p> {
     builder: BlockBuilder<ParagraphProps>,
     /// The notes the body has referred to, or `None` while reading the notes themselves.
     references: Option<References>,
+    /// Whether to leave out the text of page number fields (`PAGE`, `NUMPAGES`).
+    drop_page_numbers: bool,
+    /// The instruction of the field being read (`PAGE \* Arabic`), between its `begin` and
+    /// `separate` marks. Fields span runs, so this can't come from the open elements.
+    field_instruction: Option<String>,
+    /// Inside the text of a page number field that's being left out.
+    in_page_number: bool,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
     /// Display size of the picture being read, from its `wp:extent`.
@@ -264,6 +335,24 @@ impl XmlHandler for Parser<'_> {
                     }
                 }
             }
+            // A field is either one `w:fldSimple` element, or runs marked `begin`, then the
+            // instruction, `separate`, the text Word last showed, and `end`.
+            "fldSimple" if !is_empty => {
+                self.in_page_number =
+                    self.drop_page_numbers && attr(e, "instr").is_some_and(|i| is_page_number(&i));
+            }
+            "fldChar" if in_run => match attr(e, "fldCharType").as_deref() {
+                Some("begin") => self.field_instruction = Some(String::new()),
+                Some("separate") => {
+                    let instruction = self.field_instruction.take().unwrap_or_default();
+                    self.in_page_number = self.drop_page_numbers && is_page_number(&instruction);
+                }
+                Some("end") => {
+                    self.field_instruction = None;
+                    self.in_page_number = false;
+                }
+                _ => {}
+            },
             "tab" if in_run => self.builder.text(" "),
             "br" | "cr" if in_run => {
                 // Page and column breaks don't mean anything in Markdown.
@@ -298,6 +387,7 @@ impl XmlHandler for Parser<'_> {
     fn end(&mut self, name: &str) {
         match name {
             "hyperlink" => self.builder.link = None,
+            "fldSimple" => self.in_page_number = false,
             "p" => {
                 if let Some(paragraph) = self.builder.end_paragraph() {
                     let block = self.classify(paragraph);
@@ -312,7 +402,11 @@ impl XmlHandler for Parser<'_> {
     }
 
     fn text(&mut self, text: &str, open: &Open) {
-        if open.inside("t") {
+        if open.inside("instrText") {
+            if let Some(instruction) = &mut self.field_instruction {
+                instruction.push_str(text);
+            }
+        } else if open.inside("t") && !self.in_page_number {
             self.builder.text(text);
         }
     }
@@ -325,6 +419,9 @@ impl<'p> Parser<'p> {
             targets,
             builder: BlockBuilder::new(),
             references,
+            drop_page_numbers: false,
+            field_instruction: None,
+            in_page_number: false,
             image_alt: None,
             image_size: None,
         }
@@ -370,6 +467,15 @@ impl<'p> Parser<'p> {
             None => Block::Paragraph(runs),
         }
     }
+}
+
+/// True if a field instruction (`PAGE \* MERGEFORMAT`) shows a page number or page count.
+fn is_page_number(instruction: &str) -> bool {
+    instruction.split_whitespace().next().is_some_and(|name| {
+        ["PAGE", "NUMPAGES", "SECTIONPAGES"]
+            .iter()
+            .any(|field| name.eq_ignore_ascii_case(field))
+    })
 }
 
 /// `<w:b/>` turns bold on, and so does `<w:b w:val="1"/>`, but `<w:b w:val="0"/>` turns it off.

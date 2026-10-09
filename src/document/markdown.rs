@@ -5,12 +5,16 @@ use crate::markdown::{escape_text, escape_url, write_table};
 
 /// Renders blocks as Markdown, separated by blank lines.
 ///
-/// Neighboring list items get a single newline so they form one list.
+/// Neighboring list items get a single newline so they form one list. Headers and footers are
+/// left out: a Markdown file has no pages to repeat them on.
 pub fn render(blocks: &[Block]) -> String {
     let mut out = String::new();
     let mut previous: Option<&Block> = None;
 
     for block in blocks {
+        if block.is_page_furniture() {
+            continue;
+        }
         if let Some(previous) = previous {
             let both_list_items = matches!(previous, Block::ListItem { .. })
                 && matches!(block, Block::ListItem { .. });
@@ -38,6 +42,7 @@ fn render_block(block: &Block) -> String {
         Block::Table(rows) => render_table(rows),
         Block::Rule => "---".to_string(),
         Block::Note { number, blocks } => render_note(*number, blocks),
+        Block::Header(_) | Block::Footer(_) => String::new(),
     }
 }
 
@@ -409,6 +414,16 @@ mod tests {
             render(&blocks),
             "Claim[^1] and more[^2]\n\n[^1]: Source.\n\n[^2]: One  \n    two\n\n    - item\n"
         );
+    }
+
+    #[test]
+    fn leaves_out_headers_and_footers() {
+        let blocks = [
+            Block::Header(vec![Block::Paragraph(vec![run("Report", false, false)])]),
+            Block::Footer(vec![Block::Paragraph(vec![run("Page", false, false)])]),
+            Block::Paragraph(vec![run("Body.", false, false)]),
+        ];
+        assert_eq!(render(&blocks), "Body.\n");
     }
 
     #[test]

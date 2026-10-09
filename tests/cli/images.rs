@@ -86,6 +86,21 @@ fn saves_docx_images_next_to_the_markdown() {
 }
 
 #[test]
+fn saves_no_pictures_from_headers_markdown_leaves_out() {
+    let (dir, path) = sample_docx_with_header_and_footer(1);
+    let images = dir.path().join("img");
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md", "--images"])
+        .arg(&images)
+        .assert()
+        .success()
+        .stdout("Paragraph 0\n");
+    assert!(!images.join("logo.png").exists());
+}
+
+#[test]
 fn saves_only_real_images_and_names_them_by_their_format() {
     let picture = |id: &str| {
         format!(

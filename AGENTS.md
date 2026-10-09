@@ -64,7 +64,9 @@ installed.
 - **Errors.** Each `ConvertError` variant picks its exit code in `ConvertError::exit_code`. The
   match is exhaustive, so a new variant has to choose one.
 - **Tests.** Tests build their own fixtures in temporary directories; don't commit binary test
-  files. A behavior change needs a test, in `tests/cli/` if a user would see it.
+  files; the builders are in `tests/cli/common.rs`. A behavior change needs a test, in
+  `tests/cli/` if a user would see it. `cargo test --test cli <name>` runs matching end-to-end
+  tests while iterating; `scripts/check.sh` is still the bar before committing.
 - **Releases.** CI tags and publishes a release when a PR changing `version` in `Cargo.toml`
   merges ([Releasing](CONTRIBUTING.md#releasing)). Never push, move or delete a `v*` tag.
 - **Git.**

@@ -18,7 +18,7 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
 use crate::document::{
-    Align, Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle, TableCell,
+    Align, Block, CellRuns, EMU_PER_POINT, Field, ImageRef, ListKind, Run, RunStyle, TableCell,
 };
 use crate::images::{EmbeddedImages, ImageFormat};
 
@@ -71,7 +71,7 @@ impl PageSetup {
 }
 
 /// One laid-out page.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Page {
     pub items: Vec<Item>,
     pub links: Vec<Link>,
@@ -176,6 +176,11 @@ const HEADING_SCALE: [f32; 6] = [2.0, 1.6, 1.3, 1.15, 1.0, 1.0];
 /// Points per pixel, taking images to be 96 dpi as Office does.
 const POINTS_PER_PIXEL: f32 = 0.75;
 
+/// The most characters of a header or footer drawn on every page; a picture counts as one. A
+/// real one is a line or two, and the cap keeps a long one in a hostile file from making every
+/// page cost as much as the whole of it.
+pub const MAX_REPEATED_CHARS: usize = 1_000;
+
 /// Lays out blocks page by page.
 pub struct Layout<'a> {
     fonts: &'a mut Fonts,
@@ -204,6 +209,135 @@ pub struct SkippedImages {
     pub unsupported: usize,
     /// More than [`MAX_IMAGE_PIXELS`].
     pub too_large: usize,
+}
+
+/// The start of `blocks`, holding at most `budget` characters, with a picture, note reference
+/// or field counting as one. A paragraph is cut short where the budget runs out; a table that
+/// doesn't fit whole is left out, with everything after it.
+fn cut_to(blocks: &[Block], mut budget: usize) -> Vec<Block> {
+    let mut kept = Vec::new();
+    for block in blocks {
+        if budget == 0 {
+            break;
+        }
+        match block {
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. } => {
+                let cut = cut_runs(runs, &mut budget);
+                let mut block = block.clone();
+                if let Block::Heading { runs, .. }
+                | Block::Paragraph { runs, .. }
+                | Block::ListItem { runs, .. } = &mut block
+                {
+                    *runs = cut;
+                }
+                kept.push(block);
+            }
+            Block::Table(rows) => {
+                let size: usize = rows
+                    .iter()
+                    .flatten()
+                    .map(|cell| cell.runs().iter().map(run_size).sum::<usize>())
+                    .sum();
+                if size > budget {
+                    break;
+                }
+                budget -= size;
+                kept.push(block.clone());
+            }
+            Block::Rule => {
+                budget -= 1;
+                kept.push(Block::Rule);
+            }
+            // Readers never put these in a header or footer.
+            Block::Note { .. } | Block::Header(_) | Block::Footer(_) => {}
+        }
+    }
+    kept
+}
+
+/// The runs of `runs` that fit in `budget` characters, the last one cut short if need be, and
+/// what's left of the budget.
+fn cut_runs(runs: &[Run], budget: &mut usize) -> Vec<Run> {
+    let mut kept = Vec::new();
+    for run in runs {
+        if *budget == 0 {
+            break;
+        }
+        let size = run_size(run);
+        if size <= *budget {
+            *budget -= size;
+            kept.push(run.clone());
+            continue;
+        }
+        let end = run
+            .text
+            .char_indices()
+            .nth(*budget)
+            .map_or(run.text.len(), |(i, _)| i);
+        kept.push(Run {
+            text: run.text[..end].to_string(),
+            ..run.clone()
+        });
+        *budget = 0;
+    }
+    kept
+}
+
+/// How much of [`cut_to`]'s budget a run takes.
+fn run_size(run: &Run) -> usize {
+    if run.image.is_some() || run.note.is_some() || run.field.is_some() {
+        1
+    } else {
+        run.text.chars().count()
+    }
+}
+
+/// True if any run in `blocks` is a page number field.
+fn has_fields(blocks: &[Block]) -> bool {
+    blocks.iter().any(|block| match block {
+        Block::Heading { runs, .. }
+        | Block::Paragraph { runs, .. }
+        | Block::ListItem { runs, .. } => runs.iter().any(|r| r.field.is_some()),
+        Block::Table(rows) => rows
+            .iter()
+            .flatten()
+            .any(|cell| cell.runs().iter().any(|r| r.field.is_some())),
+        _ => false,
+    })
+}
+
+/// `blocks` with each page number field written out for page `page` of `count`.
+fn fill_fields(blocks: &[Block], page: usize, count: usize) -> Vec<Block> {
+    let fill = |runs: &mut Vec<Run>| {
+        for run in runs.iter_mut() {
+            if let Some(field) = run.field.take() {
+                run.text = match field {
+                    Field::PageNumber => page,
+                    Field::PageCount => count,
+                }
+                .to_string();
+            }
+        }
+    };
+    let mut blocks = blocks.to_vec();
+    for block in &mut blocks {
+        match block {
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. } => fill(runs),
+            Block::Table(rows) => {
+                for cell in rows.iter_mut().flatten() {
+                    if let TableCell::Content { runs, .. } = cell {
+                        fill(runs);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    blocks
 }
 
 /// Which margin [`Layout::repeat`] draws in.
@@ -248,42 +382,63 @@ impl<'a> Layout<'a> {
 
     /// Draws `blocks` in the margin at `edge` of every page, as Word draws a header or footer:
     /// from halfway into the margin, and no further than a short gap from the text.
+    ///
+    /// The blocks are cut to [`MAX_REPEATED_CHARS`] first. Without page number fields they're
+    /// laid out once and copied onto every page; with them, laid out again for each page, with
+    /// its numbers filled in.
     fn repeat(&mut self, blocks: &[Block], edge: Edge) {
         let margin = self.setup.margin;
         let room = margin / 2.0 - self.setup.body_size / 2.0;
         if room <= 0.0 {
             return;
         }
-        let (laid_out, height) = self.lay_out_apart(blocks, room);
+        let blocks = cut_to(blocks, MAX_REPEATED_CHARS);
+        let count = self.pages.len();
+        let mut same_on_every_page = None;
+        for index in 0..count {
+            let (laid_out, height) = if has_fields(&blocks) {
+                self.lay_out_apart(&fill_fields(&blocks, index + 1, count), room)
+            } else {
+                if same_on_every_page.is_none() {
+                    same_on_every_page = Some(self.lay_out_apart(&blocks, room));
+                }
+                same_on_every_page.clone().expect("laid out above")
+            };
+            self.place_in_margin(index, laid_out, height, edge);
+        }
+    }
+
+    /// Adds a header or footer laid out by [`lay_out_apart`](Self::lay_out_apart) to page
+    /// `index`, in the margin at `edge`.
+    fn place_in_margin(&mut self, index: usize, laid_out: Page, height: f32, edge: Edge) {
+        let margin = self.setup.margin;
         let top = match edge {
             Edge::Top => margin / 2.0,
             Edge::Bottom => self.setup.height - margin / 2.0 - height,
         };
-        for page in &mut self.pages {
-            // Drawn in reading order, so a PDF reader's text starts with the header and ends
-            // with the footer.
-            let items = laid_out
-                .items
-                .iter()
-                .map(|item| item.clone().moved(margin, top));
-            let at = match edge {
-                Edge::Top => 0,
-                Edge::Bottom => page.items.len(),
-            };
-            page.items.splice(at..at, items);
-            page.links.extend(laid_out.links.iter().map(|link| Link {
+        let page = &mut self.pages[index];
+        // Drawn in reading order, so a PDF reader's text starts with the header and ends with
+        // the footer.
+        let items = laid_out
+            .items
+            .into_iter()
+            .map(|item| item.moved(margin, top));
+        let at = match edge {
+            Edge::Top => 0,
+            Edge::Bottom => page.items.len(),
+        };
+        page.items.splice(at..at, items);
+        page.links
+            .extend(laid_out.links.into_iter().map(|link| Link {
                 x: link.x + margin,
                 y: link.y + top,
-                ..link.clone()
+                ..link
             }));
-        }
     }
 
-    /// Lays out `blocks` once, apart from the pages, in a box as wide as the text and `height`
-    /// tall. Returns what fits, at positions inside the box, and the height it takes up.
-    ///
-    /// What doesn't fit is left out, so a header can't cover the page, and repeating it on every
-    /// page costs the same however long the file makes it.
+    /// Lays out `blocks` apart from the pages, in a box as wide as the text and `height` tall.
+    /// Returns what fits, at positions inside the box, and the height it takes up. What doesn't
+    /// fit is left out, so a header can't cover the page.
     fn lay_out_apart(&mut self, blocks: &[Block], height: f32) -> (Page, f32) {
         let setup = PageSetup {
             width: self.setup.content_width(),
@@ -1596,6 +1751,77 @@ mod tests {
         assert_eq!(
             text_at(&pages[0], "Paragraph 0"),
             text_at(&alone[0], "Paragraph 0")
+        );
+    }
+
+    #[test]
+    fn fills_in_page_numbers_on_each_page() {
+        let footer = vec![
+            Run::new("Page ", RunStyle::default()),
+            Run::field(Field::PageNumber, RunStyle::default()),
+            Run::new(" of ", RunStyle::default()),
+            Run::field(Field::PageCount, RunStyle::default()),
+        ];
+        let mut blocks = vec![Block::Footer(vec![Block::paragraph(footer)])];
+        blocks.extend((0..120).map(|i| Block::paragraph(text(&format!("Paragraph {i}")))));
+        let pages = lay_out(&blocks, PageSetup::DOCUMENT);
+
+        let count = pages.len();
+        assert!(count > 2);
+        for (i, page) in pages.iter().enumerate() {
+            let lines = page_lines(page);
+            assert_eq!(
+                lines.last().unwrap(),
+                &format!("Page {} of {count}", i + 1),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeats_only_the_start_of_a_long_header() {
+        // Zero-width spaces take no room, so all of them fit on one line of the margin.
+        let long = "\u{200b}".repeat(100_000);
+        let blocks = [
+            Block::Header(vec![
+                Block::paragraph(text(&long)),
+                Block::paragraph(text("Never reached")),
+            ]),
+            Block::paragraph(text("Body")),
+        ];
+        let pages = lay_out(&blocks, PageSetup::DOCUMENT);
+
+        let glyphs: usize = pages[0]
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::Text(t) => t.glyphs.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            glyphs <= MAX_REPEATED_CHARS + "Body".len(),
+            "{glyphs} glyphs"
+        );
+        assert!(!page_lines(&pages[0]).iter().any(|l| l.contains("Never")));
+    }
+
+    #[test]
+    fn cuts_runs_and_tables_to_the_budget() {
+        let cell = |t: &str| TableCell::new(text(t));
+        let blocks = [
+            Block::paragraph(text("abcdef")),
+            Block::Table(vec![vec![cell("12345")]]),
+            Block::paragraph(text("after")),
+        ];
+        assert_eq!(cut_to(&blocks, 4), [Block::paragraph(text("abcd"))]);
+        // The table doesn't fit whole, so it and what follows are left out.
+        assert_eq!(cut_to(&blocks, 10), [Block::paragraph(text("abcdef"))]);
+        assert_eq!(cut_to(&blocks, 13).len(), 3);
+        // Characters, not bytes.
+        assert_eq!(
+            cut_to(&[Block::paragraph(text("été"))], 2),
+            [Block::paragraph(text("ét"))]
         );
     }
 

@@ -6,7 +6,7 @@
 //! becomes a block.
 
 use super::{
-    Block, ImagePart, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run,
+    Block, Field, ImagePart, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run,
     is_blank,
 };
 
@@ -69,6 +69,13 @@ impl<P: Default> BlockBuilder<P> {
         let run = image_run(part, alt, size, self.link.clone());
         if let Some(paragraph) = self.paragraphs.last_mut() {
             append_run(&mut paragraph.runs, run);
+        }
+    }
+
+    /// Adds a page number field to the innermost paragraph, in the current style.
+    pub fn field(&mut self, field: Field) {
+        if let Some(paragraph) = self.paragraphs.last_mut() {
+            append_run(&mut paragraph.runs, Run::field(field, self.style));
         }
     }
 

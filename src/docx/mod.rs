@@ -28,7 +28,7 @@ use std::mem;
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph};
-use crate::document::{Align, Block, ImagePart, Merged, RunStyle, display_size};
+use crate::document::{Align, Block, Field, ImagePart, Merged, RunStyle, display_size};
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 use package::{NoteId, NoteKind, Package};
@@ -125,15 +125,16 @@ fn first_section_parts(xml: &str) -> Result<(Option<String>, Option<String>)> {
     Ok((header, footer))
 }
 
-/// Parses a header or footer part. Page numbers are left out: the number saved in the file is
-/// the page Word last drew it on, not the page it's repeated on. Note references are dropped.
+/// Parses a header or footer part. Page numbers become fields for PDF to fill in on each page,
+/// in place of the number saved in the file, which is the page Word last drew it on. Note
+/// references are dropped.
 pub fn parse_page_furniture(
     xml: &str,
     package: &Package,
     targets: &Targets,
 ) -> Result<Vec<Block<ImagePart>>> {
     let mut parser = Parser::new(package, targets, None);
-    parser.drop_page_numbers = true;
+    parser.page_fields = true;
     opc::walk(xml, &mut parser)?;
     Ok(parser.builder.into_blocks())
 }
@@ -186,13 +187,14 @@ struct Parser<'p> {
     builder: BlockBuilder<ParagraphProps>,
     /// The notes the body has referred to, or `None` while reading the notes themselves.
     references: Option<References>,
-    /// Whether to leave out the text of page number fields (`PAGE`, `NUMPAGES`).
-    drop_page_numbers: bool,
+    /// Whether page number fields (`PAGE`, `NUMPAGES`) become [`Field`]s rather than the text
+    /// Word saved for them.
+    page_fields: bool,
     /// The instruction of the field being read (`PAGE \* Arabic`), between its `begin` and
     /// `separate` marks. Fields span runs, so this can't come from the open elements.
     field_instruction: Option<String>,
-    /// Inside the text of a page number field that's being left out.
-    in_page_number: bool,
+    /// Inside the saved text of a page number field that's become a [`Field`].
+    in_page_field: bool,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
     /// Display size of the picture being read, from its `wp:extent`.
@@ -345,18 +347,18 @@ impl XmlHandler for Parser<'_> {
             // A field is either one `w:fldSimple` element, or runs marked `begin`, then the
             // instruction, `separate`, the text Word last showed, and `end`.
             "fldSimple" if !is_empty => {
-                self.in_page_number =
-                    self.drop_page_numbers && attr(e, "instr").is_some_and(|i| is_page_number(&i));
+                let field = attr(e, "instr").and_then(|i| page_field(&i));
+                self.start_field_text(field);
             }
             "fldChar" if in_run => match attr(e, "fldCharType").as_deref() {
                 Some("begin") => self.field_instruction = Some(String::new()),
                 Some("separate") => {
                     let instruction = self.field_instruction.take().unwrap_or_default();
-                    self.in_page_number = self.drop_page_numbers && is_page_number(&instruction);
+                    self.start_field_text(page_field(&instruction));
                 }
                 Some("end") => {
                     self.field_instruction = None;
-                    self.in_page_number = false;
+                    self.in_page_field = false;
                 }
                 _ => {}
             },
@@ -394,7 +396,7 @@ impl XmlHandler for Parser<'_> {
     fn end(&mut self, name: &str) {
         match name {
             "hyperlink" => self.builder.link = None,
-            "fldSimple" => self.in_page_number = false,
+            "fldSimple" => self.in_page_field = false,
             "p" => {
                 if let Some(paragraph) = self.builder.end_paragraph() {
                     let block = self.classify(paragraph);
@@ -413,7 +415,7 @@ impl XmlHandler for Parser<'_> {
             if let Some(instruction) = &mut self.field_instruction {
                 instruction.push_str(text);
             }
-        } else if open.inside("t") && !self.in_page_number {
+        } else if open.inside("t") && !self.in_page_field {
             self.builder.text(text);
         }
     }
@@ -426,11 +428,21 @@ impl<'p> Parser<'p> {
             targets,
             builder: BlockBuilder::new(),
             references,
-            drop_page_numbers: false,
+            page_fields: false,
             field_instruction: None,
-            in_page_number: false,
+            in_page_field: false,
             image_alt: None,
             image_size: None,
+        }
+    }
+
+    /// Called where a field's saved text starts. A page number field in a header or footer
+    /// becomes a [`Field`] there, and its saved text is skipped.
+    fn start_field_text(&mut self, field: Option<Field>) {
+        self.in_page_field = false;
+        if let Some(field) = field.filter(|_| self.page_fields) {
+            self.builder.field(field);
+            self.in_page_field = true;
         }
     }
 
@@ -481,13 +493,16 @@ impl<'p> Parser<'p> {
     }
 }
 
-/// True if a field instruction (`PAGE \* MERGEFORMAT`) shows a page number or page count.
-fn is_page_number(instruction: &str) -> bool {
-    instruction.split_whitespace().next().is_some_and(|name| {
-        ["PAGE", "NUMPAGES", "SECTIONPAGES"]
-            .iter()
-            .any(|field| name.eq_ignore_ascii_case(field))
-    })
+/// The page number or page count a field instruction (`PAGE \* MERGEFORMAT`) shows, if it shows
+/// one. A section's page count is the whole document's, since PDF repeats the first section's
+/// header and footer on every page.
+fn page_field(instruction: &str) -> Option<Field> {
+    let name = instruction.split_whitespace().next()?.to_ascii_uppercase();
+    match name.as_str() {
+        "PAGE" => Some(Field::PageNumber),
+        "NUMPAGES" | "SECTIONPAGES" => Some(Field::PageCount),
+        _ => None,
+    }
 }
 
 /// `<w:b/>` turns bold on, and so does `<w:b w:val="1"/>`, but `<w:b w:val="0"/>` turns it off.

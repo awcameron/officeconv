@@ -131,6 +131,8 @@ pub enum ListKind {
 ///
 /// A run can instead be an image: then `image` says where it is, and `text` is its alt text.
 /// Or it can refer to a note: then `note` is the [`Block::Note`]'s number, and `text` is empty.
+/// Or it can be a page number for a paged output to fill in: then `field` says which, and
+/// `text` is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run<I = ImageRef> {
     pub text: String,
@@ -138,6 +140,17 @@ pub struct Run<I = ImageRef> {
     pub link: Option<String>,
     pub image: Option<I>,
     pub note: Option<usize>,
+    pub field: Option<Field>,
+}
+
+/// A number that depends on the page it's shown on. Readers only put these in headers and
+/// footers, which only a paged output shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    /// The number of the page.
+    PageNumber,
+    /// How many pages there are.
+    PageCount,
 }
 
 impl<I> Default for Run<I> {
@@ -220,6 +233,15 @@ impl<I> Run<I> {
             link: None,
             image: None,
             note: None,
+            field: None,
+        }
+    }
+
+    /// A page number field, with the style of the text around it.
+    pub fn field(field: Field, style: RunStyle) -> Self {
+        Run {
+            field: Some(field),
+            ..Run::new("", style)
         }
     }
 
@@ -250,12 +272,14 @@ impl<I> Run<I> {
     }
 
     /// True if `other` has the same formatting and link, so the two can be merged.
-    /// Images and note references never merge: each one is its own run.
+    /// Images, note references and fields never merge: each one is its own run.
     pub fn same_format(&self, other: &Run<I>) -> bool {
         self.image.is_none()
             && other.image.is_none()
             && self.note.is_none()
             && other.note.is_none()
+            && self.field.is_none()
+            && other.field.is_none()
             && self.style == other.style
             && self.link == other.link
     }
@@ -285,11 +309,12 @@ pub fn append_paragraph<I>(cell: &mut CellRuns<I>, runs: Vec<Run<I>>) {
     }
 }
 
-/// True if the runs contain nothing but whitespace (an image or a note reference counts as
-/// content).
+/// True if the runs contain nothing but whitespace (an image, a note reference or a field counts
+/// as content).
 pub fn is_blank<I>(runs: &[Run<I>]) -> bool {
-    runs.iter()
-        .all(|r| r.image.is_none() && r.note.is_none() && r.text.trim().is_empty())
+    runs.iter().all(|r| {
+        r.image.is_none() && r.note.is_none() && r.field.is_none() && r.text.trim().is_empty()
+    })
 }
 
 /// Turns each image's package part into the link or key `export` returns for it.
@@ -391,6 +416,7 @@ fn resolve_runs(
             link: run.link,
             image,
             note: run.note,
+            field: run.field,
         };
         append_run(&mut resolved, run);
     }

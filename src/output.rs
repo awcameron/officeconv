@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{ConvertError, Result};
-use crate::format::OutputFormat;
+use crate::writers::TableFormat;
 
 /// Opens the file at `path`, or stdout when there's no path. Either way, output is buffered.
 pub fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {
@@ -49,7 +49,7 @@ pub fn sheet_output_path(
     dir: &Path,
     stem: &str,
     sheet: &str,
-    format: OutputFormat,
+    format: TableFormat,
     names: &mut UniqueNames,
 ) -> PathBuf {
     let file_name = format!("{}-{}.{}", stem, safe_file_name(sheet), format.extension());
@@ -122,7 +122,7 @@ mod tests {
                 Path::new("out"),
                 "sales",
                 sheet,
-                OutputFormat::Markdown,
+                TableFormat::Markdown,
                 &mut names,
             )
         };

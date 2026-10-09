@@ -108,6 +108,79 @@ fn repeats_the_header_and_footer_on_every_page() {
     assert_eq!(image_sizes(&pdf).len(), pages.len());
 }
 
+/// Where each line of text starts across the page, in the order they're drawn.
+fn text_starts(pdf: &[u8]) -> Vec<f32> {
+    let document = pdf_extract::Document::load_mem(pdf).unwrap();
+    let mut starts = Vec::new();
+    for page in document.get_pages().into_values() {
+        let content = document.get_page_content(page).unwrap();
+        for op in pdf_extract::content::Content::decode(&content)
+            .unwrap()
+            .operations
+        {
+            if op.operator == "Tm" {
+                starts.push(op.operands[4].as_float().unwrap());
+            }
+        }
+    }
+    starts
+}
+
+/// Checks that three lines start at the left margin, around the middle, and near the right
+/// margin of a page `width` wide.
+fn assert_left_center_right(starts: &[f32], margin: f32, width: f32) {
+    let [left, center, right] = starts else {
+        panic!("expected three lines: {starts:?}");
+    };
+    assert!((left - margin).abs() < 0.01, "{starts:?}");
+    assert!(
+        width * 0.35 < *center && *center < width * 0.5,
+        "{starts:?}"
+    );
+    assert!(*right > width * 0.8, "{starts:?}");
+}
+
+#[test]
+fn aligns_docx_paragraphs() {
+    let aligned = |jc: &str, text: &str| {
+        format!(r#"<w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+    };
+    let body = [
+        aligned("left", "Left"),
+        aligned("center", "Centered"),
+        aligned("right", "Right"),
+    ]
+    .concat();
+    let (_dir, path) = sample_docx(&body);
+    let (pdf, _) = convert_to_pdf(&path, &[]);
+
+    assert_left_center_right(&text_starts(&pdf), 72.0, 595.28);
+    // Markdown has no alignment.
+    assert_eq!(convert(&path, "md"), "Left\n\nCentered\n\nRight\n");
+}
+
+#[test]
+fn aligns_pptx_paragraphs() {
+    let aligned = |algn: &str, text: &str| {
+        format!(r#"<a:p><a:pPr algn="{algn}"/><a:r><a:t>{text}</a:t></a:r></a:p>"#)
+    };
+    let text_box = format!(
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:txBody>{}{}{}</p:txBody></p:sp>"#,
+        aligned("l", "Left"),
+        aligned("ctr", "Centered"),
+        aligned("r", "Right"),
+    );
+    let mut parts = presentation(&["slides/slide1.xml"]).to_vec();
+    parts.push(part("ppt/slides/slide1.xml", slide(&text_box)));
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+    let (pdf, _) = convert_to_pdf(&path, &[]);
+
+    // The first line is the slide's heading, on the left.
+    let starts = text_starts(&pdf);
+    assert!((starts[0] - 48.0).abs() < 0.01, "{starts:?}");
+    assert_left_center_right(&starts[1..], 48.0, 960.0);
+}
+
 #[test]
 fn numbers_lists_and_draws_tables() {
     let numbering = format!(

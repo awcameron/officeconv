@@ -28,7 +28,7 @@ use std::mem;
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph};
-use crate::document::{Block, ImagePart, Merged, RunStyle, display_size};
+use crate::document::{Align, Block, ImagePart, Merged, RunStyle, display_size};
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 use package::{NoteId, NoteKind, Package};
@@ -261,6 +261,7 @@ struct ParagraphProps {
     style_id: Option<String>,
     num_id: Option<String>,
     list_level: u8,
+    align: Option<Align>,
 }
 
 impl XmlHandler for Parser<'_> {
@@ -291,6 +292,12 @@ impl XmlHandler for Parser<'_> {
             "ilvl" => {
                 if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.list_level = attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(0);
+                }
+            }
+            // A table's `w:jc`, in `w:tblPr` or `w:trPr`, places the table, not its text.
+            "jc" if open.inside("pPr") => {
+                if let Some(paragraph) = self.builder.paragraph() {
+                    paragraph.align = attr(e, "val").as_deref().and_then(package::alignment);
                 }
             }
             "hyperlink" if !is_empty => {
@@ -448,8 +455,13 @@ impl<'p> Parser<'p> {
             .as_deref()
             .and_then(heading_level)
             .or_else(|| style.and_then(|s| heading_level(&s.name)));
+        // Alignment set on the paragraph wins over alignment from its style.
+        let align = props
+            .align
+            .or_else(|| style.and_then(|s| s.align))
+            .unwrap_or_default();
         if let Some(level) = heading {
-            return Block::Heading { level, runs };
+            return Block::Heading { level, runs, align };
         }
 
         // Numbering set on the paragraph wins over numbering from its style.
@@ -464,7 +476,7 @@ impl<'p> Parser<'p> {
                 level: props.list_level,
                 runs,
             },
-            None => Block::Paragraph(runs),
+            None => Block::Paragraph { runs, align },
         }
     }
 }

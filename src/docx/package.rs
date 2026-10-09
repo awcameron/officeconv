@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use crate::document::{Block, ImagePart, ListKind};
+use crate::document::{Align, Block, ImagePart, ListKind};
 use crate::error::Result;
 use crate::opc::{Targets, attr, visit_elements};
 
@@ -68,6 +68,22 @@ pub struct Style {
     pub name: String,
     /// Set when the style itself makes a paragraph a list item (e.g. Word's "List Bullet").
     pub num_id: Option<String>,
+    /// The alignment a paragraph style gives, from its `w:jc`.
+    pub align: Option<Align>,
+}
+
+/// The alignment a `w:jc` value names, or `None` for one officeconv doesn't know.
+///
+/// `start` and `end` are left and right in left-to-right text, which is all PDF lays out.
+pub fn alignment(value: &str) -> Option<Align> {
+    Some(match value {
+        "left" | "start" => Align::Left,
+        "center" => Align::Center,
+        "right" | "end" => Align::Right,
+        "both" | "distribute" | "thaiDistribute" | "lowKashida" | "mediumKashida"
+        | "highKashida" => Align::Justify,
+        _ => return None,
+    })
 }
 
 /// Word stores list formats in two steps: a `num` points at an `abstractNum`,
@@ -135,12 +151,20 @@ pub fn parse_numbering(xml: &str) -> Result<Numbering> {
 pub fn parse_styles(xml: &str) -> Result<HashMap<String, Style>> {
     let mut styles: HashMap<String, Style> = HashMap::new();
     let mut current: Option<String> = None;
+    // Table styles can align their cells' paragraphs too, but that's not a paragraph's style.
+    let mut paragraph_style = false;
 
     visit_elements(xml, |e| match e.local_name().as_ref() {
         "style" => {
             current = attr(e, "styleId");
+            paragraph_style = attr(e, "type").as_deref() == Some("paragraph");
             if let Some(id) = &current {
                 styles.insert(id.clone(), Style::default());
+            }
+        }
+        "jc" if paragraph_style => {
+            if let Some(style) = current.as_ref().and_then(|id| styles.get_mut(id)) {
+                style.align = attr(e, "val").as_deref().and_then(alignment);
             }
         }
         "name" | "numId" => {
@@ -198,5 +222,19 @@ mod tests {
         assert_eq!(styles["Kop1"].name, "heading 1");
         assert_eq!(styles["Kop1"].num_id, None);
         assert_eq!(styles["ListBullet"].num_id.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn reads_alignment_only_from_paragraph_styles() {
+        let styles = parse_styles(
+            r#"<w:styles xmlns:w="w">
+                 <w:style w:type="paragraph" w:styleId="Centered"><w:pPr><w:jc w:val="center"/></w:pPr></w:style>
+                 <w:style w:type="table" w:styleId="Grid"><w:tblPr><w:jc w:val="right"/></w:tblPr></w:style>
+               </w:styles>"#,
+        )
+        .unwrap();
+
+        assert_eq!(styles["Centered"].align, Some(Align::Center));
+        assert_eq!(styles["Grid"].align, None);
     }
 }

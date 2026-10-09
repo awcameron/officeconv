@@ -61,6 +61,7 @@ What `officeconv` reads from each kind of file. [Outputs](#outputs) says how it'
 - line breaks;
 - footnotes and endnotes;
 - headers and footers, in PDF only;
+- paragraph alignment, set on the paragraph or its style, in PDF only;
 - pictures, with `--images DIR` or in PDF. See [Images](#images).
 
 [Markdown](#markdown) shows how each is written.
@@ -113,6 +114,8 @@ Mention the EMEA team.
   become paragraphs. Bullets and numbering set on a paragraph override those defaults.
 - Bold, italic, links, line breaks, and tables are kept as in [DOCX](#docx), merged cells
   included.
+- Paragraph alignment set on the paragraph itself is kept in PDF. Alignment a paragraph takes
+  from the slide layout or master, as many titles do, isn't read.
 - Speaker notes go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
   `(hidden)`.
 - Pictures become their own paragraph where they sit on the slide, with `--images DIR` or in
@@ -173,6 +176,7 @@ can't hold larger integers exactly.
 - In tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
 - A note of more than one paragraph indents the rest by 4 spaces, so they stay in the note.
 - DOCX headers and footers are left out: a Markdown file has no pages to repeat them on.
+- Alignment is left out too: Markdown has no way to center or right-align a paragraph.
 - [PPTX](#pptx) shows how slides are laid out.
 
 ### PDF
@@ -191,6 +195,8 @@ links, tables, line breaks, footnotes and endnotes, and pictures.
 - A merged table cell is drawn once, across its columns and rows, and the rows it joins go onto
   the same page. If they're too tall to fit on any page, they're drawn as separate rows instead,
   with the text in the first, as in Markdown.
+- Centered and right-aligned paragraphs and headings are laid out that way. Justified text is
+  left-aligned, since stretching the spaces between words isn't built.
 - A DOCX header is drawn at the top of every page and a footer at the bottom, in the margins:
   from halfway into the margin, as Word places them, to just short of the text. A header or
   footer taller than that is cut to what fits, rather than pushing the text down as Word does.

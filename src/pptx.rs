@@ -25,7 +25,7 @@ use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
 use crate::document::{
-    Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank,
+    Align, Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank,
 };
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
@@ -137,17 +137,14 @@ fn slides_to_blocks(slides: Vec<Slide>) -> Vec<Block<ImagePart>> {
                 append_run(&mut heading, run);
             }
         }
-        blocks.push(Block::Heading {
-            level: 2,
-            runs: heading,
-        });
+        blocks.push(Block::heading(2, heading));
 
         blocks.extend(slide.body);
         if !slide.notes.is_empty() {
-            blocks.push(Block::Heading {
-                level: 3,
-                runs: vec![Run::new("Notes", RunStyle::default())],
-            });
+            blocks.push(Block::heading(
+                3,
+                vec![Run::new("Notes", RunStyle::default())],
+            ));
             blocks.extend(slide.notes);
         }
     }
@@ -218,6 +215,8 @@ struct Picture {
 struct ParagraphProps {
     level: u8,
     bullet: Bullet,
+    /// From `algn`; left when the paragraph doesn't say, as the layout's isn't read.
+    align: Align,
 }
 
 struct SlideParser<'a> {
@@ -264,7 +263,7 @@ impl<'a> SlideParser<'a> {
 
         let alt = picture.alt.unwrap_or_default();
         let run = image_run(part, alt, picture.size, picture.link);
-        self.builder.push(Block::Paragraph(vec![run]));
+        self.builder.push(Block::paragraph(vec![run]));
     }
 
     fn finish_shape(&mut self) {
@@ -275,7 +274,10 @@ impl<'a> SlideParser<'a> {
         if self.notes {
             if shape.placeholder.as_deref() == Some("body") {
                 for paragraph in shape.paragraphs {
-                    self.builder.push(Block::Paragraph(paragraph.runs));
+                    self.builder.push(Block::Paragraph {
+                        runs: paragraph.runs,
+                        align: paragraph.props.align,
+                    });
                 }
             }
             return;
@@ -307,7 +309,10 @@ impl<'a> SlideParser<'a> {
                     level: paragraph.props.level,
                     runs: paragraph.runs,
                 },
-                None => Block::Paragraph(paragraph.runs),
+                None => Block::Paragraph {
+                    runs: paragraph.runs,
+                    align: paragraph.props.align,
+                },
             });
         }
     }
@@ -357,6 +362,12 @@ impl XmlHandler for SlideParser<'_> {
             "pPr" => {
                 if let Some(paragraph) = self.builder.paragraph() {
                     paragraph.level = attr(e, "lvl").and_then(|v| v.parse().ok()).unwrap_or(0);
+                    paragraph.align = match attr(e, "algn").as_deref() {
+                        Some("ctr") => Align::Center,
+                        Some("r") => Align::Right,
+                        Some("just" | "justLow" | "dist" | "thaiDist") => Align::Justify,
+                        _ => Align::Left,
+                    };
                 }
             }
             "buNone" | "buChar" | "buBlip" | "buAutoNum" => {
@@ -492,7 +503,31 @@ mod tests {
             shape(Some("subTitle"), &para("Q3 &amp; beyond")),
         ));
         assert_eq!(slide.title, runs("Quarterly Review"));
-        assert_eq!(slide.body, [Block::Paragraph(runs("Q3 & beyond"))]);
+        assert_eq!(slide.body, [Block::paragraph(runs("Q3 & beyond"))]);
+    }
+
+    #[test]
+    fn reads_paragraph_alignment() {
+        let slide = parse(&shape(
+            None,
+            r#"<a:p><a:pPr algn="ctr"/><a:r><a:t>Centered</a:t></a:r></a:p>
+               <a:p><a:pPr algn="r"/><a:r><a:t>Right</a:t></a:r></a:p>
+               <a:p><a:pPr algn="dist"/><a:r><a:t>Spread</a:t></a:r></a:p>
+               <a:p><a:r><a:t>Default</a:t></a:r></a:p>"#,
+        ));
+        let paragraph = |text: &str, align| Block::Paragraph {
+            runs: runs(text),
+            align,
+        };
+        assert_eq!(
+            slide.body,
+            [
+                paragraph("Centered", Align::Center),
+                paragraph("Right", Align::Right),
+                paragraph("Spread", Align::Justify),
+                paragraph("Default", Align::Left),
+            ]
+        );
     }
 
     #[test]
@@ -527,8 +562,8 @@ mod tests {
             [
                 item(ListKind::Bullet, 0, "Revenue up"),
                 item(ListKind::Bullet, 1, "EMEA"),
-                Block::Paragraph(runs("No bullet")),
-                Block::Paragraph(runs("Source: finance")),
+                Block::paragraph(runs("No bullet")),
+                Block::paragraph(runs("Source: finance")),
                 item(ListKind::Numbered, 0, "Step"),
             ]
         );
@@ -556,7 +591,7 @@ mod tests {
         };
         assert_eq!(
             slide.body,
-            [Block::Paragraph(vec![
+            [Block::paragraph(vec![
                 Run::new("Bold", bold),
                 Run::new("Italic", italic),
                 Run::new("\n", PLAIN),
@@ -698,8 +733,8 @@ mod tests {
         assert_eq!(
             slide.body,
             [
-                Block::Paragraph(runs("Inner")),
-                Block::Paragraph(runs("First Last")),
+                Block::paragraph(runs("Inner")),
+                Block::paragraph(runs("First Last")),
             ]
         );
     }
@@ -746,12 +781,12 @@ mod tests {
         assert_eq!(
             slide.body,
             [
-                Block::Paragraph(runs("Before")),
-                Block::Paragraph(vec![
+                Block::paragraph(runs("Before")),
+                Block::paragraph(vec![
                     Run::image(ImagePart::new("ppt/media/image1.png"), "Team photo")
                         .linked("https://example.com")
                 ]),
-                Block::Paragraph(vec![Run::image(ImagePart::new("ppt/media/image1.png"), "")]),
+                Block::paragraph(vec![Run::image(ImagePart::new("ppt/media/image1.png"), "")]),
             ]
         );
     }
@@ -780,7 +815,7 @@ mod tests {
         let sized = |cx, cy| {
             let mut run = Run::image(ImagePart::new("ppt/media/image1.png"), "");
             run.image.as_mut().unwrap().size = Some((cx, cy));
-            Block::Paragraph(vec![run])
+            Block::paragraph(vec![run])
         };
         assert_eq!(
             slide.body,
@@ -813,8 +848,8 @@ mod tests {
         assert_eq!(
             parse_notes(&xml).unwrap(),
             [
-                Block::Paragraph(runs("Mention EMEA.")),
-                Block::Paragraph(runs("Then pause.")),
+                Block::paragraph(runs("Mention EMEA.")),
+                Block::paragraph(runs("Then pause.")),
             ]
         );
     }
@@ -830,8 +865,8 @@ mod tests {
         let slides = vec![
             Slide {
                 title: runs("Intro"),
-                body: vec![Block::Paragraph(runs("Hi"))],
-                notes: vec![Block::Paragraph(runs("Smile"))],
+                body: vec![Block::paragraph(runs("Hi"))],
+                notes: vec![Block::paragraph(runs("Smile"))],
                 ..Slide::default()
             },
             Slide {
@@ -839,17 +874,14 @@ mod tests {
                 ..Slide::default()
             },
         ];
-        let heading = |level, text: &str| Block::Heading {
-            level,
-            runs: runs(text),
-        };
+        let heading = |level, text: &str| Block::heading(level, runs(text));
         assert_eq!(
             slides_to_blocks(slides),
             [
                 heading(2, "Slide 1: Intro"),
-                Block::Paragraph(runs("Hi")),
+                Block::paragraph(runs("Hi")),
                 heading(3, "Notes"),
-                Block::Paragraph(runs("Smile")),
+                Block::paragraph(runs("Smile")),
                 Block::Rule,
                 heading(2, "Slide 2 (hidden)"),
             ]

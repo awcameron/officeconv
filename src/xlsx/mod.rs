@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn reads_each_sheets_pictures_when_asked() {
         let workbook = read_all_sheets(workbook_with_picture(), Pictures::Include).unwrap();
-        let logo = Block::Paragraph(vec![crate::document::Run::image(
+        let logo = Block::paragraph(vec![crate::document::Run::image(
             ImagePart::new("xl/media/image1.png"),
             "Logo",
         )]);

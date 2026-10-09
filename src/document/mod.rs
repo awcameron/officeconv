@@ -20,8 +20,12 @@ pub enum Block<I = ImageRef> {
     Heading {
         level: u8,
         runs: Vec<Run<I>>,
+        align: Align,
     },
-    Paragraph(Vec<Run<I>>),
+    Paragraph {
+        runs: Vec<Run<I>>,
+        align: Align,
+    },
     /// A bulleted or numbered list item; `level` 0 is the outermost list.
     ListItem {
         kind: ListKind,
@@ -46,7 +50,35 @@ pub enum Block<I = ImageRef> {
     Footer(Vec<Block<I>>),
 }
 
+/// How a paragraph's lines line up. Only PDF shows it: Markdown has no alignment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+    /// Stretched to both edges. PDF lays it out as [`Align::Left`] for now.
+    Justify,
+}
+
 impl<I> Block<I> {
+    /// A left-aligned paragraph.
+    pub fn paragraph(runs: Vec<Run<I>>) -> Self {
+        Block::Paragraph {
+            runs,
+            align: Align::Left,
+        }
+    }
+
+    /// A left-aligned heading at `level`.
+    pub fn heading(level: u8, runs: Vec<Run<I>>) -> Self {
+        Block::Heading {
+            level,
+            runs,
+            align: Align::Left,
+        }
+    }
+
     /// True for a header or footer, which only a paged output can show.
     pub fn is_page_furniture(&self) -> bool {
         matches!(self, Block::Header(_) | Block::Footer(_))
@@ -278,11 +310,15 @@ fn resolve_blocks(
     let mut resolved = Vec::with_capacity(blocks.len());
     for block in blocks {
         let block = match block {
-            Block::Heading { level, runs } => Block::Heading {
+            Block::Heading { level, runs, align } => Block::Heading {
                 level,
                 runs: resolve_runs(runs, export)?,
+                align,
             },
-            Block::Paragraph(runs) => Block::Paragraph(resolve_runs(runs, export)?),
+            Block::Paragraph { runs, align } => Block::Paragraph {
+                runs: resolve_runs(runs, export)?,
+                align,
+            },
             Block::ListItem { kind, level, runs } => Block::ListItem {
                 kind,
                 level,
@@ -306,9 +342,9 @@ fn resolve_blocks(
             Block::Footer(blocks) => Block::Footer(resolve_blocks(blocks, export)?),
         };
         let empty = match &block {
-            Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. } => {
-                is_blank(runs)
-            }
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. } => is_blank(runs),
             Block::Header(blocks) | Block::Footer(blocks) => blocks.is_empty(),
             Block::Table(_) | Block::Rule | Block::Note { .. } => false,
         };
@@ -536,11 +572,11 @@ mod tests {
     fn resolve_images_links_exports_and_drops_the_rest() {
         let part = |part: &str, alt: &str| Run::image(ImagePart::new(part), alt);
         let blocks = vec![
-            Block::Paragraph(vec![
+            Block::paragraph(vec![
                 Run::new("Logo: ", RunStyle::default()),
                 part("word/media/logo.png", "Logo"),
             ]),
-            Block::Paragraph(vec![part("word/media/missing.emf", "")]),
+            Block::paragraph(vec![part("word/media/missing.emf", "")]),
             Block::Table(vec![vec![
                 TableCell::new(vec![part("word/media/logo.png", "again")]),
                 TableCell::Covered,
@@ -556,7 +592,7 @@ mod tests {
         assert_eq!(
             blocks,
             [
-                Block::Paragraph(vec![Run::new("Logo: ", RunStyle::default()), link("Logo")]),
+                Block::paragraph(vec![Run::new("Logo: ", RunStyle::default()), link("Logo")]),
                 Block::Table(vec![vec![
                     TableCell::new(vec![link("again")]),
                     TableCell::Covered,
@@ -568,10 +604,10 @@ mod tests {
     #[test]
     fn resolve_images_reaches_into_notes_and_keeps_them() {
         let blocks = vec![
-            Block::Paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
+            Block::paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
             Block::Note {
                 number: 1,
-                blocks: vec![Block::Paragraph(vec![Run::image(
+                blocks: vec![Block::paragraph(vec![Run::image(
                     ImagePart::new("word/media/chart.emf"),
                     "",
                 )])],
@@ -585,7 +621,7 @@ mod tests {
         assert_eq!(
             blocks,
             [
-                Block::Paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
+                Block::paragraph(vec![Run::new("See", RunStyle::default()), Run::note(1)]),
                 Block::Note {
                     number: 1,
                     blocks: vec![],
@@ -614,7 +650,7 @@ mod tests {
             part: "word/media/logo.png".into(),
             size: Some((914_400, 457_200)),
         };
-        let blocks = vec![Block::Paragraph(vec![Run::image(image, "Logo")])];
+        let blocks = vec![Block::paragraph(vec![Run::image(image, "Logo")])];
 
         let blocks = resolve_images(blocks, |_| Ok(Some("img/logo.png".to_string()))).unwrap();
 
@@ -622,6 +658,6 @@ mod tests {
             source: "img/logo.png".into(),
             size: Some((914_400, 457_200)),
         };
-        assert_eq!(blocks, [Block::Paragraph(vec![Run::image(image, "Logo")])]);
+        assert_eq!(blocks, [Block::paragraph(vec![Run::image(image, "Logo")])]);
     }
 }

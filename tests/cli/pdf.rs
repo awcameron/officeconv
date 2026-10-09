@@ -97,12 +97,17 @@ fn repeats_the_header_and_footer_on_every_page() {
     let (pdf, _) = convert_to_pdf(&path, &[]);
 
     let pages = page_texts(&pdf);
-    assert!(pages.len() >= 2, "{pages:?}");
-    for page in &pages {
+    let count = pages.len();
+    assert!(count >= 2, "{pages:?}");
+    for (i, page) in pages.iter().enumerate() {
         assert!(page.starts_with("Annual report"), "{page:?}");
-        // The page number Word saved is left out.
-        assert!(page.ends_with(" Page"), "{page:?}");
-        assert!(!page.contains("Page 7"), "{page:?}");
+        // Each page's own number and the page count, not the 7 and 99 Word saved. The
+        // extractor puts a space between runs, so it finds one around each number.
+        let footer = format!("Page {} of {count}", i + 1);
+        assert!(
+            page.ends_with(&footer),
+            "{page:?} doesn't end with {footer:?}"
+        );
     }
     // The logo is drawn on every page.
     assert_eq!(image_sizes(&pdf).len(), pages.len());

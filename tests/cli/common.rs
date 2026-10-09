@@ -200,7 +200,8 @@ pub fn sample_docx_with_notes() -> (TempDir, PathBuf) {
 }
 
 /// A `.docx` with `paragraphs` numbered body paragraphs, whose section has a header ("Annual
-/// report" and a logo) and a footer ("Page " and a page number field showing 7).
+/// report" and a logo) and a footer, "Page {PAGE} of {NUMPAGES}". Word saved the fields as
+/// showing 7 and 99: PAGE as a `w:fldSimple`, NUMPAGES as `w:fldChar` runs.
 pub fn sample_docx_with_header_and_footer(paragraphs: usize) -> (TempDir, PathBuf) {
     let mut body: String = (0..paragraphs)
         .map(|i| format!("<w:p><w:r><w:t>Paragraph {i}</w:t></w:r></w:p>"))
@@ -213,7 +214,7 @@ pub fn sample_docx_with_header_and_footer(paragraphs: usize) -> (TempDir, PathBu
         r#"<w:hdr xmlns:w="{WORD_NS}" xmlns:r="{REL}"><w:p><w:r><w:t>Annual report</w:t></w:r>{logo}</w:p></w:hdr>"#
     );
     let footer = format!(
-        r#"<w:ftr xmlns:w="{WORD_NS}"><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>7</w:t></w:r></w:fldSimple></w:p></w:ftr>"#
+        r#"<w:ftr xmlns:w="{WORD_NS}"><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>7</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> of </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES \* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>99</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>"#
     );
     sample_docx_with_parts(
         &body,

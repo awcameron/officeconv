@@ -73,9 +73,9 @@ a note the file doesn't have.
 
 PDF repeats the first section's header and footer on every page. Word can give a section a
 different header for its first page or for even pages, and each section its own; those aren't
-used. Page numbers in a header or footer are left out, since the number saved in the file is the
-page Word last drew it on: "Page 3 of 9" comes out as "Page of". Markdown leaves headers and
-footers out, and `--images` doesn't save their pictures.
+used. Page numbers and page counts in a header or footer are filled in for each page, so a footer
+reads "Page 3 of 9" on the third of nine pages, whatever number Word saved. Markdown leaves
+headers and footers out, and `--images` doesn't save their pictures.
 
 A table cell merged across columns or down rows keeps its text in its first cell, so every row
 keeps all its columns. Markdown has no merged cells, so it leaves the cells the merge covers
@@ -199,7 +199,8 @@ links, tables, line breaks, footnotes and endnotes, and pictures.
   left-aligned, since stretching the spaces between words isn't built.
 - A DOCX header is drawn at the top of every page and a footer at the bottom, in the margins:
   from halfway into the margin, as Word places them, to just short of the text. A header or
-  footer taller than that is cut to what fits, rather than pushing the text down as Word does.
+  footer taller than that is cut to what fits, rather than pushing the text down as Word does,
+  and only its first 1,000 characters are used.
 - A footnote or endnote reference is written as its number in brackets, `[1]`, on the line rather
   than raised. The notes go at the end of the document, below a line, each starting with its
   number. They aren't put at the foot of the page that refers to them.

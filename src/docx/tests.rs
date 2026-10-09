@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::{ImagePart, ListKind, Run, TableCell};
+use crate::document::{Field, ImagePart, ListKind, Run, TableCell};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,
@@ -649,7 +649,7 @@ fn header(content: &str) -> String {
 }
 
 #[test]
-fn leaves_page_numbers_out_of_headers_and_footers() {
+fn reads_page_numbers_in_headers_and_footers_as_fields() {
     let xml = header(
         r#"<w:r><w:t xml:space="preserve">Report, page </w:t></w:r>
            <w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>4</w:t></w:r></w:fldSimple>
@@ -660,9 +660,16 @@ fn leaves_page_numbers_out_of_headers_and_footers() {
            <w:fldSimple w:instr="AUTHOR"><w:r><w:t>Ada</w:t></w:r></w:fldSimple>"#,
     );
     let blocks = parse_page_furniture(&xml, &Package::default(), &Targets::default()).unwrap();
+    // The numbers Word saved, 4 and 9, are dropped; the author's name isn't a page field.
     assert_eq!(
         blocks,
-        [Block::paragraph(text_block("Report, page  of , Ada"))]
+        [Block::paragraph(vec![
+            Run::new("Report, page ", PLAIN),
+            Run::field(Field::PageNumber, PLAIN),
+            Run::new(" of ", PLAIN),
+            Run::field(Field::PageCount, PLAIN),
+            Run::new(", Ada", PLAIN),
+        ])]
     );
 }
 

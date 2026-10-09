@@ -85,4 +85,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+      # cargo-deny's prebuilt binary, at the version and hash the dev container pins, so the two
+      # can't drift apart. cargo-deny-action built a Docker image from Docker Hub on every run,
+      # and Docker Hub's rate limit for anonymous pulls failed the job.
+      - name: Install cargo-deny
+        run: |
+          version=$(sed -n 's/^ARG CARGO_DENY_VERSION=//p' .devcontainer/Dockerfile)
+          sha=$(sed -n 's/^ARG CARGO_DENY_SHA256_AMD64=//p' .devcontainer/Dockerfile)
+          [ -n "$version" ] && [ -n "$sha" ] || {
+            echo "no cargo-deny version or hash in .devcontainer/Dockerfile" >&2
+            exit 1
+          }
+          deny=cargo-deny-$version-x86_64-unknown-linux-musl
+          curl -fsSLO "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/$deny.tar.gz"
+          echo "$sha  $deny.tar.gz" | sha256sum -c -
+          tar xzf "$deny.tar.gz" -C "$HOME/.cargo/bin" --strip-components 1 "$deny/cargo-deny"
+      # Every feature's dependencies, the fuzzing feature's included, as cargo-deny-action checked.
+      - name: Check dependencies
+        run: cargo deny --all-features check

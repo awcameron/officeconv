@@ -18,19 +18,6 @@ pub enum OutputFormat {
     Pdf,
 }
 
-impl OutputFormat {
-    /// File extension for this format, without the dot.
-    pub fn extension(self) -> &'static str {
-        match self {
-            OutputFormat::Csv => "csv",
-            OutputFormat::Tsv => "tsv",
-            OutputFormat::Json => "json",
-            OutputFormat::Markdown => "md",
-            OutputFormat::Pdf => "pdf",
-        }
-    }
-}
-
 impl fmt::Display for OutputFormat {
     /// Prints the name the user types on the command line (`csv`, `md`, ...).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

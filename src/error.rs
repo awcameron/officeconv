@@ -19,9 +19,9 @@ pub enum ConvertError {
     },
 
     #[error(
-        "unsupported input file {} (expected .xlsx, .docx, .pptx, .csv, or .tsv; use --from to set \
-         the type)",
-        .0.display()
+        "unsupported input file {} (expected {}; use --from to set the type)",
+        .0.display(),
+        crate::plan::expected_inputs(false)
     )]
     UnsupportedInput(PathBuf),
 
@@ -38,8 +38,9 @@ pub enum ConvertError {
     ReadInput(std::io::Error),
 
     #[error(
-        "could not tell what kind of file is on stdin (expected .xlsx, .docx, or .pptx); \
-         use --from to set the type, such as --from csv for CSV"
+        "could not tell what kind of file is on stdin (expected {}); use --from to set the type, \
+         such as --from csv for CSV",
+        crate::plan::expected_inputs(true)
     )]
     UnrecognizedStdin,
 
@@ -53,7 +54,7 @@ pub enum ConvertError {
     UnsupportedConversion {
         input: InputKind,
         to: OutputFormat,
-        supported: &'static str,
+        supported: String,
     },
 
     #[error("--sheet and --all-sheets only apply to .xlsx input")]

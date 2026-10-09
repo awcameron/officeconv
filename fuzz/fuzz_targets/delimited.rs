@@ -6,7 +6,7 @@ use std::io;
 
 use libfuzzer_sys::fuzz_target;
 use officeconv::fuzzing::{
-    DelimitedLimits, InputKind, JsonValues, OutputFormat, read_delimited, write_table,
+    DelimitedLimits, InputKind, JsonValues, TableFormat, read_delimited, write_table,
 };
 
 /// Small enough that a size bug fails fast, as with the other targets' limits. A 64 KB input
@@ -17,11 +17,11 @@ const LIMITS: DelimitedLimits = DelimitedLimits {
 };
 
 /// Each way a table can be written. CSV and TSV input don't allow `--typed`.
-const OUTPUTS: [OutputFormat; 4] = [
-    OutputFormat::Csv,
-    OutputFormat::Tsv,
-    OutputFormat::Json,
-    OutputFormat::Markdown,
+const OUTPUTS: [TableFormat; 4] = [
+    TableFormat::Csv,
+    TableFormat::Tsv,
+    TableFormat::Json(JsonValues::Text),
+    TableFormat::Markdown,
 ];
 
 fuzz_target!(|data: &[u8]| {
@@ -31,7 +31,7 @@ fuzz_target!(|data: &[u8]| {
         };
         for format in OUTPUTS {
             // Writing to a sink can't fail, so an error here is a bug in the writers.
-            write_table(&table, format, JsonValues::Text, io::sink()).unwrap();
+            write_table(&table, format, io::sink()).unwrap();
         }
     }
 });

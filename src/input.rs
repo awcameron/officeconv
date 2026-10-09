@@ -9,7 +9,6 @@ use clap::ValueEnum;
 use zip::ZipArchive;
 
 use crate::error::{ConvertError, Result};
-use crate::format::OutputFormat;
 use crate::opc::Limits;
 
 /// Anything that can be read and jumped around in, like a file or bytes in memory.
@@ -176,27 +175,9 @@ impl InputKind {
         }
     }
 
-    /// Returns an error if this input can't be converted to `to`.
-    pub fn check_output(self, to: OutputFormat) -> Result<()> {
-        let supported = match self {
-            InputKind::Xlsx | InputKind::Csv | InputKind::Tsv => "csv, tsv, json, md",
-            InputKind::Docx | InputKind::Pptx => "md, pdf",
-        };
-        let ok = match self {
-            InputKind::Xlsx | InputKind::Csv | InputKind::Tsv => to != OutputFormat::Pdf,
-            InputKind::Docx | InputKind::Pptx => {
-                matches!(to, OutputFormat::Markdown | OutputFormat::Pdf)
-            }
-        };
-        if ok {
-            Ok(())
-        } else {
-            Err(ConvertError::UnsupportedConversion {
-                input: self,
-                to,
-                supported,
-            })
-        }
+    /// True for the Office files, zip packages that [`InputKind::from_contents`] can recognize.
+    pub fn is_package(self) -> bool {
+        matches!(self, InputKind::Xlsx | InputKind::Docx | InputKind::Pptx)
     }
 }
 
@@ -365,31 +346,5 @@ mod tests {
             source.reader().unwrap().read_to_string(&mut text).unwrap();
             assert_eq!(text, "abc");
         }
-    }
-
-    #[test]
-    fn documents_convert_to_markdown_or_pdf_and_sheets_to_text() {
-        assert!(InputKind::Docx.check_output(OutputFormat::Markdown).is_ok());
-        assert!(InputKind::Docx.check_output(OutputFormat::Pdf).is_ok());
-        assert!(InputKind::Docx.check_output(OutputFormat::Csv).is_err());
-        assert!(InputKind::Pptx.check_output(OutputFormat::Pdf).is_ok());
-        assert!(InputKind::Pptx.check_output(OutputFormat::Json).is_err());
-        assert!(InputKind::Xlsx.check_output(OutputFormat::Json).is_ok());
-        assert!(InputKind::Csv.check_output(OutputFormat::Markdown).is_ok());
-        assert!(InputKind::Tsv.check_output(OutputFormat::Csv).is_ok());
-        assert_eq!(
-            InputKind::Csv
-                .check_output(OutputFormat::Pdf)
-                .unwrap_err()
-                .to_string(),
-            "cannot convert csv to pdf; csv supports: csv, tsv, json, md"
-        );
-        assert_eq!(
-            InputKind::Xlsx
-                .check_output(OutputFormat::Pdf)
-                .unwrap_err()
-                .to_string(),
-            "cannot convert xlsx to pdf; xlsx supports: csv, tsv, json, md"
-        );
     }
 }

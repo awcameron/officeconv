@@ -14,7 +14,9 @@ targets can link against it, and nothing in it is a public API
 [CONTRIBUTING.md](CONTRIBUTING.md#layout) lists every top-level file and directory. The main
 modules:
 
-- `src/lib.rs`: `main()` and `run()`, which check the options and pick a converter.
+- `src/lib.rs`: `main()`, and `run()`, which carries out the plan for the options.
+- `src/plan.rs`: which inputs, outputs and options go together. It turns the options into a
+  `Plan` or a usage error, from one table of which input converts to which output.
 - `src/opc.rs`: the zip reader and its size limits, plus `walk()`, the XML event loop every
   reader uses.
 - `src/docx/`, `src/pptx.rs`, `src/xlsx/`: the readers. DOCX and PPTX build their blocks

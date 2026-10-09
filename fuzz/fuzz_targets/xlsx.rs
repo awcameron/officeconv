@@ -5,16 +5,16 @@
 use std::io::{self, Cursor};
 
 use libfuzzer_sys::fuzz_target;
-use officeconv::fuzzing::{JsonValues, OutputFormat, Pictures, read_xlsx, write_table};
+use officeconv::fuzzing::{JsonValues, Pictures, TableFormat, read_xlsx, write_table};
 use officeconv_fuzz::LIMITS;
 
-/// Each way a sheet can be written. Only JSON looks at [`JsonValues`].
-const OUTPUTS: [(OutputFormat, JsonValues); 5] = [
-    (OutputFormat::Csv, JsonValues::Text),
-    (OutputFormat::Tsv, JsonValues::Text),
-    (OutputFormat::Json, JsonValues::Text),
-    (OutputFormat::Json, JsonValues::Typed),
-    (OutputFormat::Markdown, JsonValues::Text),
+/// Each way a sheet can be written.
+const OUTPUTS: [TableFormat; 5] = [
+    TableFormat::Csv,
+    TableFormat::Tsv,
+    TableFormat::Json(JsonValues::Text),
+    TableFormat::Json(JsonValues::Typed),
+    TableFormat::Markdown,
 ];
 
 fuzz_target!(|data: &[u8]| {
@@ -26,9 +26,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     for sheet in &workbook.sheets {
-        for (format, json) in OUTPUTS {
+        for format in OUTPUTS {
             // Writing to a sink can't fail, so an error here is a bug in the writers.
-            write_table(&sheet.table, format, json, io::sink()).unwrap();
+            write_table(&sheet.table, format, io::sink()).unwrap();
         }
     }
 });

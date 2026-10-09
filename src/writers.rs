@@ -5,7 +5,6 @@ use std::io::{self, Write};
 
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 
-use crate::format::OutputFormat;
 use crate::markdown;
 use crate::table::{Cell, Table};
 
@@ -19,19 +18,34 @@ pub enum JsonValues {
     Typed,
 }
 
-/// Writes `table` to `out` in the given format. `json` only matters for JSON output.
-pub fn write_table<W: Write>(
-    table: &Table,
-    format: OutputFormat,
-    json: JsonValues,
-    out: W,
-) -> io::Result<()> {
+/// What a table can be written as: every output but PDF, which only documents have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableFormat {
+    Csv,
+    Tsv,
+    Json(JsonValues),
+    Markdown,
+}
+
+impl TableFormat {
+    /// File extension for this format, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            TableFormat::Csv => "csv",
+            TableFormat::Tsv => "tsv",
+            TableFormat::Json(_) => "json",
+            TableFormat::Markdown => "md",
+        }
+    }
+}
+
+/// Writes `table` to `out` in the given format.
+pub fn write_table<W: Write>(table: &Table, format: TableFormat, out: W) -> io::Result<()> {
     match format {
-        OutputFormat::Csv => write_delimited(table, b',', out),
-        OutputFormat::Tsv => write_delimited(table, b'\t', out),
-        OutputFormat::Json => write_json(table, json, out),
-        OutputFormat::Markdown => write_markdown(table, out),
-        OutputFormat::Pdf => unreachable!("InputKind::check_output rejects sheets as PDF"),
+        TableFormat::Csv => write_delimited(table, b',', out),
+        TableFormat::Tsv => write_delimited(table, b'\t', out),
+        TableFormat::Json(values) => write_json(table, values, out),
+        TableFormat::Markdown => write_markdown(table, out),
     }
 }
 
@@ -197,13 +211,9 @@ mod tests {
         )
     }
 
-    fn render(table: &Table, format: OutputFormat) -> String {
-        render_with(table, format, JsonValues::Text)
-    }
-
-    fn render_with(table: &Table, format: OutputFormat, json: JsonValues) -> String {
+    fn render(table: &Table, format: TableFormat) -> String {
         let mut buffer = Vec::new();
-        write_table(table, format, json, &mut buffer).unwrap();
+        write_table(table, format, &mut buffer).unwrap();
         String::from_utf8(buffer).unwrap()
     }
 
@@ -228,7 +238,7 @@ mod tests {
     fn csv_quotes_commas_and_quotes() {
         let t = table(&[&["name", "note"], &["Ada", "says \"hi\", twice"]]);
         assert_eq!(
-            render(&t, OutputFormat::Csv),
+            render(&t, TableFormat::Csv),
             "name,note\nAda,\"says \"\"hi\"\", twice\"\n"
         );
     }
@@ -236,24 +246,23 @@ mod tests {
     #[test]
     fn tsv_uses_tabs() {
         let t = table(&[&["a", "b"], &["1", "2"]]);
-        assert_eq!(render(&t, OutputFormat::Tsv), "a\tb\n1\t2\n");
+        assert_eq!(render(&t, TableFormat::Tsv), "a\tb\n1\t2\n");
     }
 
     #[test]
     fn json_keeps_header_order() {
         let t = table(&[&["z", "a"], &["1", "2"]]);
         assert_eq!(
-            render(&t, OutputFormat::Json),
+            render(&t, TableFormat::Json(JsonValues::Text)),
             "[\n  {\n    \"z\": \"1\",\n    \"a\": \"2\"\n  }\n]\n"
         );
     }
 
     #[test]
     fn typed_json_keeps_cell_types() {
-        let json: Value = serde_json::from_str(&render_with(
+        let json: Value = serde_json::from_str(&render(
             &typed_table(),
-            OutputFormat::Json,
-            JsonValues::Typed,
+            TableFormat::Json(JsonValues::Typed),
         ))
         .unwrap();
         assert_eq!(
@@ -267,7 +276,8 @@ mod tests {
     #[test]
     fn untyped_json_writes_cell_text() {
         let json: Value =
-            serde_json::from_str(&render(&typed_table(), OutputFormat::Json)).unwrap();
+            serde_json::from_str(&render(&typed_table(), TableFormat::Json(JsonValues::Text)))
+                .unwrap();
         assert_eq!(
             json,
             serde_json::json!([{
@@ -292,16 +302,6 @@ mod tests {
         assert!(typed(9_007_199_254_740_992.0).is_f64());
         assert_eq!(typed(-3.0), Value::from(-3));
         assert_eq!(typed(f64::NAN), Value::Null);
-    }
-
-    #[test]
-    fn other_formats_ignore_typed() {
-        for format in [OutputFormat::Csv, OutputFormat::Tsv, OutputFormat::Markdown] {
-            assert_eq!(
-                render_with(&typed_table(), format, JsonValues::Typed),
-                render(&typed_table(), format)
-            );
-        }
     }
 
     #[test]
@@ -381,7 +381,7 @@ mod tests {
     fn markdown_pads_and_escapes() {
         let t = table(&[&["Region", "Units"], &["North|East", "12"], &["S", "7"]]);
         assert_eq!(
-            render(&t, OutputFormat::Markdown),
+            render(&t, TableFormat::Markdown),
             "\
 | Region      | Units |
 | ----------- | ----- |
@@ -395,7 +395,7 @@ mod tests {
     fn markdown_escapes_cell_text() {
         let t = table(&[&["<b>", "*"], &["&copy;", "a_b"]]);
         assert_eq!(
-            render(&t, OutputFormat::Markdown),
+            render(&t, TableFormat::Markdown),
             "\
 | &lt;b>     | \\*   |
 | ---------- | ---- |
@@ -407,8 +407,8 @@ mod tests {
     #[test]
     fn empty_table_writes_nothing_or_empty_array() {
         let t = Table::default();
-        assert_eq!(render(&t, OutputFormat::Csv), "");
-        assert_eq!(render(&t, OutputFormat::Markdown), "");
-        assert_eq!(render(&t, OutputFormat::Json), "[]\n");
+        assert_eq!(render(&t, TableFormat::Csv), "");
+        assert_eq!(render(&t, TableFormat::Markdown), "");
+        assert_eq!(render(&t, TableFormat::Json(JsonValues::Text)), "[]\n");
     }
 }

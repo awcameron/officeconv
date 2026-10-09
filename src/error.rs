@@ -90,10 +90,16 @@ pub enum ConvertError {
     NoSheets,
 
     #[error("could not read document: {0}")]
-    Docx(#[from] zip::result::ZipError),
+    Zip(#[from] zip::result::ZipError),
+
+    #[error("could not read document: {part} is missing")]
+    MissingPart { part: String },
+
+    #[error("could not read document: {part} isn't UTF-8 text")]
+    PartNotUtf8 { part: String },
 
     #[error("could not parse document: {0}")]
-    DocxXml(#[from] quick_xml::Error),
+    Xml(#[from] quick_xml::Error),
 
     #[error(
         "{part} in the input decompresses to more than {}, the most officeconv reads from one part",
@@ -181,8 +187,10 @@ impl ConvertError {
             | WrongKind { .. }
             | Xlsx(_)
             | NoSheets
-            | Docx(_)
-            | DocxXml(_)
+            | Zip(_)
+            | MissingPart { .. }
+            | PartNotUtf8 { .. }
+            | Xml(_)
             | PartTooLarge { .. }
             | InputTooLarge { .. }
             | StdinTooLarge { .. }

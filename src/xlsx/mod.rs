@@ -176,10 +176,7 @@ pub fn sheet_parts<R: Read + Seek>(archive: &mut Archive<R>) -> Result<HashMap<S
         }
     })?;
 
-    let relationships = match archive.read_part(&opc::rels_path(WORKBOOK))? {
-        Some(xml) => opc::parse_relationships(&xml)?,
-        None => return Ok(HashMap::new()),
-    };
+    let relationships = archive.relationships(WORKBOOK)?;
     Ok(ids
         .into_iter()
         .filter_map(|(name, id)| {

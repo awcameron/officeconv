@@ -116,7 +116,9 @@ fn reports_docx_without_document_xml() {
         .args(["--to", "md"])
         .assert()
         .code(65)
-        .stderr(contains("could not read document"));
+        .stderr(contains(
+            "could not read document: word/document.xml is missing",
+        ));
 }
 
 #[test]

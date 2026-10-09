@@ -59,10 +59,7 @@ pub fn read_pictures<R: Read + Seek>(
         let Some(xml) = archive.read_part(&drawing)? else {
             continue;
         };
-        let images = match archive.read_part(&opc::rels_path(&drawing))? {
-            Some(rels) => opc::image_parts(&opc::parse_relationships(&rels)?, &drawing),
-            None => HashMap::new(),
-        };
+        let images = opc::image_parts(&archive.relationships(&drawing)?, &drawing);
         pictures.extend(parse_drawing(&xml, &images)?);
     }
 
@@ -77,10 +74,8 @@ fn related_parts<R: Read + Seek>(
     part: &str,
     kind: &str,
 ) -> Result<Vec<String>> {
-    let Some(xml) = archive.read_part(&opc::rels_path(part))? else {
-        return Ok(Vec::new());
-    };
-    let mut parts: Vec<String> = opc::parse_relationships(&xml)?
+    let mut parts: Vec<String> = archive
+        .relationships(part)?
         .into_values()
         .filter(|r| r.kind == kind && !r.external)
         .map(|r| opc::resolve_target(part, &r.target))
@@ -247,8 +242,6 @@ mod tests {
     /// Spreadsheet libraries tend to write pictures already in position order, which would let
     /// a missing sort go unnoticed, so this writes the drawing XML by hand.
     fn workbook_with_drawing(anchors: &str) -> Archive<std::io::Cursor<Vec<u8>>> {
-        use std::io::Write;
-
         let rels = |entries: &[(&str, &str, &str)]| {
             let body: String = entries
                 .iter()
@@ -282,14 +275,11 @@ mod tests {
             ),
         ];
 
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        for (name, contents) in parts {
-            writer
-                .start_file(name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(contents.as_bytes()).unwrap();
-        }
-        Archive::open(writer.finish().unwrap()).unwrap()
+        let parts: Vec<(&str, &[u8])> = parts
+            .iter()
+            .map(|(name, contents)| (*name, contents.as_bytes()))
+            .collect();
+        Archive::open(opc::test_package(&parts)).unwrap()
     }
 
     #[test]

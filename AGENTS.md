@@ -11,7 +11,8 @@ A Rust command-line tool that converts Office files: `.xlsx` to CSV, TSV, JSON o
 targets can link against it, and nothing in it is a public API
 ([ADR 0003](docs/adr/0003-binary-only.md)). Edition 2024, on stable Rust.
 
-[CONTRIBUTING.md](CONTRIBUTING.md#layout) lists every top-level file and directory. The main
+[CONTRIBUTING.md](CONTRIBUTING.md#layout) lists every top-level file and directory, and
+[ARCHITECTURE.md](ARCHITECTURE.md) shows how a conversion moves through the code. The main
 modules:
 
 - `src/lib.rs`: `main()`, and `run()`, which carries out the plan for the options.

@@ -131,6 +131,49 @@ fn converts_a_slide_id_listed_twice_once() {
 }
 
 #[test]
+fn keeps_links_in_notes() {
+    // The notes part has its own relationships, so its rId1 isn't the slide's rId1.
+    let link = |id: &str, text: &str| {
+        format!(r#"<a:r><a:rPr><a:hlinkClick r:id="{id}"/></a:rPr><a:t>{text}</a:t></a:r>"#)
+    };
+    let mut parts = presentation(&["slides/slide1.xml"]).to_vec();
+    parts.extend([
+        part("ppt/slides/slide1.xml", titled_slide("Intro")),
+        part(
+            "ppt/slides/_rels/slide1.xml.rels",
+            rels(&[
+                ("rId1", "hyperlink", "https://example.com/slide"),
+                ("rId2", "notesSlide", "../notesSlides/notesSlide1.xml"),
+            ]),
+        ),
+        part(
+            "ppt/notesSlides/notesSlide1.xml",
+            slide(&placeholder(
+                "body",
+                &format!(
+                    "<a:p>{}<a:r><a:t xml:space=\"preserve\"> and </a:t></a:r>{}</a:p>",
+                    link("rId1", "the book"),
+                    link("rId2", "click me"),
+                ),
+            )),
+        ),
+        part(
+            "ppt/notesSlides/_rels/notesSlide1.xml.rels",
+            rels(&[
+                ("rId1", "hyperlink", "https://doc.rust-lang.org/book/"),
+                ("rId2", "hyperlink", "javascript:alert(1)"),
+            ]),
+        ),
+    ]);
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+
+    assert_eq!(
+        convert(&path, "md"),
+        "## Slide 1: Intro\n\n### Notes\n\n[the book](https://doc.rust-lang.org/book/) and click me\n"
+    );
+}
+
+#[test]
 fn reads_notes_shared_by_two_slides_once() {
     // Each slide has its own notes in a real deck. Sharing one would let a small file repeat a
     // large notes part on every slide.

@@ -116,7 +116,7 @@ Mention the EMEA team.
   included.
 - Paragraph alignment set on the paragraph itself is kept in PDF. Alignment a paragraph takes
   from the slide layout or master, as many titles do, isn't read.
-- Speaker notes go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
+- Speaker notes, with their formatting and links, go under `### Notes`, unless you pass `--no-notes`. Hidden slides are marked
   `(hidden)`.
 - Pictures become their own paragraph where they sit on the slide, with `--images DIR` or in
   PDF.

@@ -65,10 +65,9 @@ pub fn read_blocks<R: Read + Seek>(
 
     let mut slides = Vec::new();
     for id in slide_ids(&presentation)? {
-        let Some(relationship) = relationships.get(&id) else {
+        let Some(part) = relationships.part(&id, "slide") else {
             continue;
         };
-        let part = opc::resolve_target(PRESENTATION, &relationship.target);
         if !seen_slides.insert(part.clone()) {
             continue;
         }
@@ -77,22 +76,18 @@ pub fn read_blocks<R: Read + Seek>(
         };
 
         let slide_relationships = archive.relationships(&part)?;
-        let mut slide = parse_slide(&xml, &Targets::new(&slide_relationships, &part))?;
+        let mut slide = parse_slide(&xml, &slide_relationships.targets())?;
 
         // Speaker notes live in their own part, linked from the slide.
-        let notes_part = slide_relationships
-            .values()
-            .find(|r| r.kind == "notesSlide")
-            .map(|r| opc::resolve_target(&part, &r.target));
+        let notes_part = slide_relationships.parts("notesSlide").into_iter().next();
         if notes == Notes::Include
             && let Some(notes_part) = notes_part
             && seen_notes.insert(notes_part.clone())
             && let Some(notes_xml) = archive.read_part(&notes_part)?
         {
             // Links in the notes are relationships of the notes part, not of the slide.
-            let notes_relationships = archive.relationships(&notes_part)?;
-            slide.notes =
-                parse_notes(&notes_xml, &Targets::new(&notes_relationships, &notes_part))?;
+            let notes_targets = archive.relationships(&notes_part)?.targets();
+            slide.notes = parse_notes(&notes_xml, &notes_targets)?;
         }
 
         slides.push(slide);
@@ -852,6 +847,65 @@ mod tests {
             [
                 Block::paragraph(runs("Mention EMEA.")),
                 Block::paragraph(runs("Then pause.")),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_listed_slides_in_order_once_each_with_their_notes() {
+        let rel = |id: &str, kind: &str, target: &str, mode: &str| {
+            format!(r#"<Relationship Id="{id}" Type="http://x/{kind}" Target="{target}"{mode}/>"#)
+        };
+        let rels =
+            |entries: &[String]| format!("<Relationships>{}</Relationships>", entries.concat());
+        let ids: String = (1..=5)
+            .map(|i| format!(r#"<p:sldId id="{}" r:id="rId{i}"/>"#, 255 + i))
+            .collect();
+        let presentation = format!(
+            r#"<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>"#
+        );
+        let presentation_rels = rels(&[
+            rel("rId1", "slide", "slides/slide2.xml", ""),
+            rel("rId2", "slide", "slides/slide1.xml", ""),
+            // The same slide again, an external target and a part of another kind are skipped.
+            rel("rId3", "slide", "/ppt/slides/slide2.xml", ""),
+            rel(
+                "rId4",
+                "slide",
+                "slides/slide3.xml",
+                r#" TargetMode="External""#,
+            ),
+            rel("rId5", "notesSlide", "slides/slide3.xml", ""),
+        ]);
+        // Both slides point at one notes part, which is read for the first only.
+        let notes_rels = rels(&[rel("rId1", "notesSlide", "../notesSlides/notes1.xml", "")]);
+        let titled = |title: &str| slide_xml(&shape(Some("title"), &para(title)));
+        let notes = slide_xml(&shape(Some("body"), &para("Smile")));
+
+        let package = crate::opc::test_package(&[
+            ("ppt/presentation.xml", presentation.as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels.as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", titled("Thanks").as_bytes()),
+            ("ppt/slides/slide2.xml", titled("Agenda").as_bytes()),
+            ("ppt/slides/slide3.xml", titled("Unlisted").as_bytes()),
+            ("ppt/slides/_rels/slide1.xml.rels", notes_rels.as_bytes()),
+            ("ppt/slides/_rels/slide2.xml.rels", notes_rels.as_bytes()),
+            ("ppt/notesSlides/notes1.xml", notes.as_bytes()),
+        ]);
+        let mut archive = Archive::open(package).unwrap();
+
+        let heading = |level, text: &str| Block::heading(level, runs(text));
+        assert_eq!(
+            read_blocks(&mut archive, Notes::Include).unwrap(),
+            [
+                heading(2, "Slide 1: Agenda"),
+                heading(3, "Notes"),
+                Block::paragraph(runs("Smile")),
+                Block::Rule,
+                heading(2, "Slide 2: Thanks"),
             ]
         );
     }

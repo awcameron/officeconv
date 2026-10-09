@@ -180,8 +180,11 @@ pub fn sheet_parts<R: Read + Seek>(archive: &mut Archive<R>) -> Result<HashMap<S
     Ok(ids
         .into_iter()
         .filter_map(|(name, id)| {
-            let target = &relationships.get(&id)?.target;
-            Some((name, opc::resolve_target(WORKBOOK, target)))
+            // A chart sheet is listed with the worksheets, and can hold pictures too.
+            let part = relationships
+                .part(&id, "worksheet")
+                .or_else(|| relationships.part(&id, "chartsheet"))?;
+            Some((name, part))
         })
         .collect())
 }

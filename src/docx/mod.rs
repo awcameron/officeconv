@@ -42,7 +42,7 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
 
     let relationships = archive.relationships(DOCUMENT)?;
     let mut package = Package {
-        targets: Targets::new(&relationships, DOCUMENT),
+        targets: relationships.targets(),
         ..Package::default()
     };
     if let Some(xml) = archive.read_part("word/numbering.xml")? {
@@ -54,18 +54,14 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
 
     let mut notes = HashMap::new();
     for kind in [NoteKind::Footnote, NoteKind::Endnote] {
-        let Some(part) = relationships
-            .values()
-            .find(|r| r.kind == kind.relationship() && !r.external)
-            .map(|r| opc::resolve_target(DOCUMENT, &r.target))
-        else {
+        let Some(part) = relationships.parts(kind.relationship()).into_iter().next() else {
             continue;
         };
         let Some(xml) = archive.read_part(&part)? else {
             continue;
         };
         // A note's links and pictures are listed in its part's own relationships.
-        let targets = Targets::new(&archive.relationships(&part)?, &part);
+        let targets = archive.relationships(&part)?.targets();
         for (id, blocks) in parse_notes(&xml, &package, &targets)? {
             notes.insert((kind, id), blocks);
         }
@@ -76,17 +72,13 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
     let mut blocks = Vec::new();
     let (header, footer) = first_section_parts(&document)?;
     for (id, kind) in [(header, "header"), (footer, "footer")] {
-        let Some(part) = id
-            .and_then(|id| relationships.get(&id))
-            .filter(|r| r.kind == kind && !r.external)
-            .map(|r| opc::resolve_target(DOCUMENT, &r.target))
-        else {
+        let Some(part) = id.and_then(|id| relationships.part(&id, kind)) else {
             continue;
         };
         let Some(xml) = archive.read_part(&part)? else {
             continue;
         };
-        let targets = Targets::new(&archive.relationships(&part)?, &part);
+        let targets = archive.relationships(&part)?.targets();
         let content = parse_page_furniture(&xml, &package, &targets)?;
         if !content.is_empty() {
             blocks.push(match kind {

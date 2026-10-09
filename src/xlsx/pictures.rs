@@ -55,36 +55,18 @@ pub fn read_pictures<R: Read + Seek>(
     sheet_part: &str,
 ) -> Result<Vec<Picture>> {
     let mut pictures = Vec::new();
-    for drawing in related_parts(archive, sheet_part, "drawing")? {
+    // Several relationships can point at one drawing, which is read once.
+    for drawing in archive.relationships(sheet_part)?.parts("drawing") {
         let Some(xml) = archive.read_part(&drawing)? else {
             continue;
         };
-        let images = opc::image_parts(&archive.relationships(&drawing)?, &drawing);
+        let images = archive.relationships(&drawing)?.targets().images;
         pictures.extend(parse_drawing(&xml, &images)?);
     }
 
     // A stable sort keeps pictures in the same cell in the order they were drawn.
     pictures.sort_by_key(|p| (p.row, p.col));
     Ok(pictures)
-}
-
-/// Parts that `part` links to with relationships of the given kind.
-fn related_parts<R: Read + Seek>(
-    archive: &mut Archive<R>,
-    part: &str,
-    kind: &str,
-) -> Result<Vec<String>> {
-    let mut parts: Vec<String> = archive
-        .relationships(part)?
-        .into_values()
-        .filter(|r| r.kind == kind && !r.external)
-        .map(|r| opc::resolve_target(part, &r.target))
-        .collect();
-    // HashMap order is random; sort so output doesn't change from run to run. Several
-    // relationships can point at one part, which is read once.
-    parts.sort();
-    parts.dedup();
-    Ok(parts)
 }
 
 /// Reads the pictures in a drawing part. `images` maps relationship IDs to image parts.
@@ -319,6 +301,35 @@ mod tests {
         assert_eq!(
             crate::xlsx::sheet_parts(&mut archive).unwrap(),
             HashMap::from([("Sales".to_string(), "xl/worksheets/sheet1.xml".to_string())])
+        );
+    }
+
+    #[test]
+    fn maps_only_sheets_that_are_worksheet_or_chart_parts() {
+        let sheets: String = ["Sales", "Chart", "Web", "Styles"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| format!(r#"<sheet name="{name}" r:id="rId{}"/>"#, i + 1))
+            .collect();
+        let workbook = format!(r#"<workbook xmlns:r="r"><sheets>{sheets}</sheets></workbook>"#);
+        let rels = r#"<Relationships>
+            <Relationship Id="rId1" Type="http://x/worksheet" Target="worksheets/sheet1.xml"/>
+            <Relationship Id="rId2" Type="http://x/chartsheet" Target="chartsheets/sheet1.xml"/>
+            <Relationship Id="rId3" Type="http://x/worksheet" Target="worksheets/sheet2.xml" TargetMode="External"/>
+            <Relationship Id="rId4" Type="http://x/styles" Target="styles.xml"/>
+        </Relationships>"#;
+        let mut archive = Archive::open(opc::test_package(&[
+            ("xl/workbook.xml", workbook.as_bytes()),
+            ("xl/_rels/workbook.xml.rels", rels.as_bytes()),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            crate::xlsx::sheet_parts(&mut archive).unwrap(),
+            HashMap::from([
+                ("Sales".to_string(), "xl/worksheets/sheet1.xml".to_string()),
+                ("Chart".to_string(), "xl/chartsheets/sheet1.xml".to_string()),
+            ])
         );
     }
 

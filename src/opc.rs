@@ -79,11 +79,18 @@ impl<R: Read + Seek> Archive<R> {
     }
 
     /// The relationships of `part`, from its `.rels` part, or none if it has no `.rels` part.
-    pub fn relationships(&mut self, part: &str) -> Result<HashMap<String, Relationship>> {
-        match self.read_part(&rels_path(part))? {
-            Some(xml) => parse_relationships(&xml),
-            None => Ok(HashMap::new()),
-        }
+    ///
+    /// The `.rels` part is read each time, and counts against the limits each time, so a reader
+    /// that looks up several relationships of one part keeps what this returns.
+    pub fn relationships(&mut self, part: &str) -> Result<Relationships> {
+        let by_id = match self.read_part(&rels_path(part))? {
+            Some(xml) => parse_relationships(&xml)?,
+            None => HashMap::new(),
+        };
+        Ok(Relationships {
+            part: part.to_string(),
+            by_id,
+        })
     }
 
     /// Reads any part, such as an image, or `None` if the package doesn't have it.
@@ -174,14 +181,60 @@ pub fn resolve_target(part: &str, target: &str) -> String {
     segments.join("/")
 }
 
-/// One entry in a `.rels` part.
+/// One entry in a `.rels` part. Readers look relationships up through [`Relationships`], which
+/// checks their kind and where they point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relationship {
     /// The last segment of the relationship type URI: `hyperlink`, `slide`, `notesSlide`, ...
-    pub kind: String,
-    pub target: String,
+    kind: String,
+    target: String,
     /// True when the target is outside the package, such as a web address.
-    pub external: bool,
+    external: bool,
+}
+
+/// The relationships of one part, from [`Archive::relationships`].
+///
+/// A part of the package is only found through a relationship of the kind the reader expects,
+/// and never through an external one: a file can point any relationship ID anywhere, such as a
+/// slide ID at a web address.
+#[derive(Debug, Default)]
+pub struct Relationships {
+    /// The part they belong to; targets are resolved against its folder.
+    part: String,
+    by_id: HashMap<String, Relationship>,
+}
+
+impl Relationships {
+    /// The part that relationship `id` points at, if it's a part of the package of `kind`.
+    pub fn part(&self, id: &str, kind: &str) -> Option<String> {
+        self.by_id
+            .get(id)
+            .filter(|r| r.kind == kind && !r.external)
+            .map(|r| resolve_target(&self.part, &r.target))
+    }
+
+    /// Every part of the package linked by a relationship of `kind`, sorted, and each once
+    /// however many relationships point at it.
+    pub fn parts(&self, kind: &str) -> Vec<String> {
+        let mut parts: Vec<String> = self
+            .by_id
+            .values()
+            .filter(|r| r.kind == kind && !r.external)
+            .map(|r| resolve_target(&self.part, &r.target))
+            .collect();
+        // HashMap order is random; sort so output doesn't change from run to run.
+        parts.sort();
+        parts.dedup();
+        parts
+    }
+
+    /// The links and images the part refers to.
+    pub fn targets(&self) -> Targets {
+        Targets {
+            links: hyperlinks(&self.by_id),
+            images: image_parts(&self.by_id, &self.part),
+        }
+    }
 }
 
 /// Relationship ID -> relationship, from a `.rels` part.
@@ -213,7 +266,7 @@ pub fn parse_relationships(xml: &str) -> Result<HashMap<String, Relationship>> {
 /// Other relationships (images, a link that jumps to another slide) aren't web links. Only
 /// `http`, `https`, `mailto` and relative links are kept: the text of any other link, such as
 /// `javascript:`, is converted without the link.
-pub fn hyperlinks(relationships: &HashMap<String, Relationship>) -> HashMap<String, String> {
+fn hyperlinks(relationships: &HashMap<String, Relationship>) -> HashMap<String, String> {
     relationships
         .iter()
         .filter(|(_, r)| r.kind == "hyperlink" && is_safe_link(&r.target))
@@ -242,7 +295,7 @@ fn is_safe_link(target: &str) -> bool {
 /// Images stored in the package: relationship ID -> image part (`ppt/media/image1.png`).
 ///
 /// `part` is the part the relationships belong to; targets are resolved against it.
-pub fn image_parts(
+fn image_parts(
     relationships: &HashMap<String, Relationship>,
     part: &str,
 ) -> HashMap<String, String> {
@@ -253,23 +306,13 @@ pub fn image_parts(
         .collect()
 }
 
-/// What a document or slide part's relationship IDs point at.
+/// What a document or slide part's relationship IDs point at, from [`Relationships::targets`].
 #[derive(Debug, Default)]
 pub struct Targets {
     /// Relationship ID -> web link, from [`hyperlinks`].
     pub links: HashMap<String, String>,
     /// Relationship ID -> image part (`word/media/image1.png`), from [`image_parts`].
     pub images: HashMap<String, String>,
-}
-
-impl Targets {
-    /// The targets in `relationships`, the relationships of `part`.
-    pub fn new(relationships: &HashMap<String, Relationship>, part: &str) -> Self {
-        Targets {
-            links: hyperlinks(relationships),
-            images: image_parts(relationships, part),
-        }
-    }
 }
 
 /// The elements open at a point in [`walk`], by local name (`<w:r>` -> `"r"`).
@@ -462,14 +505,12 @@ mod tests {
             Archive::open(test_package(&[("word/_rels/document.xml.rels", rels)])).unwrap();
 
         let relationships = archive.relationships("word/document.xml").unwrap();
-        assert_eq!(relationships["rId1"].kind, "image");
-        assert_eq!(relationships["rId1"].target, "media/a.png");
-        assert!(
-            archive
-                .relationships("word/footnotes.xml")
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            relationships.part("rId1", "image").as_deref(),
+            Some("word/media/a.png")
         );
+        let none = archive.relationships("word/footnotes.xml").unwrap();
+        assert!(none.by_id.is_empty());
     }
 
     const SMALL: Limits = Limits {
@@ -565,6 +606,74 @@ mod tests {
         assert_eq!(hyperlinks(&links).len(), 1);
     }
 
+    /// The relationships of `ppt/slides/slide1.xml`, from `(id, kind, target)` entries. Web
+    /// addresses are external, as Office marks them.
+    fn slide_relationships(entries: &[(&str, &str, &str)]) -> Relationships {
+        let body: String = entries
+            .iter()
+            .map(|(id, kind, target)| {
+                let mode = if target.starts_with("http") {
+                    r#" TargetMode="External""#
+                } else {
+                    ""
+                };
+                format!(
+                    r#"<Relationship Id="{id}" Type="http://x/{kind}" Target="{target}"{mode}/>"#
+                )
+            })
+            .collect();
+        Relationships {
+            part: "ppt/slides/slide1.xml".into(),
+            by_id: parse_relationships(&format!("<Relationships>{body}</Relationships>")).unwrap(),
+        }
+    }
+
+    #[test]
+    fn finds_a_part_by_id_only_with_the_right_kind_inside_the_package() {
+        let relationships = slide_relationships(&[
+            ("rId1", "notesSlide", "../notesSlides/notesSlide1.xml"),
+            ("rId2", "notesSlide", "https://example.com/notes.xml"),
+        ]);
+        assert_eq!(
+            relationships.part("rId1", "notesSlide").as_deref(),
+            Some("ppt/notesSlides/notesSlide1.xml")
+        );
+        assert_eq!(relationships.part("rId1", "slide"), None);
+        assert_eq!(relationships.part("rId2", "notesSlide"), None);
+        assert_eq!(relationships.part("rId9", "notesSlide"), None);
+    }
+
+    #[test]
+    fn lists_parts_of_a_kind_sorted_and_once_each() {
+        let relationships = slide_relationships(&[
+            ("rId1", "drawing", "../drawings/drawing2.xml"),
+            ("rId2", "drawing", "../drawings/drawing1.xml"),
+            ("rId3", "drawing", "/ppt/drawings/drawing2.xml"),
+            ("rId4", "drawing", "https://example.com/drawing3.xml"),
+            ("rId5", "image", "../media/image1.png"),
+        ]);
+        assert_eq!(
+            relationships.parts("drawing"),
+            ["ppt/drawings/drawing1.xml", "ppt/drawings/drawing2.xml"]
+        );
+        assert!(relationships.parts("chart").is_empty());
+    }
+
+    #[test]
+    fn targets_hold_safe_links_and_package_images() {
+        let relationships = slide_relationships(&[
+            ("rId1", "hyperlink", "https://example.com"),
+            ("rId2", "hyperlink", "javascript:alert(1)"),
+            ("rId3", "image", "../media/image1.png"),
+            ("rId4", "image", "https://example.com/a.png"),
+        ]);
+        let targets = relationships.targets();
+        assert_eq!(targets.links.len(), 1);
+        assert_eq!(targets.links["rId1"], "https://example.com");
+        assert_eq!(targets.images.len(), 1);
+        assert_eq!(targets.images["rId3"], "ppt/media/image1.png");
+    }
+
     #[test]
     fn keeps_only_safe_links() {
         for target in [
@@ -587,20 +696,6 @@ mod tests {
         ] {
             assert!(!is_safe_link(target), "{target}");
         }
-    }
-
-    #[test]
-    fn finds_embedded_images_only() {
-        let relationships = parse_relationships(
-            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-                 <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
-                 <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.com/a.png" TargetMode="External"/>
-               </Relationships>"#,
-        )
-        .unwrap();
-        let images = image_parts(&relationships, "ppt/slides/slide1.xml");
-        assert_eq!(images.len(), 1);
-        assert_eq!(images["rId2"], "ppt/media/image1.png");
     }
 
     /// Records what a handler sees, and where.

@@ -18,7 +18,7 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
 use crate::document::{
-    Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle, TableCell,
+    Align, Block, CellRuns, EMU_PER_POINT, ImageRef, ListKind, Run, RunStyle, TableCell,
 };
 use crate::images::{EmbeddedImages, ImageFormat};
 
@@ -331,7 +331,7 @@ impl<'a> Layout<'a> {
             }
 
             match block {
-                Block::Heading { level, runs } => {
+                Block::Heading { level, runs, align } => {
                     let size = body * heading_scale(*level);
                     let runs = all_bold(runs);
                     let lines = self.layout_runs(&runs, size, self.setup.content_width());
@@ -344,11 +344,11 @@ impl<'a> Layout<'a> {
                         0.0
                     };
                     self.ensure_space(height + keep);
-                    self.place_lines(lines, self.setup.margin);
+                    self.place_aligned(lines, *align);
                 }
-                Block::Paragraph(runs) => {
+                Block::Paragraph { runs, align } => {
                     let lines = self.layout_runs(runs, body, self.setup.content_width());
-                    self.place_lines(lines, self.setup.margin);
+                    self.place_aligned(lines, *align);
                 }
                 Block::ListItem { kind, level, runs } => {
                     let marker = list_marker(&mut numbers, *kind, *level);
@@ -422,6 +422,21 @@ impl<'a> Layout<'a> {
         for line in lines {
             self.ensure_space(line.height);
             self.emit(line, x, self.y);
+        }
+    }
+
+    /// Places lines across the text's width as `align` says. Justified text stays left-aligned:
+    /// stretching the spaces between words isn't built (ADR 0001).
+    fn place_aligned(&mut self, lines: Vec<LineBox>, align: Align) {
+        for line in lines {
+            let room = (self.setup.content_width() - line.width).max(0.0);
+            let indent = match align {
+                Align::Left | Align::Justify => 0.0,
+                Align::Center => room / 2.0,
+                Align::Right => room,
+            };
+            self.ensure_space(line.height);
+            self.emit(line, self.setup.margin + indent, self.y);
         }
     }
 
@@ -1084,7 +1099,9 @@ fn with_note_marker(number: usize, blocks: &[Block]) -> Vec<Block> {
     let mut blocks = blocks.to_vec();
     match blocks.first_mut() {
         Some(
-            Block::Heading { runs, .. } | Block::Paragraph(runs) | Block::ListItem { runs, .. },
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. },
         ) => {
             // Word puts a space between its own marker and the note's text.
             if let Some(first) = runs.first_mut() {
@@ -1092,7 +1109,7 @@ fn with_note_marker(number: usize, blocks: &[Block]) -> Vec<Block> {
             }
             runs.insert(0, marker);
         }
-        _ => blocks.insert(0, Block::Paragraph(vec![marker])),
+        _ => blocks.insert(0, Block::paragraph(vec![marker])),
     }
     blocks
 }
@@ -1196,7 +1213,7 @@ mod tests {
     fn wraps_paragraphs_within_the_margins() {
         let setup = PageSetup::DOCUMENT;
         let long = "The quick brown fox jumps over the lazy dog. ".repeat(20);
-        let pages = lay_out(&[Block::Paragraph(text(&long))], setup);
+        let pages = lay_out(&[Block::paragraph(text(&long))], setup);
 
         let lines = page_lines(&pages[0]);
         assert!(lines.len() > 5, "{lines:?}");
@@ -1214,7 +1231,7 @@ mod tests {
     fn breaks_words_too_long_for_a_line() {
         let setup = PageSetup::DOCUMENT;
         let word = "x".repeat(400);
-        let pages = lay_out(&[Block::Paragraph(text(&word))], setup);
+        let pages = lay_out(&[Block::paragraph(text(&word))], setup);
 
         let lines = page_lines(&pages[0]);
         assert!(lines.len() > 1);
@@ -1225,16 +1242,16 @@ mod tests {
 
     #[test]
     fn keeps_line_breaks() {
-        let pages = lay_out(&[Block::Paragraph(text("one\ntwo"))], PageSetup::DOCUMENT);
+        let pages = lay_out(&[Block::paragraph(text("one\ntwo"))], PageSetup::DOCUMENT);
         assert_eq!(page_lines(&pages[0]), ["one", "two"]);
     }
 
     #[test]
     fn rules_start_a_new_page_for_slides_and_draw_a_line_in_documents() {
         let blocks = [
-            Block::Paragraph(text("Slide one")),
+            Block::paragraph(text("Slide one")),
             Block::Rule,
-            Block::Paragraph(text("Slide two")),
+            Block::paragraph(text("Slide two")),
         ];
 
         let slides = lay_out(&blocks, PageSetup::SLIDES);
@@ -1254,7 +1271,7 @@ mod tests {
     #[test]
     fn continues_onto_new_pages_when_full() {
         let blocks: Vec<Block> = (0..200)
-            .map(|i| Block::Paragraph(text(&format!("Paragraph {i}"))))
+            .map(|i| Block::paragraph(text(&format!("Paragraph {i}"))))
             .collect();
         let pages = lay_out(&blocks, PageSetup::DOCUMENT);
 
@@ -1278,7 +1295,7 @@ mod tests {
             item(ListKind::Numbered, 0, "b"),
             item(ListKind::Numbered, 1, "b.a"),
             item(ListKind::Bullet, 2, "deep"),
-            Block::Paragraph(text("between")),
+            Block::paragraph(text("between")),
             item(ListKind::Numbered, 0, "new list"),
         ];
         let pages = lay_out(&blocks, PageSetup::DOCUMENT);
@@ -1502,10 +1519,10 @@ mod tests {
     fn writes_notes_after_a_line_with_their_numbers() {
         let note = |number, text: &str| Block::Note {
             number,
-            blocks: vec![Block::Paragraph(vec![Run::new(text, RunStyle::default())])],
+            blocks: vec![Block::paragraph(vec![Run::new(text, RunStyle::default())])],
         };
         let blocks = [
-            Block::Paragraph(vec![
+            Block::paragraph(vec![
                 Run::new("Claim", RunStyle::default()),
                 Run::note(1),
                 Run::new(" and more", RunStyle::default()),
@@ -1557,10 +1574,10 @@ mod tests {
     fn repeats_headers_and_footers_in_the_margins_of_every_page() {
         let setup = PageSetup::DOCUMENT;
         let mut blocks = vec![
-            Block::Header(vec![Block::Paragraph(text("Report"))]),
-            Block::Footer(vec![Block::Paragraph(text("Confidential"))]),
+            Block::Header(vec![Block::paragraph(text("Report"))]),
+            Block::Footer(vec![Block::paragraph(text("Confidential"))]),
         ];
-        blocks.extend((0..80).map(|i| Block::Paragraph(text(&format!("Paragraph {i}")))));
+        blocks.extend((0..80).map(|i| Block::paragraph(text(&format!("Paragraph {i}")))));
         let pages = lay_out(&blocks, setup);
 
         assert!(pages.len() > 1);
@@ -1585,9 +1602,9 @@ mod tests {
     #[test]
     fn cuts_a_header_to_what_fits_in_the_margin() {
         let lines: Vec<Block> = (0..50)
-            .map(|i| Block::Paragraph(text(&format!("Line {i}"))))
+            .map(|i| Block::paragraph(text(&format!("Line {i}"))))
             .collect();
-        let blocks = [Block::Header(lines), Block::Paragraph(text("Body"))];
+        let blocks = [Block::Header(lines), Block::paragraph(text("Body"))];
         let pages = lay_out(&blocks, PageSetup::DOCUMENT);
 
         assert_eq!(pages.len(), 1);
@@ -1605,12 +1622,57 @@ mod tests {
     }
 
     #[test]
+    fn aligns_lines_within_the_margins() {
+        let setup = PageSetup::DOCUMENT;
+        let paragraph = |t: &str, align| Block::Paragraph {
+            runs: text(t),
+            align,
+        };
+        let blocks = [
+            paragraph("Left", Align::Left),
+            paragraph("Centered", Align::Center),
+            paragraph("Right", Align::Right),
+            paragraph("Justified", Align::Justify),
+            Block::Heading {
+                level: 1,
+                runs: text("Heading"),
+                align: Align::Center,
+            },
+        ];
+        let pages = lay_out(&blocks, setup);
+        let page = &pages[0];
+
+        let edges = |t: &str| {
+            let item = page
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    Item::Text(item) if item.text == t => Some(item),
+                    _ => None,
+                })
+                .unwrap();
+            let width: f32 = item.glyphs.iter().map(|g| g.x_advance).sum::<f32>() * item.size;
+            (item.x, item.x + width)
+        };
+        let (left, right) = (setup.margin, setup.width - setup.margin);
+        let close = |a: f32, b: f32| (a - b).abs() < 0.01;
+
+        assert!(close(edges("Left").0, left));
+        assert!(close(edges("Justified").0, left));
+        assert!(close(edges("Right").1, right));
+        for t in ["Centered", "Heading"] {
+            let (start, end) = edges(t);
+            assert!(close(start - left, right - end), "{t}: {start}..{end}");
+        }
+    }
+
+    #[test]
     fn links_cover_their_text() {
         let runs = vec![
             Run::new("See ", RunStyle::default()),
             Run::new("the docs", RunStyle::default()).linked("https://example.com"),
         ];
-        let pages = lay_out(&[Block::Paragraph(runs)], PageSetup::DOCUMENT);
+        let pages = lay_out(&[Block::paragraph(runs)], PageSetup::DOCUMENT);
 
         let [link] = pages[0].links.as_slice() else {
             panic!("expected one link: {:?}", pages[0].links);

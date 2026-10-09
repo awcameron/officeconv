@@ -34,11 +34,8 @@ fn reads_headings_and_paragraphs() {
     assert_eq!(
         blocks,
         [
-            Block::Heading {
-                level: 2,
-                runs: vec![Run::new("Intro", PLAIN)]
-            },
-            Block::Paragraph(vec![Run::new("Body text.", PLAIN)]),
+            Block::heading(2, vec![Run::new("Intro", PLAIN)]),
+            Block::paragraph(vec![Run::new("Body text.", PLAIN)]),
         ]
     );
 }
@@ -55,7 +52,7 @@ fn merges_runs_with_the_same_formatting() {
     );
     assert_eq!(
         blocks,
-        [Block::Paragraph(vec![
+        [Block::paragraph(vec![
             Run::new("Say ", PLAIN),
             Run::new("Hello", BOLD),
             Run::new("!", PLAIN),
@@ -70,7 +67,7 @@ fn resolves_entities_and_breaks() {
     );
     assert_eq!(
         blocks,
-        [Block::Paragraph(vec![Run::new(
+        [Block::paragraph(vec![Run::new(
             "Fish & chipsé\nline two",
             PLAIN
         )])]
@@ -84,7 +81,7 @@ fn skips_empty_paragraphs_and_deleted_text() {
                <w:p><w:r><w:t>  </w:t></w:r></w:p>
                <w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:r><w:t>kept</w:t></w:r></w:p>"#,
     );
-    assert_eq!(blocks, [Block::Paragraph(vec![Run::new("kept", PLAIN)])]);
+    assert_eq!(blocks, [Block::paragraph(vec![Run::new("kept", PLAIN)])]);
 }
 
 #[test]
@@ -95,7 +92,7 @@ fn ignores_fallback_copies() {
                  <mc:Fallback><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></mc:Fallback>
                </mc:AlternateContent></w:r></w:p>"#,
     );
-    assert_eq!(blocks, [Block::Paragraph(vec![Run::new("boxed", PLAIN)])]);
+    assert_eq!(blocks, [Block::paragraph(vec![Run::new("boxed", PLAIN)])]);
 }
 
 /// A package with one link (`rId1`), a numbered list (`numId` 1) whose second level
@@ -162,7 +159,7 @@ fn reads_list_items_from_numbering_and_styles() {
                 level: 0,
                 runs: text_block("Styled")
             },
-            Block::Paragraph(text_block("Unlisted")),
+            Block::paragraph(text_block("Unlisted")),
         ]
     );
 }
@@ -173,13 +170,7 @@ fn finds_headings_by_style_name() {
         r#"<w:p><w:pPr><w:pStyle w:val="Kop2"/></w:pPr><w:r><w:t>Inleiding</w:t></w:r></w:p>"#,
         &sample_package(),
     );
-    assert_eq!(
-        blocks,
-        [Block::Heading {
-            level: 2,
-            runs: text_block("Inleiding")
-        }]
-    );
+    assert_eq!(blocks, [Block::heading(2, text_block("Inleiding"))]);
 }
 
 #[test]
@@ -192,7 +183,7 @@ fn reads_hyperlinks() {
     );
     assert_eq!(
         blocks,
-        [Block::Paragraph(vec![
+        [Block::paragraph(vec![
             Run::new("Visit ", PLAIN),
             Run::new("our site", PLAIN).linked("https://example.com"),
             Run::new(", section 2", PLAIN),
@@ -225,7 +216,7 @@ fn reads_tables_and_flattens_nested_ones() {
                 vec![cell_of("Team"), cell_of("Members")],
                 vec![cell_of("One"), cell_of("Bobby\nDon\nx\ny")],
             ]),
-            Block::Paragraph(text_block("After")),
+            Block::paragraph(text_block("After")),
         ]
     );
 }
@@ -235,7 +226,7 @@ fn ignores_tracked_formatting_changes() {
     let blocks = parse(
         r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>now bold</w:t></w:r></w:p>"#,
     );
-    assert_eq!(blocks, [Block::Paragraph(vec![Run::new("now bold", BOLD)])]);
+    assert_eq!(blocks, [Block::paragraph(vec![Run::new("now bold", BOLD)])]);
 }
 
 #[test]
@@ -257,11 +248,11 @@ fn reads_pictures_with_alt_text() {
     assert_eq!(
         blocks,
         [
-            Block::Paragraph(vec![
+            Block::paragraph(vec![
                 Run::new("Chart: ", PLAIN),
                 Run::image(ImagePart::new("word/media/image1.png"), "Sales by region"),
             ]),
-            Block::Paragraph(vec![Run::image(
+            Block::paragraph(vec![Run::image(
                 ImagePart::new("word/media/image1.png"),
                 "Old style"
             )]),
@@ -297,18 +288,18 @@ fn reads_picture_sizes_from_their_extent() {
         blocks,
         [
             // 2 by 1 inches. The `a:ext` inside the graphic isn't the displayed size.
-            Block::Paragraph(vec![sized(
+            Block::paragraph(vec![sized(
                 Run::image(ImagePart::new("word/media/image1.png"), ""),
                 1_828_800,
                 914_400
             )]),
             // A size of zero is ignored.
-            Block::Paragraph(vec![Run::image(
+            Block::paragraph(vec![Run::image(
                 ImagePart::new("word/media/image1.png"),
                 ""
             )]),
             // The chart's size doesn't carry over to the next picture, which has none.
-            Block::Paragraph(vec![Run::image(
+            Block::paragraph(vec![Run::image(
                 ImagePart::new("word/media/image1.png"),
                 ""
             )]),
@@ -338,8 +329,8 @@ fn reads_a_picture_grouped_with_a_text_box() {
     assert_eq!(
         blocks,
         [
-            Block::Paragraph(vec![Run::new("Caption", PLAIN)]),
-            Block::Paragraph(vec![Run::image(
+            Block::paragraph(vec![Run::new("Caption", PLAIN)]),
+            Block::paragraph(vec![Run::image(
                 ImagePart::new("word/media/image1.png"),
                 "Team photo"
             )]),
@@ -526,17 +517,17 @@ fn reads_notes_and_skips_separators() {
         [
             (
                 "1".to_string(),
-                vec![Block::Paragraph(text_block(" Source."))]
+                vec![Block::paragraph(text_block(" Source."))]
             ),
             // A reference inside a note is dropped.
-            ("2".to_string(), vec![Block::Paragraph(text_block("Cites"))]),
+            ("2".to_string(), vec![Block::paragraph(text_block("Cites"))]),
         ]
     );
 }
 
 /// A package holding footnotes 1 and 2 and endnote 1, each one paragraph naming itself.
 fn package_with_notes() -> Package {
-    let paragraph = |text: &str| vec![Block::Paragraph(text_block(text))];
+    let paragraph = |text: &str| vec![Block::paragraph(text_block(text))];
     Package {
         notes: HashMap::from([
             ((NoteKind::Footnote, "1".into()), paragraph("footnote 1")),
@@ -557,12 +548,12 @@ fn numbers_notes_in_the_order_the_body_first_refers_to_them() {
     );
     let note = |number, text: &str| Block::Note {
         number,
-        blocks: vec![Block::Paragraph(text_block(text))],
+        blocks: vec![Block::paragraph(text_block(text))],
     };
     assert_eq!(
         blocks,
         [
-            Block::Paragraph(vec![
+            Block::paragraph(vec![
                 Run::new("A", PLAIN),
                 Run::note(1),
                 Run::new("B", PLAIN),
@@ -590,14 +581,14 @@ fn adds_a_note_once_however_often_it_is_referred_to() {
         notes,
         [&Block::Note {
             number: 1,
-            blocks: vec![Block::Paragraph(text_block("footnote 1"))],
+            blocks: vec![Block::paragraph(text_block("footnote 1"))],
         }]
     );
     assert_eq!(blocks.len(), 1001);
     assert!(
         blocks[..1000]
             .iter()
-            .all(|b| *b == Block::Paragraph(vec![Run::note(1)]))
+            .all(|b| *b == Block::paragraph(vec![Run::note(1)]))
     );
 }
 
@@ -607,7 +598,7 @@ fn drops_references_to_notes_the_file_does_not_have() {
         r#"<w:p><w:r><w:t>Text</w:t><w:footnoteReference w:id="9"/><w:endnoteReference w:id="2"/><w:footnoteReference/></w:r></w:p>"#,
         &package_with_notes(),
     );
-    assert_eq!(blocks, [Block::Paragraph(text_block("Text"))]);
+    assert_eq!(blocks, [Block::paragraph(text_block("Text"))]);
 }
 
 /// A section's properties, referring to its headers and footers as `(element, type, id)`.
@@ -671,7 +662,7 @@ fn leaves_page_numbers_out_of_headers_and_footers() {
     let blocks = parse_page_furniture(&xml, &Package::default(), &Targets::default()).unwrap();
     assert_eq!(
         blocks,
-        [Block::Paragraph(text_block("Report, page  of , Ada"))]
+        [Block::paragraph(text_block("Report, page  of , Ada"))]
     );
 }
 
@@ -680,7 +671,7 @@ fn keeps_page_numbers_in_the_body() {
     let blocks = parse(
         r#"<w:p><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>4</w:t></w:r></w:fldSimple></w:p>"#,
     );
-    assert_eq!(blocks, [Block::Paragraph(text_block("See page 4"))]);
+    assert_eq!(blocks, [Block::paragraph(text_block("See page 4"))]);
 }
 
 #[test]
@@ -715,6 +706,61 @@ fn reads_a_header_once_however_many_sections_refer_to_it() {
     let blocks = read_blocks(&mut archive).unwrap();
     assert_eq!(
         blocks,
-        [Block::Header(vec![Block::Paragraph(text_block("Title"))])]
+        [Block::Header(vec![Block::paragraph(text_block("Title"))])]
     );
+}
+
+#[test]
+fn reads_alignment_from_paragraphs_and_their_styles() {
+    let mut package = Package::default();
+    package.styles = package::parse_styles(
+        r#"<w:styles xmlns:w="w">
+             <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:pPr><w:jc w:val="center"/></w:pPr></w:style>
+             <w:style w:type="paragraph" w:styleId="Signature"><w:name w:val="Signature"/><w:pPr><w:jc w:val="right"/></w:pPr></w:style>
+           </w:styles>"#,
+    )
+    .unwrap();
+    let blocks = parse_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>
+           <w:p><w:pPr><w:pStyle w:val="Signature"/></w:pPr><w:r><w:t>Signed</w:t></w:r></w:p>
+           <w:p><w:pPr><w:pStyle w:val="Signature"/><w:jc w:val="left"/></w:pPr><w:r><w:t>Own wins</w:t></w:r></w:p>
+           <w:p><w:pPr><w:jc w:val="both"/><w:pPrChange><w:pPr><w:jc w:val="center"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Justified</w:t></w:r></w:p>
+           <w:p><w:pPr><w:jc w:val="sideways"/></w:pPr><w:r><w:t>Unknown</w:t></w:r></w:p>"#,
+        &package,
+    );
+    let paragraph = |text: &str, align| Block::Paragraph {
+        runs: text_block(text),
+        align,
+    };
+    assert_eq!(
+        blocks,
+        [
+            Block::Heading {
+                level: 1,
+                runs: text_block("Title"),
+                align: Align::Center,
+            },
+            paragraph("Signed", Align::Right),
+            paragraph("Own wins", Align::Left),
+            // The tracked change's old alignment is skipped.
+            paragraph("Justified", Align::Justify),
+            paragraph("Unknown", Align::Left),
+        ]
+    );
+}
+
+#[test]
+fn a_tables_alignment_is_not_its_texts() {
+    // A table in a text box sits inside a paragraph, which its `w:jc` mustn't align.
+    let blocks = parse(
+        r#"<w:p><w:r><w:t>Outer</w:t></w:r><w:r><w:pict><v:shape xmlns:v="v"><v:textbox><w:txbxContent>
+             <w:tbl><w:tblPr><w:jc w:val="center"/></w:tblPr><w:tr><w:trPr><w:jc w:val="right"/></w:trPr>
+               <w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+           </w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+    );
+    let outer = blocks
+        .iter()
+        .find(|b| matches!(b, Block::Paragraph { runs, .. } if runs[0].text == "Outer"))
+        .unwrap();
+    assert_eq!(outer, &Block::paragraph(text_block("Outer")));
 }

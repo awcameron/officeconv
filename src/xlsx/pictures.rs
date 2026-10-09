@@ -43,7 +43,7 @@ pub fn sheet_pictures<R: Read + Seek>(
     Ok(read_pictures(archive, sheet_part)?
         .into_iter()
         .map(|picture| {
-            Block::Paragraph(vec![Run::image(ImagePart::new(picture.part), picture.alt)])
+            Block::paragraph(vec![Run::image(ImagePart::new(picture.part), picture.alt)])
         })
         .collect())
 }

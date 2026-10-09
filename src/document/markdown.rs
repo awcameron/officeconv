@@ -32,12 +32,13 @@ pub fn render(blocks: &[Block]) -> String {
 
 fn render_block(block: &Block) -> String {
     match block {
-        Block::Heading { level, runs } => {
+        // Markdown has no alignment.
+        Block::Heading { level, runs, .. } => {
             // Headings already render bold, and a line break would end the heading early.
             let text = render_inline(&without_bold(runs)).replace('\n', " ");
             format!("{} {}", "#".repeat(usize::from(*level)), text)
         }
-        Block::Paragraph(runs) => escape_block_start(&render_runs(runs)),
+        Block::Paragraph { runs, .. } => escape_block_start(&render_runs(runs)),
         Block::ListItem { kind, level, runs } => render_list_item(*kind, *level, runs),
         Block::Table(rows) => render_table(rows),
         Block::Rule => "---".to_string(),
@@ -214,25 +215,22 @@ mod tests {
     #[test]
     fn renders_headings_and_paragraphs() {
         let blocks = [
-            Block::Heading {
-                level: 2,
-                runs: vec![run("Intro", false, false)],
-            },
-            Block::Paragraph(vec![run("Body.", false, false)]),
+            Block::heading(2, vec![run("Intro", false, false)]),
+            Block::paragraph(vec![run("Body.", false, false)]),
         ];
         assert_eq!(render(&blocks), "## Intro\n\nBody.\n");
     }
 
     #[test]
     fn headings_drop_bold_but_keep_italic() {
-        let blocks = [Block::Heading {
-            level: 1,
-            runs: vec![
+        let blocks = [Block::heading(
+            1,
+            vec![
                 run("TDD: ", true, false),
                 run("Template", true, false),
                 run(" v2", true, true),
             ],
-        }];
+        )];
         assert_eq!(render(&blocks), "# TDD: Template *v2*\n");
     }
 
@@ -270,11 +268,11 @@ mod tests {
             runs: vec![run(text, false, false)],
         };
         let blocks = [
-            Block::Paragraph(vec![run("Steps:", false, false)]),
+            Block::paragraph(vec![run("Steps:", false, false)]),
             item(ListKind::Numbered, 0, "Unzip"),
             item(ListKind::Bullet, 1, "word/document.xml"),
             item(ListKind::Numbered, 0, "Parse"),
-            Block::Paragraph(vec![run("Done.", false, false)]),
+            Block::paragraph(vec![run("Done.", false, false)]),
         ];
         assert_eq!(
             render(&blocks),
@@ -330,7 +328,7 @@ mod tests {
 
     #[test]
     fn escapes_link_targets() {
-        let blocks = [Block::Paragraph(vec![
+        let blocks = [Block::paragraph(vec![
             run("a", false, false).linked("https://x.com/?a=1&b=2 (x)"),
         ])];
         assert_eq!(
@@ -388,7 +386,7 @@ mod tests {
     #[test]
     fn renders_notes_as_footnotes() {
         let blocks = [
-            Block::Paragraph(vec![
+            Block::paragraph(vec![
                 run("Claim", false, false),
                 Run::note(1),
                 run(" and more", false, false),
@@ -396,12 +394,12 @@ mod tests {
             ]),
             Block::Note {
                 number: 1,
-                blocks: vec![Block::Paragraph(vec![run(" Source.", false, false)])],
+                blocks: vec![Block::paragraph(vec![run(" Source.", false, false)])],
             },
             Block::Note {
                 number: 2,
                 blocks: vec![
-                    Block::Paragraph(vec![run("One\ntwo", false, false)]),
+                    Block::paragraph(vec![run("One\ntwo", false, false)]),
                     Block::ListItem {
                         kind: ListKind::Bullet,
                         level: 0,
@@ -419,9 +417,9 @@ mod tests {
     #[test]
     fn leaves_out_headers_and_footers() {
         let blocks = [
-            Block::Header(vec![Block::Paragraph(vec![run("Report", false, false)])]),
-            Block::Footer(vec![Block::Paragraph(vec![run("Page", false, false)])]),
-            Block::Paragraph(vec![run("Body.", false, false)]),
+            Block::Header(vec![Block::paragraph(vec![run("Report", false, false)])]),
+            Block::Footer(vec![Block::paragraph(vec![run("Page", false, false)])]),
+            Block::paragraph(vec![run("Body.", false, false)]),
         ];
         assert_eq!(render(&blocks), "Body.\n");
     }

@@ -54,8 +54,11 @@ jobs:
         run: |
           base=$(sed -n 's/^FROM //p' .devcontainer/Dockerfile)
           since=$(date '+%Y-%m-%d %H:%M:%S')
-          docker pull "$base"
-          sudo journalctl -u docker --since "$since" --no-pager | grep -iE 'trying to pull|mirror' || true
+          status=0
+          docker pull "$base" || status=$?
+          docker info --format 'Docker {{.ServerVersion}}, storage {{.Driver}}, {{json .DriverStatus}}'
+          sudo journalctl -u docker --since "$since" --no-pager | grep -iE 'pull|mirror|registry' || true
+          exit "$status"
 
       - name: Build the image
         run: docker build -t officeconv-dev .devcontainer

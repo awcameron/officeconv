@@ -59,9 +59,15 @@ What `officeconv` reads from each kind of file. [Outputs](#outputs) says how it'
 - hyperlinks;
 - tables, with the first row as the header;
 - line breaks;
+- footnotes and endnotes;
 - pictures, with `--images DIR` or in PDF. See [Images](#images).
 
 [Markdown](#markdown) shows how each is written.
+
+Footnotes and endnotes are numbered together, from 1, in the order the text first refers to
+them, and all of them go at the end of the document. A note referred to more than once keeps
+its number, and is written once. Notes nothing refers to are left out, and so is a reference to
+a note the file doesn't have.
 
 A table cell merged across columns or down rows keeps its text in its first cell, so every row
 keeps all its columns. Markdown has no merged cells, so it leaves the cells the merge covers
@@ -70,7 +76,7 @@ past the table, however far the file says it goes, and a continuing cell that ho
 own starts a new cell rather than lose it. A table inside a table cell can't be shown either, so
 its text goes into that cell, a line for each of its cells.
 
-Not converted yet: footnotes, comments, and headers and footers; see
+Not converted yet: comments, and headers and footers; see
 [ADR 0004](adr/0004-document-model.md) for how they'll fit. Headings that use custom style
 names aren't detected.
 
@@ -150,6 +156,7 @@ can't hold larger integers exactly.
 | Hyperlinks                       | `[text](url)`                                            |
 | Tables, and spreadsheets         | A Markdown table. The first row is the header            |
 | Line breaks                      | A hard break (two spaces, then a newline)                |
+| Footnotes and endnotes           | `[^1]` in the text, and `[^1]: note` at the end          |
 | Pictures, with `--images DIR`    | `![alt text](DIR/image1.png)`; see [Images](#images)     |
 
 - Every numbered item is written as `1.`, because Markdown renumbers lists when it renders them.
@@ -157,12 +164,13 @@ can't hold larger integers exactly.
   example) is escaped. So is HTML: `<` is written as `&lt;`, and `&` as `&amp;` where it would
   start an entity such as `&copy;`, so the text shows exactly as written.
 - In tables, columns are padded, `|` is escaped, and line breaks inside a cell become `<br>`.
+- A note of more than one paragraph indents the rest by 4 spaces, so they stay in the note.
 - [PPTX](#pptx) shows how slides are laid out.
 
 ### PDF
 
 `--to pdf` lays out the same content the Markdown output has: headings, bold and italic, lists,
-links, tables, line breaks, and pictures.
+links, tables, line breaks, footnotes and endnotes, and pictures.
 
 - **It shows the content, not the original layout.** Word's and PowerPoint's own fonts, colors,
   margins, columns and slide designs aren't reproduced.
@@ -175,6 +183,9 @@ links, tables, line breaks, and pictures.
 - A merged table cell is drawn once, across its columns and rows, and the rows it joins go onto
   the same page. If they're too tall to fit on any page, they're drawn as separate rows instead,
   with the text in the first, as in Markdown.
+- A footnote or endnote reference is written as its number in brackets, `[1]`, on the line rather
+  than raised. The notes go at the end of the document, below a line, each starting with its
+  number. They aren't put at the foot of the page that refers to them.
 - Pictures are stored inside the PDF, so `--images` isn't used. PNG, JPEG, GIF and WebP pictures
   are kept; other formats, such as EMF or TIFF, are left out with a warning. So are pictures
   larger than 50 megapixels, which could take gigabytes of memory to decode.

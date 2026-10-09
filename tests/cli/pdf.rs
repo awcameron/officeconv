@@ -66,6 +66,32 @@ fn converts_docx_to_pdf() {
 }
 
 #[test]
+fn writes_footnotes_and_endnotes_at_the_end() {
+    let (_dir, path) = sample_docx_with_notes();
+    let (pdf, _) = convert_to_pdf(&path, &[]);
+
+    let pages = page_texts(&pdf);
+    assert_eq!(pages.len(), 1);
+    let text = &pages[0];
+    // The extractor puts a space between runs, so it finds one before each reference.
+    let order = [
+        "Water boils at 100 °C [1] at sea level [2] .",
+        "Again [1]",
+        "[1] See the table",
+        "[2] Standard pressure.",
+    ];
+    let positions: Vec<usize> = order
+        .iter()
+        .map(|t| {
+            text.find(t)
+                .unwrap_or_else(|| panic!("no {t:?} in {text:?}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "out of order: {text:?}");
+    assert!(!text.contains("Never referred to"), "{text:?}");
+}
+
+#[test]
 fn numbers_lists_and_draws_tables() {
     let numbering = format!(
         r#"<w:numbering xmlns:w="{WORD_NS}">

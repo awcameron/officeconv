@@ -13,18 +13,24 @@
 //! ```
 //!
 //! We stream through that XML one event at a time and build [`Block`]s.
+//!
+//! Footnotes and endnotes live in parts of their own, which the body refers to by ID
+//! (`<w:footnoteReference w:id="2"/>`). They're read first, then numbered as the body refers to
+//! them and added after it.
 
 pub mod package;
 
+use std::collections::HashMap;
 use std::io::{Read, Seek};
+use std::mem;
 
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph};
 use crate::document::{Block, ImagePart, Merged, RunStyle, display_size};
 use crate::error::Result;
-use crate::opc::{self, Archive, Open, XmlHandler, attr};
-use package::Package;
+use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
+use package::{NoteId, NoteKind, Package};
 
 const DOCUMENT: &str = "word/document.xml";
 
@@ -33,10 +39,14 @@ const DOCUMENT: &str = "word/document.xml";
 pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block<ImagePart>>> {
     let document = archive.read_required_part(DOCUMENT)?;
 
-    let mut package = Package::default();
-    if let Some(xml) = archive.read_part(&opc::rels_path(DOCUMENT))? {
-        package.targets = opc::Targets::new(&opc::parse_relationships(&xml)?, DOCUMENT);
-    }
+    let relationships = match archive.read_part(&opc::rels_path(DOCUMENT))? {
+        Some(xml) => opc::parse_relationships(&xml)?,
+        None => HashMap::new(),
+    };
+    let mut package = Package {
+        targets: Targets::new(&relationships, DOCUMENT),
+        ..Package::default()
+    };
     if let Some(xml) = archive.read_part("word/numbering.xml")? {
         package.numbering = package::parse_numbering(&xml)?;
     }
@@ -44,14 +54,68 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
         package.styles = package::parse_styles(&xml)?;
     }
 
+    let mut notes = HashMap::new();
+    for kind in [NoteKind::Footnote, NoteKind::Endnote] {
+        let Some(part) = relationships
+            .values()
+            .find(|r| r.kind == kind.relationship() && !r.external)
+            .map(|r| opc::resolve_target(DOCUMENT, &r.target))
+        else {
+            continue;
+        };
+        let Some(xml) = archive.read_part(&part)? else {
+            continue;
+        };
+        // A note's links and pictures are listed in its part's own relationships.
+        let targets = match archive.read_part(&opc::rels_path(&part))? {
+            Some(rels) => Targets::new(&opc::parse_relationships(&rels)?, &part),
+            None => Targets::default(),
+        };
+        for (id, blocks) in parse_notes(&xml, &package, &targets)? {
+            notes.insert((kind, id), blocks);
+        }
+    }
+    package.notes = notes;
+
     parse_document(&document, &package)
 }
 
-/// Parses the contents of `word/document.xml`, looking up IDs in `package`.
+/// Parses the contents of `word/document.xml`, looking up IDs in `package`. The notes the body
+/// refers to follow it, each once, numbered from 1 in the order the body first refers to them.
 pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block<ImagePart>>> {
-    let mut parser = Parser::new(package);
+    let mut parser = Parser::new(package, &package.targets, Some(References::default()));
     opc::walk(xml, &mut parser)?;
-    Ok(parser.builder.into_blocks())
+    let references = parser.references.take().unwrap_or_default();
+    let mut blocks = parser.builder.into_blocks();
+    // Each note is copied once, however many times the body refers to it.
+    blocks.extend(
+        references
+            .order
+            .iter()
+            .zip(1..)
+            .map(|(id, number)| Block::Note {
+                number,
+                blocks: package.notes[id].clone(),
+            }),
+    );
+    Ok(blocks)
+}
+
+/// Parses a footnotes or endnotes part, returning each note's blocks by its ID. The separators
+/// Word keeps there, which draw the line above the notes on a page, aren't notes. A reference
+/// inside a note is dropped, so notes never hold notes.
+pub fn parse_notes(
+    xml: &str,
+    package: &Package,
+    targets: &Targets,
+) -> Result<Vec<(String, Vec<Block<ImagePart>>)>> {
+    let mut parser = NotesParser {
+        parser: Parser::new(package, targets, None),
+        id: None,
+        notes: Vec::new(),
+    };
+    opc::walk(xml, &mut parser)?;
+    Ok(parser.notes)
 }
 
 /// The state we track while walking the XML.
@@ -59,11 +123,71 @@ pub fn parse_document(xml: &str, package: &Package) -> Result<Vec<Block<ImagePar
 /// `'p` is the lifetime of the borrowed [`Package`]: a `Parser` can't outlive it.
 struct Parser<'p> {
     package: &'p Package,
+    /// What the relationship IDs in the part being read point at.
+    targets: &'p Targets,
     builder: BlockBuilder<ParagraphProps>,
+    /// The notes the body has referred to, or `None` while reading the notes themselves.
+    references: Option<References>,
     /// Alt text of the picture being read, from its `wp:docPr` description.
     image_alt: Option<String>,
     /// Display size of the picture being read, from its `wp:extent`.
     image_size: Option<(u32, u32)>,
+}
+
+/// The notes the body refers to, in the order it first refers to each.
+#[derive(Default)]
+struct References {
+    order: Vec<NoteId>,
+    numbers: HashMap<NoteId, usize>,
+}
+
+impl References {
+    /// The number of the note `id`: the next one the first time it's referred to, and the same
+    /// one after that.
+    fn number(&mut self, id: NoteId) -> usize {
+        let next = self.order.len() + 1;
+        *self.numbers.entry(id).or_insert_with_key(|id| {
+            self.order.push(id.clone());
+            next
+        })
+    }
+}
+
+/// A [`Parser`] for a footnotes or endnotes part, which collects each note's blocks.
+struct NotesParser<'p> {
+    parser: Parser<'p>,
+    /// The ID of the note being read, or `None` outside a note or in a separator.
+    id: Option<String>,
+    notes: Vec<(String, Vec<Block<ImagePart>>)>,
+}
+
+impl XmlHandler for NotesParser<'_> {
+    const SKIP: &'static [&'static str] = Parser::SKIP;
+
+    fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+        if NoteKind::of_note(e.local_name().as_ref()).is_some() {
+            // Separators have a `w:type`; an ordinary note has none, or `normal`.
+            let ordinary = attr(e, "type").is_none_or(|kind| kind == "normal");
+            self.id = attr(e, "id").filter(|_| ordinary && !is_empty);
+            return;
+        }
+        self.parser.start(e, is_empty, open);
+    }
+
+    fn end(&mut self, name: &str) {
+        if NoteKind::of_note(name).is_some() {
+            let blocks = mem::replace(&mut self.parser.builder, BlockBuilder::new()).into_blocks();
+            if let Some(id) = self.id.take() {
+                self.notes.push((id, blocks));
+            }
+            return;
+        }
+        self.parser.end(name);
+    }
+
+    fn text(&mut self, text: &str, open: &Open) {
+        self.parser.text(text, open);
+    }
 }
 
 /// What a paragraph's properties (`w:pPr`) say about it.
@@ -107,7 +231,7 @@ impl XmlHandler for Parser<'_> {
             "hyperlink" if !is_empty => {
                 // External links have an `r:id`; links to bookmarks inside the document don't.
                 self.builder.link =
-                    attr(e, "id").and_then(|id| self.package.targets.links.get(&id).cloned());
+                    attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
             }
             "r" if !is_empty => self.builder.style = RunStyle::default(),
             "b" if in_run => self.builder.style.bold = is_on(e),
@@ -132,6 +256,19 @@ impl XmlHandler for Parser<'_> {
             "imagedata" if in_run => {
                 let alt = attr(e, "title").unwrap_or_default();
                 self.push_image(attr(e, "id"), alt, None);
+            }
+            name @ ("footnoteReference" | "endnoteReference") if in_run => {
+                if let (Some(kind), Some(id), Some(references)) = (
+                    NoteKind::of_reference(name),
+                    attr(e, "id"),
+                    self.references.as_mut(),
+                ) {
+                    // A reference to a note the file doesn't have is dropped.
+                    let id = (kind, id);
+                    if self.package.notes.contains_key(&id) {
+                        self.builder.note(references.number(id));
+                    }
+                }
             }
             "tab" if in_run => self.builder.text(" "),
             "br" | "cr" if in_run => {
@@ -188,10 +325,12 @@ impl XmlHandler for Parser<'_> {
 }
 
 impl<'p> Parser<'p> {
-    fn new(package: &'p Package) -> Self {
+    fn new(package: &'p Package, targets: &'p Targets, references: Option<References>) -> Self {
         Parser {
             package,
+            targets,
             builder: BlockBuilder::new(),
+            references,
             image_alt: None,
             image_size: None,
         }
@@ -199,7 +338,7 @@ impl<'p> Parser<'p> {
 
     /// Adds the image with relationship ID `id`, if it's one stored in the document.
     fn push_image(&mut self, id: Option<String>, alt: String, size: Option<(u32, u32)>) {
-        if let Some(part) = id.and_then(|id| self.package.targets.images.get(&id)) {
+        if let Some(part) = id.and_then(|id| self.targets.images.get(&id)) {
             self.builder.image(part.clone(), alt, size);
         }
     }

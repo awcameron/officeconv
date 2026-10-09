@@ -72,6 +72,14 @@ impl<P: Default> BlockBuilder<P> {
         }
     }
 
+    /// Adds a reference to the note numbered `number` to the innermost paragraph. It takes no
+    /// link: a note reference inside a link's text would end the link early in Markdown.
+    pub fn note(&mut self, number: usize) {
+        if let Some(paragraph) = self.paragraphs.last_mut() {
+            append_run(&mut paragraph.runs, Run::note(number));
+        }
+    }
+
     /// Closes the innermost paragraph. Returns it unless it's blank or went into the open
     /// table cell.
     pub fn end_paragraph(&mut self) -> Option<Paragraph<P>> {

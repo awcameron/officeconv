@@ -37,7 +37,23 @@ fn render_block(block: &Block) -> String {
         Block::ListItem { kind, level, runs } => render_list_item(*kind, *level, runs),
         Block::Table(rows) => render_table(rows),
         Block::Rule => "---".to_string(),
+        Block::Note { number, blocks } => render_note(*number, blocks),
     }
+}
+
+/// Renders a note as a footnote definition, `[^1]: text`. Lines after the first are indented
+/// four spaces, so a note of several blocks stays one note.
+fn render_note(number: usize, blocks: &[Block]) -> String {
+    let mut out = format!("[^{number}]:");
+    for (i, line) in render(blocks).trim_end().lines().enumerate() {
+        match (i, line.is_empty()) {
+            (0, _) => out.push(' '),
+            (_, true) => out.push('\n'),
+            (_, false) => out.push_str("\n    "),
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// Renders `- item` or `1. item`, indented four spaces per nesting level.
@@ -123,6 +139,9 @@ fn render_inline(runs: &[Run]) -> String {
 ///
 /// `**bold **` isn't bold in Markdown, but `**bold** ` is.
 fn render_run(run: &Run) -> String {
+    if let Some(number) = run.note {
+        return format!("[^{number}]");
+    }
     if let Some(image) = &run.image {
         // Alt text can't span lines in Markdown.
         let alt = escape_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
@@ -359,6 +378,37 @@ mod tests {
         assert_eq!(escape_block_start("> not a quote"), r"\> not a quote");
         assert_eq!(escape_block_start("1. not a list"), r"1\. not a list");
         assert_eq!(escape_block_start("2026 was fine"), "2026 was fine");
+    }
+
+    #[test]
+    fn renders_notes_as_footnotes() {
+        let blocks = [
+            Block::Paragraph(vec![
+                run("Claim", false, false),
+                Run::note(1),
+                run(" and more", false, false),
+                Run::note(2),
+            ]),
+            Block::Note {
+                number: 1,
+                blocks: vec![Block::Paragraph(vec![run(" Source.", false, false)])],
+            },
+            Block::Note {
+                number: 2,
+                blocks: vec![
+                    Block::Paragraph(vec![run("One\ntwo", false, false)]),
+                    Block::ListItem {
+                        kind: ListKind::Bullet,
+                        level: 0,
+                        runs: vec![run("item", false, false)],
+                    },
+                ],
+            },
+        ];
+        assert_eq!(
+            render(&blocks),
+            "Claim[^1] and more[^2]\n\n[^1]: Source.\n\n[^2]: One  \n    two\n\n    - item\n"
+        );
     }
 
     #[test]

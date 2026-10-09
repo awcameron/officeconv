@@ -39,10 +39,7 @@ const DOCUMENT: &str = "word/document.xml";
 pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block<ImagePart>>> {
     let document = archive.read_required_part(DOCUMENT)?;
 
-    let relationships = match archive.read_part(&opc::rels_path(DOCUMENT))? {
-        Some(xml) => opc::parse_relationships(&xml)?,
-        None => HashMap::new(),
-    };
+    let relationships = archive.relationships(DOCUMENT)?;
     let mut package = Package {
         targets: Targets::new(&relationships, DOCUMENT),
         ..Package::default()
@@ -67,10 +64,7 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
             continue;
         };
         // A note's links and pictures are listed in its part's own relationships.
-        let targets = match archive.read_part(&opc::rels_path(&part))? {
-            Some(rels) => Targets::new(&opc::parse_relationships(&rels)?, &part),
-            None => Targets::default(),
-        };
+        let targets = Targets::new(&archive.relationships(&part)?, &part);
         for (id, blocks) in parse_notes(&xml, &package, &targets)? {
             notes.insert((kind, id), blocks);
         }

@@ -18,7 +18,7 @@
 //! Each slide becomes a `## Slide N: Title` heading followed by its text, with speaker notes
 //! under `### Notes` and a horizontal rule between slides.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
@@ -55,10 +55,7 @@ pub fn read_blocks<R: Read + Seek>(
     notes: Notes,
 ) -> Result<Vec<Block<ImagePart>>> {
     let presentation = archive.read_required_part(PRESENTATION)?;
-    let relationships = match archive.read_part(&opc::rels_path(PRESENTATION))? {
-        Some(xml) => opc::parse_relationships(&xml)?,
-        None => HashMap::new(),
-    };
+    let relationships = archive.relationships(PRESENTATION)?;
 
     // A slide or notes part is read once, however many entries point at it. PowerPoint never
     // repeats one, and the size limits count bytes read, not work: listing one slide 500,000
@@ -79,10 +76,7 @@ pub fn read_blocks<R: Read + Seek>(
             continue;
         };
 
-        let slide_relationships = match archive.read_part(&opc::rels_path(&part))? {
-            Some(rels) => opc::parse_relationships(&rels)?,
-            None => HashMap::new(),
-        };
+        let slide_relationships = archive.relationships(&part)?;
         let mut slide = parse_slide(&xml, &Targets::new(&slide_relationships, &part))?;
 
         // Speaker notes live in their own part, linked from the slide.
@@ -452,6 +446,7 @@ fn is_on(value: Option<String>) -> bool {
 mod tests {
     use super::*;
     use crate::document::TableCell;
+    use std::collections::HashMap;
 
     const PLAIN: RunStyle = RunStyle {
         bold: false,

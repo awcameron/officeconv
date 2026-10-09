@@ -249,13 +249,8 @@ mod tests {
 
     /// A zip containing empty parts with the given names.
     fn zip_with(parts: &[&str]) -> Vec<u8> {
-        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for part in parts {
-            writer
-                .start_file(*part, zip::write::SimpleFileOptions::default())
-                .unwrap();
-        }
-        writer.finish().unwrap().into_inner()
+        let parts: Vec<(&str, &[u8])> = parts.iter().map(|&name| (name, &[][..])).collect();
+        crate::opc::test_package(&parts).into_inner()
     }
 
     #[test]

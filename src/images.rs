@@ -263,21 +263,12 @@ fn link_prefix(images_dir: &Path, markdown_dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     use tempfile::TempDir;
-    use zip::write::SimpleFileOptions;
 
     /// A zip holding the given parts.
     fn archive(parts: &[(&str, &[u8])]) -> Archive<std::io::Cursor<Vec<u8>>> {
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        for (name, bytes) in parts {
-            writer
-                .start_file(*name, SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(bytes).unwrap();
-        }
-        Archive::open(writer.finish().unwrap()).unwrap()
+        Archive::open(crate::opc::test_package(parts)).unwrap()
     }
 
     /// A PNG signature followed by `rest`: enough for [`ImageFormat::detect`].

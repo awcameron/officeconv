@@ -64,15 +64,26 @@ impl<R: Read + Seek> Archive<R> {
         let Some(bytes) = self.read_bytes(name)? else {
             return Ok(None);
         };
-        let xml = String::from_utf8(bytes)
-            .map_err(|err| ZipError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+        let xml = String::from_utf8(bytes).map_err(|_| ConvertError::PartNotUtf8 {
+            part: name.to_string(),
+        })?;
         Ok(Some(xml))
     }
 
     /// Reads an XML part that must exist.
     pub fn read_required_part(&mut self, name: &str) -> Result<String> {
         self.read_part(name)?
-            .ok_or_else(|| ZipError::FileNotFound.into())
+            .ok_or_else(|| ConvertError::MissingPart {
+                part: name.to_string(),
+            })
+    }
+
+    /// The relationships of `part`, from its `.rels` part, or none if it has no `.rels` part.
+    pub fn relationships(&mut self, part: &str) -> Result<HashMap<String, Relationship>> {
+        match self.read_part(&rels_path(part))? {
+            Some(xml) => parse_relationships(&xml),
+            None => Ok(HashMap::new()),
+        }
     }
 
     /// Reads any part, such as an image, or `None` if the package doesn't have it.
@@ -403,20 +414,62 @@ pub fn attr(e: &BytesStart, name: &str) -> Option<String> {
     Some(value)
 }
 
+/// A package holding `parts`, as `(name, contents)`, built in memory. Every unit test that
+/// needs a zip builds it here.
+#[cfg(test)]
+pub fn test_package(parts: &[(&str, &[u8])]) -> io::Cursor<Vec<u8>> {
+    let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+    for (name, bytes) in parts {
+        writer
+            .start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A package with the given parts, built in memory.
-    fn zip_with(parts: &[(&str, &[u8])]) -> io::Cursor<Vec<u8>> {
-        let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-        for (name, bytes) in parts {
-            writer
-                .start_file(*name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(bytes).unwrap();
-        }
-        writer.finish().unwrap()
+    #[test]
+    fn names_a_part_that_is_missing_or_not_utf8() {
+        let mut archive =
+            Archive::open(test_package(&[("word/document.xml", b"\xff\xfe")])).unwrap();
+
+        let err = archive
+            .read_required_part("ppt/presentation.xml")
+            .unwrap_err();
+        assert!(
+            matches!(&err, ConvertError::MissingPart { part } if part == "ppt/presentation.xml")
+        );
+        assert_eq!(
+            err.to_string(),
+            "could not read document: ppt/presentation.xml is missing"
+        );
+
+        let err = archive.read_part("word/document.xml").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "could not read document: word/document.xml isn't UTF-8 text"
+        );
+    }
+
+    #[test]
+    fn reads_a_parts_relationships_or_none() {
+        let rels = br#"<Relationships><Relationship Id="rId1" Type="http://x/image" Target="media/a.png"/></Relationships>"#;
+        let mut archive =
+            Archive::open(test_package(&[("word/_rels/document.xml.rels", rels)])).unwrap();
+
+        let relationships = archive.relationships("word/document.xml").unwrap();
+        assert_eq!(relationships["rId1"].kind, "image");
+        assert_eq!(relationships["rId1"].target, "media/a.png");
+        assert!(
+            archive
+                .relationships("word/footnotes.xml")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     const SMALL: Limits = Limits {
@@ -427,7 +480,7 @@ mod tests {
     #[test]
     fn reads_parts_within_the_limits() {
         let mut archive = Archive::with_limits(
-            zip_with(&[("a.xml", b"0123456789"), ("b.png", b"012")]),
+            test_package(&[("a.xml", b"0123456789"), ("b.png", b"012")]),
             SMALL,
         )
         .unwrap();
@@ -439,7 +492,8 @@ mod tests {
     #[test]
     fn rejects_a_part_over_the_limit() {
         let mut archive =
-            Archive::with_limits(zip_with(&[("word/document.xml", &[b' '; 11])]), SMALL).unwrap();
+            Archive::with_limits(test_package(&[("word/document.xml", &[b' '; 11])]), SMALL)
+                .unwrap();
         let err = archive.read_part("word/document.xml").unwrap_err();
         assert!(
             matches!(&err, ConvertError::PartTooLarge { part, limit: 10 } if part == "word/document.xml"),
@@ -451,7 +505,7 @@ mod tests {
     fn rejects_parts_that_add_up_to_more_than_the_total() {
         let ten = [b' '; 10];
         let mut archive = Archive::with_limits(
-            zip_with(&[("a.xml", &ten), ("b.xml", &ten), ("c.xml", &ten)]),
+            test_package(&[("a.xml", &ten), ("b.xml", &ten), ("c.xml", &ten)]),
             SMALL,
         )
         .unwrap();
@@ -474,7 +528,7 @@ mod tests {
             "xl/worksheets/sheet1.dat",
             "xl/media/v.mp4",
         ] {
-            let mut archive = Archive::with_limits(zip_with(&[(name, &big)]), SMALL).unwrap();
+            let mut archive = Archive::with_limits(test_package(&[(name, &big)]), SMALL).unwrap();
             assert!(
                 matches!(
                     archive.check_part_sizes(),
@@ -485,7 +539,8 @@ mod tests {
         }
 
         let mut small =
-            Archive::with_limits(zip_with(&[("xl/worksheets/sheet1.dat", b"ok")]), SMALL).unwrap();
+            Archive::with_limits(test_package(&[("xl/worksheets/sheet1.dat", b"ok")]), SMALL)
+                .unwrap();
         small.check_part_sizes().unwrap();
     }
 

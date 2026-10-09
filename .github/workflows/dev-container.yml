@@ -49,15 +49,17 @@ jobs:
           sudo systemctl restart docker
           docker info --format 'Registry mirrors: {{.RegistryConfig.Mirrors}}'
 
-      # Pulled before the build, which then uses it, so the log shows where it came from.
+      # Pulled before the build, which then uses it, so the log shows where it came from. The
+      # runner is logged in to Docker Hub, and Docker sends those credentials to the mirror too,
+      # which refuses them; an empty config pulls without them.
       - name: Pull the base image
         run: |
           base=$(sed -n 's/^FROM //p' .devcontainer/Dockerfile)
           since=$(date '+%Y-%m-%d %H:%M:%S')
           status=0
-          docker pull "$base" || status=$?
-          docker info --format 'Docker {{.ServerVersion}}, storage {{.Driver}}, {{json .DriverStatus}}'
-          sudo journalctl -u docker --since "$since" --no-pager | grep -iE 'pull|mirror|registry' || true
+          DOCKER_CONFIG=$(mktemp -d) docker pull "$base" || status=$?
+          sudo journalctl -u docker --since "$since" --no-pager \
+            | grep -E 'Trying to pull|next endpoint|Not continuing' || true
           exit "$status"
 
       - name: Build the image

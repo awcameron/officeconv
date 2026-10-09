@@ -89,7 +89,10 @@ pub fn read_blocks<R: Read + Seek>(
             && seen_notes.insert(notes_part.clone())
             && let Some(notes_xml) = archive.read_part(&notes_part)?
         {
-            slide.notes = parse_notes(&notes_xml)?;
+            // Links in the notes are relationships of the notes part, not of the slide.
+            let notes_relationships = archive.relationships(&notes_part)?;
+            slide.notes =
+                parse_notes(&notes_xml, &Targets::new(&notes_relationships, &notes_part))?;
         }
 
         slides.push(slide);
@@ -164,9 +167,8 @@ pub fn parse_slide(xml: &str, targets: &Targets) -> Result<Slide> {
 }
 
 /// Parses a notes part. Only the notes text box counts, not the slide image or slide number.
-pub fn parse_notes(xml: &str) -> Result<Vec<Block<ImagePart>>> {
-    let targets = Targets::default();
-    let mut parser = SlideParser::new(&targets, true);
+pub fn parse_notes(xml: &str, targets: &Targets) -> Result<Vec<Block<ImagePart>>> {
+    let mut parser = SlideParser::new(targets, true);
     opc::walk(xml, &mut parser)?;
     Ok(parser.builder.into_blocks())
 }
@@ -846,7 +848,7 @@ mod tests {
             shape(Some("sldNum"), &para("2")),
         ));
         assert_eq!(
-            parse_notes(&xml).unwrap(),
+            parse_notes(&xml, &Targets::default()).unwrap(),
             [
                 Block::paragraph(runs("Mention EMEA.")),
                 Block::paragraph(runs("Then pause.")),

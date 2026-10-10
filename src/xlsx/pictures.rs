@@ -54,11 +54,10 @@ pub fn read_pictures<R: Read + Seek>(
     let mut pictures = Vec::new();
     // Several relationships can point at one drawing, which is read once.
     for drawing in archive.relationships(sheet_part)?.parts("drawing") {
-        let Some(xml) = archive.read_part(&drawing)? else {
-            continue;
-        };
         let targets = archive.relationships(&drawing)?.targets();
-        pictures.extend(parse_drawing(&xml, &targets)?);
+        if let Some(found) = archive.parse_part(&drawing, |xml| parse_drawing(xml, &targets))? {
+            pictures.extend(found);
+        }
     }
 
     // A stable sort keeps pictures in the same cell in the order they were drawn.

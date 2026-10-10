@@ -112,6 +112,13 @@ The exit status says what kind of error it was, using the codes from BSD's `syse
 | 66   | No input                                     | A missing or unreadable file, empty stdin                                               |
 | 74   | Reading stdin or writing the output failed   | An `-o` path in a folder that doesn't exist, a full disk                                |
 
+When a part of an Office file is missing or broken, the message names it:
+
+```text
+$ officeconv talk.pptx --to md
+Error: could not parse ppt/slides/slide2.xml: ill-formed document: expected `</p:cSld>`, but `</p:sld>` was found
+```
+
 ## Size limits
 
 Office files are zip archives, and a small file can decompress to gigabytes. To bound how much

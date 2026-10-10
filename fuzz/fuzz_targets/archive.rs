@@ -20,8 +20,6 @@ fuzz_target!(|data: &[u8]| {
     // relationships whatever it holds: the fuzzer changes a part's contents far more often
     // than its name, so this gives the relationships parser all kinds of XML.
     for name in ["[Content_Types].xml", "_rels/.rels", "word/document.xml"] {
-        if let Ok(Some(xml)) = archive.read_part(name) {
-            let _ = parse_relationships(&xml);
-        }
+        let _ = archive.parse_part(name, parse_relationships);
     }
 });

@@ -39,18 +39,16 @@ const DOCUMENT: &str = "word/document.xml";
 /// Reads the body of the `.docx` in `archive` as blocks. Each picture names its part in the
 /// package; [`images::resolve`](crate::images::resolve) deals with them.
 pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block<ImagePart>>> {
-    let document = archive.read_required_part(DOCUMENT)?;
-
     let relationships = archive.relationships(DOCUMENT)?;
     let mut package = Package {
         targets: relationships.targets(),
         ..Package::default()
     };
-    if let Some(xml) = archive.read_part("word/numbering.xml")? {
-        package.numbering = package::parse_numbering(&xml)?;
+    if let Some(numbering) = archive.parse_part("word/numbering.xml", package::parse_numbering)? {
+        package.numbering = numbering;
     }
-    if let Some(xml) = archive.read_part("word/styles.xml")? {
-        package.styles = package::parse_styles(&xml)?;
+    if let Some(styles) = archive.parse_part("word/styles.xml", package::parse_styles)? {
+        package.styles = styles;
     }
 
     let mut notes = HashMap::new();
@@ -58,29 +56,34 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
         let Some(part) = relationships.parts(kind.relationship()).into_iter().next() else {
             continue;
         };
-        let Some(xml) = archive.read_part(&part)? else {
-            continue;
-        };
         // A note's links and pictures are listed in its part's own relationships.
         let targets = archive.relationships(&part)?.targets();
-        for (id, blocks) in parse_notes(&xml, &package, &targets)? {
+        let Some(parsed) = archive.parse_part(&part, |xml| parse_notes(xml, &package, &targets))?
+        else {
+            continue;
+        };
+        for (id, blocks) in parsed {
             notes.insert((kind, id), blocks);
         }
     }
     package.notes = notes;
 
+    let ((header, footer), body) = archive.parse_required_part(DOCUMENT, |xml| {
+        Ok((first_section_parts(xml)?, parse_document(xml, &package)?))
+    })?;
+
     // Read once each, however many sections refer to them.
     let mut blocks = Vec::new();
-    let (header, footer) = first_section_parts(&document)?;
     for (id, kind) in [(header, "header"), (footer, "footer")] {
         let Some(part) = id.and_then(|id| relationships.part(&id, kind)) else {
             continue;
         };
-        let Some(xml) = archive.read_part(&part)? else {
+        let targets = archive.relationships(&part)?.targets();
+        let Some(content) =
+            archive.parse_part(&part, |xml| parse_page_furniture(xml, &package, &targets))?
+        else {
             continue;
         };
-        let targets = archive.relationships(&part)?.targets();
-        let content = parse_page_furniture(&xml, &package, &targets)?;
         if !content.is_empty() {
             blocks.push(match kind {
                 "header" => Block::Header(content),
@@ -89,7 +92,7 @@ pub fn read_blocks<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<Block
         }
     }
 
-    blocks.extend(parse_document(&document, &package)?);
+    blocks.extend(body);
     Ok(blocks)
 }
 

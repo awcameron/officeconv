@@ -59,8 +59,39 @@ impl<R: Read + Seek> Archive<R> {
         })
     }
 
+    /// Reads the XML part `name` and parses it with `parse`, or returns `None` if the package
+    /// doesn't have it. An XML error names the part, so the user knows which one is broken.
+    pub fn parse_part<T>(
+        &mut self,
+        name: &str,
+        parse: impl FnOnce(&str) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let Some(xml) = self.read_part(name)? else {
+            return Ok(None);
+        };
+        parse(&xml).map(Some).map_err(|err| match err {
+            ConvertError::Xml(source) => ConvertError::PartXml {
+                part: name.to_string(),
+                source,
+            },
+            err => err,
+        })
+    }
+
+    /// [`Archive::parse_part`] for a part that must exist.
+    pub fn parse_required_part<T>(
+        &mut self,
+        name: &str,
+        parse: impl FnOnce(&str) -> Result<T>,
+    ) -> Result<T> {
+        self.parse_part(name, parse)?
+            .ok_or_else(|| ConvertError::MissingPart {
+                part: name.to_string(),
+            })
+    }
+
     /// Reads one XML part, or `None` if the package doesn't have it.
-    pub fn read_part(&mut self, name: &str) -> Result<Option<String>> {
+    fn read_part(&mut self, name: &str) -> Result<Option<String>> {
         let Some(bytes) = self.read_bytes(name)? else {
             return Ok(None);
         };
@@ -70,23 +101,14 @@ impl<R: Read + Seek> Archive<R> {
         Ok(Some(xml))
     }
 
-    /// Reads an XML part that must exist.
-    pub fn read_required_part(&mut self, name: &str) -> Result<String> {
-        self.read_part(name)?
-            .ok_or_else(|| ConvertError::MissingPart {
-                part: name.to_string(),
-            })
-    }
-
     /// The relationships of `part`, from its `.rels` part, or none if it has no `.rels` part.
     ///
     /// The `.rels` part is read each time, and counts against the limits each time, so a reader
     /// that looks up several relationships of one part keeps what this returns.
     pub fn relationships(&mut self, part: &str) -> Result<Relationships> {
-        let by_id = match self.read_part(&rels_path(part))? {
-            Some(xml) => parse_relationships(&xml)?,
-            None => HashMap::new(),
-        };
+        let by_id = self
+            .parse_part(&rels_path(part), parse_relationships)?
+            .unwrap_or_default();
         Ok(Relationships {
             part: part.to_string(),
             by_id,
@@ -481,7 +503,7 @@ mod tests {
             Archive::open(test_package(&[("word/document.xml", b"\xff\xfe")])).unwrap();
 
         let err = archive
-            .read_required_part("ppt/presentation.xml")
+            .parse_required_part("ppt/presentation.xml", |_| Ok(()))
             .unwrap_err();
         assert!(
             matches!(&err, ConvertError::MissingPart { part } if part == "ppt/presentation.xml")
@@ -496,6 +518,33 @@ mod tests {
             err.to_string(),
             "could not read document: word/document.xml isn't UTF-8 text"
         );
+    }
+
+    #[test]
+    fn names_the_part_in_an_xml_error_only() {
+        let mut archive =
+            Archive::open(test_package(&[("word/document.xml", b"<a></b>")])).unwrap();
+        let walk_it = |xml: &str| visit_elements(xml, |_| {});
+
+        let err = archive
+            .parse_part("word/document.xml", walk_it)
+            .unwrap_err();
+        assert!(
+            matches!(&err, ConvertError::PartXml { part, .. } if part == "word/document.xml"),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .starts_with("could not parse word/document.xml: ")
+        );
+
+        // Errors that aren't about the XML pass through as they are.
+        let err = archive
+            .parse_part("word/document.xml", |_| -> Result<()> {
+                Err(ConvertError::NoSheets)
+            })
+            .unwrap_err();
+        assert!(matches!(err, ConvertError::NoSheets), "{err:?}");
     }
 
     #[test]

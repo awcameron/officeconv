@@ -164,17 +164,20 @@ fn with_pictures<R: Read + Seek>(
 /// Reads the workbook and its relationships once. A sheet whose relationship is missing isn't
 /// listed.
 pub fn sheet_parts<R: Read + Seek>(archive: &mut Archive<R>) -> Result<HashMap<String, String>> {
-    let Some(workbook) = archive.read_part(WORKBOOK)? else {
+    let ids = archive.parse_part(WORKBOOK, |xml| {
+        let mut ids = Vec::new();
+        opc::visit_elements(xml, |e| {
+            if e.local_name().as_ref() == "sheet"
+                && let (Some(name), Some(id)) = (attr(e, "name"), attr(e, "id"))
+            {
+                ids.push((name, id));
+            }
+        })?;
+        Ok(ids)
+    })?;
+    let Some(ids) = ids else {
         return Ok(HashMap::new());
     };
-    let mut ids = Vec::new();
-    opc::visit_elements(&workbook, |e| {
-        if e.local_name().as_ref() == "sheet"
-            && let (Some(name), Some(id)) = (attr(e, "name"), attr(e, "id"))
-        {
-            ids.push((name, id));
-        }
-    })?;
 
     let relationships = archive.relationships(WORKBOOK)?;
     Ok(ids

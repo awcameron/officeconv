@@ -55,7 +55,7 @@ pub fn read_blocks<R: Read + Seek>(
     archive: &mut Archive<R>,
     notes: Notes,
 ) -> Result<Vec<Block<ImagePart>>> {
-    let presentation = archive.read_required_part(PRESENTATION)?;
+    let slide_ids = archive.parse_required_part(PRESENTATION, slide_ids)?;
     let relationships = archive.relationships(PRESENTATION)?;
 
     // A slide or notes part is read once, however many entries point at it. PowerPoint never
@@ -65,30 +65,32 @@ pub fn read_blocks<R: Read + Seek>(
     let mut seen_notes = HashSet::new();
 
     let mut slides = Vec::new();
-    for id in slide_ids(&presentation)? {
+    for id in slide_ids {
         let Some(part) = relationships.part(&id, "slide") else {
             continue;
         };
         if !seen_slides.insert(part.clone()) {
             continue;
         }
-        let Some(xml) = archive.read_part(&part)? else {
+        let slide_relationships = archive.relationships(&part)?;
+        let targets = slide_relationships.targets();
+        let Some(mut slide) = archive.parse_part(&part, |xml| parse_slide(xml, &targets))? else {
             continue;
         };
-
-        let slide_relationships = archive.relationships(&part)?;
-        let mut slide = parse_slide(&xml, &slide_relationships.targets())?;
 
         // Speaker notes live in their own part, linked from the slide.
         let notes_part = slide_relationships.parts("notesSlide").into_iter().next();
         if notes == Notes::Include
             && let Some(notes_part) = notes_part
             && seen_notes.insert(notes_part.clone())
-            && let Some(notes_xml) = archive.read_part(&notes_part)?
         {
             // Links in the notes are relationships of the notes part, not of the slide.
-            let notes_targets = archive.relationships(&notes_part)?.targets();
-            slide.notes = parse_notes(&notes_xml, &notes_targets)?;
+            let targets = archive.relationships(&notes_part)?.targets();
+            if let Some(notes) =
+                archive.parse_part(&notes_part, |xml| parse_notes(xml, &targets))?
+            {
+                slide.notes = notes;
+            }
         }
 
         slides.push(slide);

@@ -25,6 +25,7 @@ const OUTPUTS: [TableFormat; 4] = [
 ];
 
 fuzz_target!(|data: &[u8]| {
+    assert!(data.len() < 20, "throwaway crash to check the workflow uploads it");
     for kind in [InputKind::Csv, InputKind::Tsv] {
         let Ok(table) = read_delimited(data, kind, LIMITS) else {
             continue;

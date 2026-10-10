@@ -24,6 +24,37 @@ pub fn open_output(path: Option<&Path>) -> Result<Box<dyn Write>> {
     }
 }
 
+/// Refuses an `output` that is the `input` file, which writing would replace, or for a
+/// workbook whose pictures are still to be read, cut short. Stdin can't be overwritten.
+pub fn check_not_input(input: &Path, output: Option<&Path>) -> Result<()> {
+    match output {
+        Some(output) if input != Path::new("-") && same_file(input, output) => {
+            Err(ConvertError::OutputIsInput(output.to_path_buf()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// True if `a` and `b` are the same existing file, however they're named. On Unix that
+/// includes a hard link; elsewhere, only names that resolve to the same path.
+fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        matches!(
+            (fs::metadata(a), fs::metadata(b)),
+            (Ok(a), Ok(b)) if (a.dev(), a.ino()) == (b.dev(), b.ino())
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(a), Ok(b)) if a == b
+        )
+    }
+}
+
 /// The folder a Markdown file written to `output` lives in: its parent, or the current
 /// directory when writing to stdout.
 pub fn markdown_dir(output: Option<&Path>) -> &Path {

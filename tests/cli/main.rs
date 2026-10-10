@@ -12,4 +12,5 @@ mod input;
 #[cfg(feature = "pdf")]
 mod pdf;
 mod pptx;
+mod seeds;
 mod xlsx;

@@ -1,8 +1,10 @@
 #!/bin/sh
 # Converts the same inputs with two builds of officeconv, the working tree and a git ref, and
-# lists every input whose result differs: the Markdown, the saved images, the messages on
-# stderr, or the exit status. Use it to check that a change to a reader changes only what it's
-# meant to.
+# lists every input whose result differs: the Markdown, the saved images, the PDF of a document
+# or deck, the messages on stderr, or the exit status. Use it to check that a change to a reader
+# changes only what it's meant to. PDF shows what Markdown leaves out: headers and footers, page
+# numbers, alignment and picture sizes. Its bytes are the same each time, so any difference is
+# real.
 #
 # Usage, from anywhere in the repo:
 #
@@ -26,23 +28,33 @@ set -eu
 if [ "${1:-}" = --one ]; then
     kind=$2 file=$3
     dir=$(mktemp -d "$WORK/runs/XXXXXX")
+
+    # convert BIN OUT NAME ARGS...: runs BIN with ARGS, keeping its stdout, stderr and exit
+    # status as OUT/NAME.stdout, OUT/NAME.stderr and OUT/NAME.status.
+    convert() {
+        bin=$1 out=$2 name=$3
+        shift 3
+        status=0
+        "$bin" "$@" > "$out/$name.stdout" 2> "$out/$name.stderr.raw" || status=$?
+        echo "$status" > "$out/$name.status"
+        # stderr names the output folder, which differs between the two sides.
+        sed "s|$out|OUT|g" "$out/$name.stderr.raw" > "$out/$name.stderr"
+        rm "$out/$name.stderr.raw"
+    }
+
     for side in a b; do
         bin=$WORK/officeconv-base
         [ "$side" = b ] && bin=$WORK/officeconv-new
         out=$dir/$side
         mkdir "$out"
-        status=0
         if [ "$kind" = xlsx ]; then
-            "$bin" "$file" --from xlsx --to md --all-sheets -o "$out/md" --images "$out/md/img" \
-                > "$out/stdout" 2> "$out/stderr.raw" || status=$?
+            convert "$bin" "$out" md "$file" --from xlsx --to md --all-sheets -o "$out/md" \
+                --images "$out/md/img"
         else
-            "$bin" "$file" --from "$kind" --to md -o "$out/out.md" --images "$out/img" \
-                > "$out/stdout" 2> "$out/stderr.raw" || status=$?
+            convert "$bin" "$out" md "$file" --from "$kind" --to md -o "$out/out.md" \
+                --images "$out/img"
+            convert "$bin" "$out" pdf "$file" --from "$kind" --to pdf -o "$out/out.pdf"
         fi
-        echo "$status" > "$out/status"
-        # stderr names the output folder, which differs between the two sides.
-        sed "s|$out|OUT|g" "$out/stderr.raw" > "$out/stderr"
-        rm "$out/stderr.raw"
     done
     if diff -rq "$dir/a" "$dir/b" > /dev/null; then
         rm -rf "$dir"

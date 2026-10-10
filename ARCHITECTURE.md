@@ -136,6 +136,13 @@ picture starts and when it's finished.
   and each writer drops what it can't, such as alignment in Markdown
   ([ADR 0004](docs/adr/0004-document-model.md)). `document::TableBuilder` works out merged
   cells, keeping every span inside the table.
+  - **Runs:** a run's `RunKind` says what it is: text, an image, a note reference or a page
+    number field. Each writer matches it exhaustively, so a new kind of run doesn't compile
+    until every writer handles it.
+  - **Walking a block's runs:** `Block::runs` and `runs_mut` go through every run in a block,
+    a table's cell by cell, and `Block::text_runs` gives a heading's, paragraph's or list
+    item's own. `Block::map_runs` replaces each list of runs; `resolve_images` uses it to
+    change a block's image type.
 
 ## Images
 

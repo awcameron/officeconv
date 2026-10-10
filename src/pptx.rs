@@ -776,9 +776,11 @@ mod tests {
 
         let slide = parse_slide(&xml, &targets).unwrap();
         let sized = |cx, cy| {
-            let mut run = Run::image(ImagePart::new("ppt/media/image1.png"), "");
-            run.image.as_mut().unwrap().size = Some((cx, cy));
-            Block::paragraph(vec![run])
+            let image = ImagePart {
+                part: "ppt/media/image1.png".into(),
+                size: Some((cx, cy)),
+            };
+            Block::paragraph(vec![Run::image(image, "")])
         };
         assert_eq!(
             slide.body,

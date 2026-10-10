@@ -1,6 +1,6 @@
 //! Rendering [`Block`]s as Markdown.
 
-use super::{Block, ListKind, Run, RunStyle, TableCell, append_run};
+use super::{Block, ListKind, Run, RunKind, RunStyle, TableCell, append_run};
 use crate::markdown::{escape_text, escape_url, write_table};
 
 /// Renders blocks as Markdown, separated by blank lines.
@@ -145,13 +145,15 @@ fn render_inline(runs: &[Run]) -> String {
 ///
 /// `**bold **` isn't bold in Markdown, but `**bold** ` is.
 fn render_run(run: &Run) -> String {
-    if let Some(number) = run.note {
-        return format!("[^{number}]");
-    }
-    if let Some(image) = &run.image {
-        // Alt text can't span lines in Markdown.
-        let alt = escape_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
-        return format!("![{alt}]({})", escape_url(&image.source));
+    match &run.kind {
+        RunKind::Note(number) => return format!("[^{number}]"),
+        RunKind::Image(image) => {
+            // Alt text can't span lines in Markdown.
+            let alt = escape_text(&run.text.split_whitespace().collect::<Vec<_>>().join(" "));
+            return format!("![{alt}]({})", escape_url(&image.source));
+        }
+        // Readers only put fields in headers and footers, which Markdown leaves out.
+        RunKind::Text | RunKind::Field(_) => {}
     }
 
     let marker = match (run.style.bold, run.style.italic) {

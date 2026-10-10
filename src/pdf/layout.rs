@@ -18,7 +18,8 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
 use crate::document::{
-    Align, Block, CellRuns, EMU_PER_POINT, Field, ImageRef, ListKind, Run, RunStyle, TableCell,
+    Align, Block, CellRuns, EMU_PER_POINT, Field, ImageRef, ListKind, Run, RunKind, RunStyle,
+    TableCell,
 };
 use crate::images::{EmbeddedImages, ImageFormat};
 
@@ -220,38 +221,27 @@ fn cut_to(blocks: &[Block], mut budget: usize) -> Vec<Block> {
         if budget == 0 {
             break;
         }
+        let mut block = block.clone();
+        if let Some(runs) = block.text_runs_mut() {
+            *runs = cut_runs(runs, &mut budget);
+            kept.push(block);
+            continue;
+        }
         match block {
-            Block::Heading { runs, .. }
-            | Block::Paragraph { runs, .. }
-            | Block::ListItem { runs, .. } => {
-                let cut = cut_runs(runs, &mut budget);
-                let mut block = block.clone();
-                if let Block::Heading { runs, .. }
-                | Block::Paragraph { runs, .. }
-                | Block::ListItem { runs, .. } = &mut block
-                {
-                    *runs = cut;
-                }
-                kept.push(block);
-            }
-            Block::Table(rows) => {
-                let size: usize = rows
-                    .iter()
-                    .flatten()
-                    .map(|cell| cell.runs().iter().map(run_size).sum::<usize>())
-                    .sum();
+            Block::Table(_) => {
+                let size: usize = block.runs().map(run_size).sum();
                 if size > budget {
                     break;
                 }
                 budget -= size;
-                kept.push(block.clone());
+                kept.push(block);
             }
             Block::Rule => {
                 budget -= 1;
                 kept.push(Block::Rule);
             }
-            // Readers never put these in a header or footer.
-            Block::Note { .. } | Block::Header(_) | Block::Footer(_) => {}
+            // Notes, headers and footers: readers never put these in a header or footer.
+            _ => {}
         }
     }
     kept
@@ -287,54 +277,31 @@ fn cut_runs(runs: &[Run], budget: &mut usize) -> Vec<Run> {
 
 /// How much of [`cut_to`]'s budget a run takes.
 fn run_size(run: &Run) -> usize {
-    if run.image.is_some() || run.note.is_some() || run.field.is_some() {
-        1
-    } else {
-        run.text.chars().count()
+    match run.kind {
+        RunKind::Text => run.text.chars().count(),
+        RunKind::Image(_) | RunKind::Note(_) | RunKind::Field(_) => 1,
     }
 }
 
 /// True if any run in `blocks` is a page number field.
 fn has_fields(blocks: &[Block]) -> bool {
-    blocks.iter().any(|block| match block {
-        Block::Heading { runs, .. }
-        | Block::Paragraph { runs, .. }
-        | Block::ListItem { runs, .. } => runs.iter().any(|r| r.field.is_some()),
-        Block::Table(rows) => rows
-            .iter()
-            .flatten()
-            .any(|cell| cell.runs().iter().any(|r| r.field.is_some())),
-        _ => false,
-    })
+    blocks
+        .iter()
+        .flat_map(Block::runs)
+        .any(|run| matches!(run.kind, RunKind::Field(_)))
 }
 
 /// `blocks` with each page number field written out for page `page` of `count`.
 fn fill_fields(blocks: &[Block], page: usize, count: usize) -> Vec<Block> {
-    let fill = |runs: &mut Vec<Run>| {
-        for run in runs.iter_mut() {
-            if let Some(field) = run.field.take() {
-                run.text = match field {
-                    Field::PageNumber => page,
-                    Field::PageCount => count,
-                }
-                .to_string();
-            }
-        }
-    };
     let mut blocks = blocks.to_vec();
-    for block in &mut blocks {
-        match block {
-            Block::Heading { runs, .. }
-            | Block::Paragraph { runs, .. }
-            | Block::ListItem { runs, .. } => fill(runs),
-            Block::Table(rows) => {
-                for cell in rows.iter_mut().flatten() {
-                    if let TableCell::Content { runs, .. } = cell {
-                        fill(runs);
-                    }
-                }
+    for run in blocks.iter_mut().flat_map(Block::runs_mut) {
+        if let RunKind::Field(field) = run.kind {
+            run.text = match field {
+                Field::PageNumber => page,
+                Field::PageCount => count,
             }
-            _ => {}
+            .to_string();
+            run.kind = RunKind::Text;
         }
     }
     blocks
@@ -850,8 +817,8 @@ impl<'a> Layout<'a> {
     fn layout_runs(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
         let mut lines = Vec::new();
         let mut after_image = false;
-        for group in runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none()) {
-            match &group[0].image {
+        for group in runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none()) {
+            match image(&group[0]) {
                 Some(image) => {
                     if let Some(line) = self.layout_image(image, group[0].link.as_deref(), width) {
                         lines.push(line);
@@ -872,8 +839,8 @@ impl<'a> Layout<'a> {
 
     /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
     fn longest_word(&mut self, runs: &[Run], size: f32) -> f32 {
-        runs.chunk_by(|a, b| a.image.is_none() && b.image.is_none())
-            .filter(|group| group[0].image.is_none())
+        runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none())
+            .filter(|group| image(&group[0]).is_none())
             .map(|group| Paragraph::shape(self.fonts, group).longest_word() * size)
             .fold(0.0, f32::max)
     }
@@ -1019,9 +986,11 @@ impl Paragraph {
         let mut text = String::new();
         let mut glyphs = Vec::new();
         for (r, run) in runs.iter().enumerate() {
-            let run_text = match run.note {
-                Some(number) => Cow::Owned(note_marker(number)),
-                None => Cow::Borrowed(run.text.as_str()),
+            let run_text = match run.kind {
+                RunKind::Note(number) => Cow::Owned(note_marker(number)),
+                RunKind::Text | RunKind::Image(_) | RunKind::Field(_) => {
+                    Cow::Borrowed(run.text.as_str())
+                }
             };
             let offset = text.len();
             text.push_str(&run_text);
@@ -1242,6 +1211,14 @@ fn cell_runs(cell: &CellRuns, header: bool) -> Vec<Run> {
     if header { all_bold(cell) } else { cell.clone() }
 }
 
+/// The image a run shows, if it's an image run.
+fn image(run: &Run) -> Option<&ImageRef> {
+    match &run.kind {
+        RunKind::Image(image) => Some(image),
+        RunKind::Text | RunKind::Note(_) | RunKind::Field(_) => None,
+    }
+}
+
 /// How a note reference reads in the text, and the marker before the note: `[1]`. The layout
 /// draws every run on one baseline, so the number isn't raised as Word raises it.
 fn note_marker(number: usize) -> String {
@@ -1252,19 +1229,15 @@ fn note_marker(number: usize) -> String {
 fn with_note_marker(number: usize, blocks: &[Block]) -> Vec<Block> {
     let marker = Run::new(format!("{} ", note_marker(number)), RunStyle::default());
     let mut blocks = blocks.to_vec();
-    match blocks.first_mut() {
-        Some(
-            Block::Heading { runs, .. }
-            | Block::Paragraph { runs, .. }
-            | Block::ListItem { runs, .. },
-        ) => {
+    match blocks.first_mut().and_then(Block::text_runs_mut) {
+        Some(runs) => {
             // Word puts a space between its own marker and the note's text.
             if let Some(first) = runs.first_mut() {
                 first.text = first.text.trim_start().to_string();
             }
             runs.insert(0, marker);
         }
-        _ => blocks.insert(0, Block::paragraph(vec![marker])),
+        None => blocks.insert(0, Block::paragraph(vec![marker])),
     }
     blocks
 }

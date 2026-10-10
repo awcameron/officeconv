@@ -83,6 +83,113 @@ impl<I> Block<I> {
     pub fn is_page_furniture(&self) -> bool {
         matches!(self, Block::Header(_) | Block::Footer(_))
     }
+
+    /// The runs of a heading, paragraph or list item, or `None` for any other block.
+    pub fn text_runs(&self) -> Option<&Vec<Run<I>>> {
+        match self {
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. } => Some(runs),
+            _ => None,
+        }
+    }
+
+    /// The runs of a heading, paragraph or list item, to change, or `None` for any other block.
+    #[cfg(any(feature = "pdf", test))]
+    pub fn text_runs_mut(&mut self) -> Option<&mut Vec<Run<I>>> {
+        match self {
+            Block::Heading { runs, .. }
+            | Block::Paragraph { runs, .. }
+            | Block::ListItem { runs, .. } => Some(runs),
+            _ => None,
+        }
+    }
+
+    /// Every run in the block, a table's cell by cell. Not the runs of the blocks a note,
+    /// header or footer holds: those are blocks of their own.
+    #[cfg(any(feature = "pdf", test))]
+    pub fn runs(&self) -> impl Iterator<Item = &Run<I>> {
+        let (runs, rows) = match self {
+            Block::Table(rows) => (None, Some(rows)),
+            block => (block.text_runs(), None),
+        };
+        let cells = rows
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(TableCell::runs);
+        runs.into_iter().flatten().chain(cells)
+    }
+
+    /// Every run in the block, to change, as for [`runs`](Self::runs).
+    #[cfg(any(feature = "pdf", test))]
+    pub fn runs_mut(&mut self) -> impl Iterator<Item = &mut Run<I>> {
+        let (runs, rows) = match self {
+            Block::Table(rows) => (None, Some(rows)),
+            block => (block.text_runs_mut(), None),
+        };
+        let cells = rows
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(|cell| match cell {
+                TableCell::Content { runs, .. } => runs.as_mut_slice(),
+                TableCell::Covered => &mut [],
+            });
+        runs.into_iter().flatten().chain(cells)
+    }
+
+    /// The same block with each list of runs, here and in the blocks it holds, replaced by
+    /// what `f` returns for it. This is how a block's images change type.
+    pub fn map_runs<J>(
+        self,
+        f: &mut impl FnMut(Vec<Run<I>>) -> Result<Vec<Run<J>>>,
+    ) -> Result<Block<J>> {
+        let blocks = |blocks: Vec<Block<I>>, f: &mut _| -> Result<Vec<Block<J>>> {
+            blocks.into_iter().map(|block| block.map_runs(f)).collect()
+        };
+        Ok(match self {
+            Block::Heading { level, runs, align } => Block::Heading {
+                level,
+                runs: f(runs)?,
+                align,
+            },
+            Block::Paragraph { runs, align } => Block::Paragraph {
+                runs: f(runs)?,
+                align,
+            },
+            Block::ListItem { kind, level, runs } => Block::ListItem {
+                kind,
+                level,
+                runs: f(runs)?,
+            },
+            Block::Table(rows) => Block::Table(
+                rows.into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|cell| {
+                                Ok(match cell {
+                                    TableCell::Content { runs, cols, rows } => TableCell::Content {
+                                        runs: f(runs)?,
+                                        cols,
+                                        rows,
+                                    },
+                                    TableCell::Covered => TableCell::Covered,
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            Block::Rule => Block::Rule,
+            Block::Note { number, blocks: b } => Block::Note {
+                number,
+                blocks: blocks(b, f)?,
+            },
+            Block::Header(b) => Block::Header(blocks(b, f)?),
+            Block::Footer(b) => Block::Footer(blocks(b, f)?),
+        })
+    }
 }
 
 /// The formatted text of one document table cell. Paragraphs inside the cell are separated by
@@ -127,20 +234,27 @@ pub enum ListKind {
     Numbered,
 }
 
-/// A stretch of text that shares the same formatting (and link, if any).
-///
-/// A run can instead be an image: then `image` says where it is, and `text` is its alt text.
-/// Or it can refer to a note: then `note` is the [`Block::Note`]'s number, and `text` is empty.
-/// Or it can be a page number for a paged output to fill in: then `field` says which, and
-/// `text` is empty.
+/// A stretch of text that shares the same formatting (and link, if any), or one of the other
+/// kinds of run in [`RunKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run<I = ImageRef> {
     pub text: String,
     pub style: RunStyle,
     pub link: Option<String>,
-    pub image: Option<I>,
-    pub note: Option<usize>,
-    pub field: Option<Field>,
+    pub kind: RunKind<I>,
+}
+
+/// What a run is. Only text runs merge with their neighbors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunKind<I = ImageRef> {
+    /// Text.
+    Text,
+    /// An image: the run's text is its alt text.
+    Image(I),
+    /// A reference to the [`Block::Note`] with this number. The run's text is empty.
+    Note(usize),
+    /// A page number for a paged output to fill in. The run's text is empty.
+    Field(Field),
 }
 
 /// A number that depends on the page it's shown on. Readers only put these in headers and
@@ -233,16 +347,14 @@ impl<I> Run<I> {
             text: text.into(),
             style,
             link: None,
-            image: None,
-            note: None,
-            field: None,
+            kind: RunKind::Text,
         }
     }
 
     /// A page number field, with the style of the text around it.
     pub fn field(field: Field, style: RunStyle) -> Self {
         Run {
-            field: Some(field),
+            kind: RunKind::Field(field),
             ..Run::new("", style)
         }
     }
@@ -250,7 +362,7 @@ impl<I> Run<I> {
     /// A reference to the note numbered `number`.
     pub fn note(number: usize) -> Self {
         Run {
-            note: Some(number),
+            kind: RunKind::Note(number),
             ..Run::default()
         }
     }
@@ -259,9 +371,14 @@ impl<I> Run<I> {
     pub fn image(image: I, alt: impl Into<String>) -> Self {
         Run {
             text: alt.into(),
-            image: Some(image),
+            kind: RunKind::Image(image),
             ..Run::default()
         }
+    }
+
+    /// True for a text run.
+    pub fn is_text(&self) -> bool {
+        matches!(self.kind, RunKind::Text)
     }
 
     /// The same run, pointing at `url`. The readers set links field by field; tests use this.
@@ -276,14 +393,7 @@ impl<I> Run<I> {
     /// True if `other` has the same formatting and link, so the two can be merged.
     /// Images, note references and fields never merge: each one is its own run.
     pub fn same_format(&self, other: &Run<I>) -> bool {
-        self.image.is_none()
-            && other.image.is_none()
-            && self.note.is_none()
-            && other.note.is_none()
-            && self.field.is_none()
-            && other.field.is_none()
-            && self.style == other.style
-            && self.link == other.link
+        self.is_text() && other.is_text() && self.style == other.style && self.link == other.link
     }
 }
 
@@ -314,9 +424,7 @@ pub fn append_paragraph<I>(cell: &mut CellRuns<I>, runs: Vec<Run<I>>) {
 /// True if the runs contain nothing but whitespace (an image, a note reference or a field counts
 /// as content).
 pub fn is_blank<I>(runs: &[Run<I>]) -> bool {
-    runs.iter().all(|r| {
-        r.image.is_none() && r.note.is_none() && r.field.is_none() && r.text.trim().is_empty()
-    })
+    runs.iter().all(|r| r.is_text() && r.text.trim().is_empty())
 }
 
 /// Turns each image's package part into the link or key `export` returns for it.
@@ -336,44 +444,19 @@ fn resolve_blocks(
 ) -> Result<Vec<Block>> {
     let mut resolved = Vec::with_capacity(blocks.len());
     for block in blocks {
+        // The blocks inside are resolved as a list of their own, so that empty ones go too.
         let block = match block {
-            Block::Heading { level, runs, align } => Block::Heading {
-                level,
-                runs: resolve_runs(runs, export)?,
-                align,
-            },
-            Block::Paragraph { runs, align } => Block::Paragraph {
-                runs: resolve_runs(runs, export)?,
-                align,
-            },
-            Block::ListItem { kind, level, runs } => Block::ListItem {
-                kind,
-                level,
-                runs: resolve_runs(runs, export)?,
-            },
-            Block::Table(rows) => Block::Table(
-                rows.into_iter()
-                    .map(|row| {
-                        row.into_iter()
-                            .map(|cell| resolve_cell(cell, export))
-                            .collect()
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-            Block::Rule => Block::Rule,
             Block::Note { number, blocks } => Block::Note {
                 number,
                 blocks: resolve_blocks(blocks, export)?,
             },
             Block::Header(blocks) => Block::Header(resolve_blocks(blocks, export)?),
             Block::Footer(blocks) => Block::Footer(resolve_blocks(blocks, export)?),
+            block => block.map_runs(&mut |runs| resolve_runs(runs, export))?,
         };
         let empty = match &block {
-            Block::Heading { runs, .. }
-            | Block::Paragraph { runs, .. }
-            | Block::ListItem { runs, .. } => is_blank(runs),
             Block::Header(blocks) | Block::Footer(blocks) => blocks.is_empty(),
-            Block::Table(_) | Block::Rule | Block::Note { .. } => false,
+            block => block.text_runs().is_some_and(|runs| is_blank(runs)),
         };
         if !empty {
             resolved.push(block);
@@ -382,43 +465,29 @@ fn resolve_blocks(
     Ok(resolved)
 }
 
-fn resolve_cell(
-    cell: TableCell<ImagePart>,
-    export: &mut impl FnMut(&str) -> Result<Option<String>>,
-) -> Result<TableCell> {
-    Ok(match cell {
-        TableCell::Content { runs, cols, rows } => TableCell::Content {
-            runs: resolve_runs(runs, export)?,
-            cols,
-            rows,
-        },
-        TableCell::Covered => TableCell::Covered,
-    })
-}
-
 fn resolve_runs(
     runs: Vec<Run<ImagePart>>,
     export: &mut impl FnMut(&str) -> Result<Option<String>>,
 ) -> Result<Vec<Run>> {
     let mut resolved = Vec::with_capacity(runs.len());
     for run in runs {
-        let image = match run.image {
-            Some(image) => match export(&image.part)? {
-                Some(source) => Some(ImageRef {
+        let kind = match run.kind {
+            RunKind::Image(image) => match export(&image.part)? {
+                Some(source) => RunKind::Image(ImageRef {
                     source,
                     size: image.size,
                 }),
                 None => continue,
             },
-            None => None,
+            RunKind::Text => RunKind::Text,
+            RunKind::Note(number) => RunKind::Note(number),
+            RunKind::Field(field) => RunKind::Field(field),
         };
         let run = Run {
             text: run.text,
             style: run.style,
             link: run.link,
-            image,
-            note: run.note,
-            field: run.field,
+            kind,
         };
         append_run(&mut resolved, run);
     }
@@ -594,6 +663,106 @@ mod tests {
         let image = Run::image(ImagePart::new("word/media/a.png"), "");
         assert!(!is_blank(std::slice::from_ref(&image)));
         assert!(!image.same_format(&Run::image(ImagePart::new("word/media/a.png"), "")));
+    }
+
+    fn text(text: &str) -> Run<ImagePart> {
+        Run::new(text, RunStyle::default())
+    }
+
+    fn texts<'a, I: 'a>(runs: impl Iterator<Item = &'a Run<I>>) -> Vec<&'a str> {
+        runs.map(|run| run.text.as_str()).collect()
+    }
+
+    #[test]
+    fn runs_go_through_a_tables_cells_row_by_row() {
+        let mut table = Block::Table(vec![
+            vec![
+                TableCell::Content {
+                    runs: vec![text("a1"), Run::note(1)],
+                    cols: 2,
+                    rows: 2,
+                },
+                TableCell::Covered,
+                TableCell::new(vec![text("c1")]),
+            ],
+            vec![
+                TableCell::Covered,
+                TableCell::Covered,
+                TableCell::new(vec![]),
+            ],
+            vec![
+                TableCell::new(vec![text("a3")]),
+                TableCell::new(vec![text("b3"), text("b3+")]),
+                TableCell::Covered,
+            ],
+        ]);
+        assert_eq!(table.text_runs(), None);
+        assert_eq!(texts(table.runs()), ["a1", "", "c1", "a3", "b3", "b3+"]);
+
+        for run in table.runs_mut() {
+            run.text.make_ascii_uppercase();
+        }
+        assert_eq!(texts(table.runs()), ["A1", "", "C1", "A3", "B3", "B3+"]);
+    }
+
+    #[test]
+    fn runs_are_a_paragraphs_own_and_not_a_notes() {
+        let mut item = Block::ListItem {
+            kind: ListKind::Bullet,
+            level: 0,
+            runs: vec![text("item")],
+        };
+        assert_eq!(texts(item.runs()), ["item"]);
+        item.text_runs_mut().unwrap().push(text("!"));
+        assert_eq!(texts(item.text_runs().unwrap().iter()), ["item", "!"]);
+
+        let note = Block::Note {
+            number: 1,
+            blocks: vec![Block::paragraph(vec![text("inside")])],
+        };
+        assert_eq!(note.text_runs(), None);
+        assert_eq!(note.runs().count(), 0);
+        assert_eq!(Block::<ImagePart>::Rule.runs().count(), 0);
+    }
+
+    #[test]
+    fn map_runs_reaches_every_list_of_runs_and_keeps_the_rest() {
+        let block = Block::Header(vec![
+            Block::heading(2, vec![text("h")]),
+            Block::Table(vec![vec![
+                TableCell::Content {
+                    runs: vec![text("a")],
+                    cols: 2,
+                    rows: 1,
+                },
+                TableCell::Covered,
+            ]]),
+        ]);
+        let mut seen = 0;
+        let mapped = block
+            .map_runs(&mut |runs: Vec<Run<ImagePart>>| {
+                seen += 1;
+                Ok(runs
+                    .into_iter()
+                    .map(|run| Run::<ImageRef>::new(run.text + "!", run.style))
+                    .collect())
+            })
+            .unwrap();
+        assert_eq!(seen, 2);
+        assert_eq!(
+            mapped,
+            Block::Header(vec![
+                Block::heading(2, vec![Run::new("h!", RunStyle::default())]),
+                Block::Table(vec![vec![
+                    TableCell::Content {
+                        runs: vec![Run::new("a!", RunStyle::default())],
+                        cols: 2,
+                        rows: 1,
+                    },
+                    TableCell::Covered,
+                ]]),
+            ])
+        );
     }
 
     #[test]

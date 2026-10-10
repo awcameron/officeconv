@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::{Field, ImagePart, ListKind, Run, TableCell};
+use crate::document::{Field, ImagePart, ListKind, Run, RunKind, TableCell};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,
@@ -262,7 +262,10 @@ fn reads_pictures_with_alt_text() {
 
 /// `run`, an image run, with the display size the document gives it.
 fn sized(mut run: Run<ImagePart>, cx: u32, cy: u32) -> Run<ImagePart> {
-    run.image.as_mut().unwrap().size = Some((cx, cy));
+    let RunKind::Image(image) = &mut run.kind else {
+        panic!("not an image run: {run:?}");
+    };
+    image.size = Some((cx, cy));
     run
 }
 

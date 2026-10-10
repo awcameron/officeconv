@@ -146,6 +146,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::document::RunKind;
 
     /// Targets holding only images, by relationship ID.
     fn images(entries: &[(&str, &str)]) -> Targets {
@@ -270,8 +271,10 @@ mod tests {
         let read: Vec<(&str, &str)> = pictures
             .iter()
             .map(|p| {
-                let part = p.image.image.as_ref().map(|i| i.part.as_str());
-                (p.image.text.as_str(), part.unwrap_or_default())
+                let RunKind::Image(image) = &p.image.kind else {
+                    panic!("not an image run: {:?}", p.image);
+                };
+                (p.image.text.as_str(), image.part.as_str())
             })
             .collect();
         // Top to bottom, then left to right: A2, D2, D5.

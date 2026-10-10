@@ -413,6 +413,18 @@ fn links_and_embeds_pictures() {
     assert_eq!(stderr, "");
 }
 
+#[test]
+fn links_a_docx_picture_with_its_own_link() {
+    let (_dir, path) = crate::docx::docx_with_linked_picture("https://example.com/logo");
+    let (pdf, stderr) = convert_to_pdf(&path, &[]);
+
+    assert!(
+        String::from_utf8_lossy(&pdf).contains("https://example.com/logo"),
+        "no link annotation for the picture"
+    );
+    assert_eq!(stderr, "");
+}
+
 /// The width and height each image is drawn at, in points, in drawing order: the scale of the
 /// last `cm` transform before each `Do`.
 fn image_sizes(pdf: &[u8]) -> Vec<(f32, f32)> {

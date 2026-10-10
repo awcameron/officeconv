@@ -8,6 +8,7 @@ mod cli;
 mod delimited;
 mod document;
 mod docx;
+mod drawingml;
 mod error;
 mod format;
 mod images;

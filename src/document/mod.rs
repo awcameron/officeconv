@@ -180,7 +180,9 @@ pub struct ImageRef {
 }
 
 impl ImagePart {
-    /// The image stored at `part`, with no display size until a reader sets one.
+    /// The image stored at `part`, with no display size. Readers build image runs with
+    /// `builder::image_run`; tests use this.
+    #[cfg(test)]
     pub fn new(part: impl Into<String>) -> Self {
         ImagePart {
             part: part.into(),

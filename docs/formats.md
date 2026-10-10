@@ -233,6 +233,9 @@ Our chart: ![Sales by region](notes_images/image1.png)
 
 - The alt text is the description set in Word, PowerPoint or Excel (Alt Text). It's empty if none
   is set.
+- A picture with a link (Insert > Link on the picture) is linked in Markdown,
+  `[![alt text](DIR/image1.png)](url)`, and in PDF. In Word, a picture inside linked text takes
+  that link unless it has its own. Only the link schemes kept for text are kept.
 - Links are relative to the folder of the `-o` file, or to the current directory when writing to
   stdout. If `DIR` is somewhere else, the link is its absolute path.
 - An image used more than once is saved once. File names are kept from the document, and a

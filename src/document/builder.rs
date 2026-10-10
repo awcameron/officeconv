@@ -64,9 +64,12 @@ impl<P: Default> BlockBuilder<P> {
         append_run(&mut paragraph.runs, run);
     }
 
-    /// Adds an image to the innermost paragraph, linked to the current link.
-    pub fn image(&mut self, part: String, alt: String, size: Option<(u32, u32)>) {
-        let run = image_run(part, alt, size, self.link.clone());
+    /// Adds an image run to the innermost paragraph. An image without a link of its own takes
+    /// the current link.
+    pub fn image(&mut self, mut run: Run<ImagePart>) {
+        if run.link.is_none() {
+            run.link = self.link.clone();
+        }
         if let Some(paragraph) = self.paragraphs.last_mut() {
             append_run(&mut paragraph.runs, run);
         }
@@ -248,25 +251,28 @@ mod tests {
     }
 
     #[test]
-    fn images_take_the_current_link_and_count_as_content() {
+    fn images_take_the_current_link_unless_they_have_one() {
+        let image = |alt: &str, link: Option<&str>| {
+            image_run(
+                "word/media/a.png".into(),
+                alt.into(),
+                Some((914_400, 457_200)),
+                link.map(Into::into),
+            )
+        };
         let mut builder = BlockBuilder::<()>::new();
         builder.start_paragraph();
         builder.link = Some("https://example.com".into());
-        builder.image(
-            "word/media/a.png".into(),
-            "Logo".into(),
-            Some((914_400, 457_200)),
-        );
+        builder.image(image("Logo", None));
+        builder.image(image("Map", Some("https://maps.example.com")));
 
         let runs = builder.end_paragraph().unwrap().runs;
         assert_eq!(
             runs,
-            [image_run(
-                "word/media/a.png".into(),
-                "Logo".into(),
-                Some((914_400, 457_200)),
-                Some("https://example.com".into()),
-            )]
+            [
+                image("Logo", Some("https://example.com")),
+                image("Map", Some("https://maps.example.com")),
+            ]
         );
     }
 

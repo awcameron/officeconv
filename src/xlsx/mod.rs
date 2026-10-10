@@ -428,8 +428,12 @@ mod tests {
     #[test]
     fn reads_each_sheets_pictures_when_asked() {
         let workbook = read_all_sheets(workbook_with_picture(), Pictures::Include).unwrap();
+        // rust_xlsxwriter sizes a 2x2 picture as 2x2 pixels, 9,525 EMUs each.
         let logo = Block::paragraph(vec![crate::document::Run::image(
-            ImagePart::new("xl/media/image1.png"),
+            ImagePart {
+                size: Some((19_050, 19_050)),
+                ..ImagePart::new("xl/media/image1.png")
+            },
             "Logo",
         )]);
         let pictures: Vec<_> = workbook.sheets.iter().map(|s| &s.pictures[..]).collect();

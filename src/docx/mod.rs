@@ -27,8 +27,9 @@ use std::mem;
 
 use quick_xml::events::BytesStart;
 
-use crate::document::builder::{BlockBuilder, Paragraph};
-use crate::document::{Align, Block, Field, ImagePart, Merged, RunStyle, display_size};
+use crate::document::builder::{BlockBuilder, Paragraph, image_run};
+use crate::document::{Align, Block, Field, ImagePart, Merged, RunStyle};
+use crate::drawingml::Picture;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 use package::{NoteId, NoteKind, Package};
@@ -187,10 +188,8 @@ struct Parser<'p> {
     field_instruction: Option<String>,
     /// Inside the saved text of a page number field that's become a [`Field`].
     in_page_field: bool,
-    /// Alt text of the picture being read, from its `wp:docPr` description.
-    image_alt: Option<String>,
-    /// Display size of the picture being read, from its `wp:extent`.
-    image_size: Option<(u32, u32)>,
+    /// The drawing being read, from its `wp:inline` or `wp:anchor`.
+    picture: Picture,
 }
 
 /// The notes the body refers to, in the order it first refers to each.
@@ -302,26 +301,21 @@ impl XmlHandler for Parser<'_> {
             "r" if !is_empty => self.builder.style = RunStyle::default(),
             "b" if in_run => self.builder.style.bold = is_on(e),
             "i" if in_run => self.builder.style.italic = is_on(e),
-            // A picture: `wp:extent` carries its size and `wp:docPr` its alt text, then `a:blip`
-            // points at the image. Each drawing starts afresh, so a size can't carry over.
-            "inline" | "anchor" if in_run => {
-                self.image_size = None;
-            }
-            "extent" if in_run && (open.inside("inline") || open.inside("anchor")) => {
-                self.image_size = display_size(attr(e, "cx"), attr(e, "cy"));
-            }
-            "docPr" if in_run => {
-                self.image_alt = attr(e, "descr").or_else(|| attr(e, "title"));
-            }
+            // A drawing starts afresh, so nothing carries over from the last one. Each image in it
+            // is added where its `a:blip` is, as a group can hold several.
+            "drawing" | "inline" | "anchor" if in_run => self.picture = Picture::default(),
             "blip" if in_run => {
-                let alt = self.image_alt.take().unwrap_or_default();
-                let size = self.image_size.take();
-                self.push_image(attr(e, "embed"), alt, size);
+                self.picture.read(e, open, self.targets);
+                if let Some(run) = self.picture.take_run() {
+                    self.builder.image(run);
+                }
             }
             // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
             "imagedata" if in_run => {
-                let alt = attr(e, "title").unwrap_or_default();
-                self.push_image(attr(e, "id"), alt, None);
+                if let Some(part) = attr(e, "id").and_then(|id| self.targets.images.get(&id)) {
+                    let alt = attr(e, "title").unwrap_or_default();
+                    self.builder.image(image_run(part.clone(), alt, None, None));
+                }
             }
             name @ ("footnoteReference" | "endnoteReference") if in_run => {
                 if let (Some(kind), Some(id), Some(references)) = (
@@ -381,6 +375,8 @@ impl XmlHandler for Parser<'_> {
                     table.merged = Merged::Up;
                 }
             }
+            // The rest of a drawing: its alt text, size and link.
+            _ if in_run => self.picture.read(e, open, self.targets),
             _ => {}
         }
     }
@@ -423,8 +419,7 @@ impl<'p> Parser<'p> {
             page_fields: false,
             field_instruction: None,
             in_page_field: false,
-            image_alt: None,
-            image_size: None,
+            picture: Picture::default(),
         }
     }
 
@@ -435,13 +430,6 @@ impl<'p> Parser<'p> {
         if let Some(field) = field.filter(|_| self.page_fields) {
             self.builder.field(field);
             self.in_page_field = true;
-        }
-    }
-
-    /// Adds the image with relationship ID `id`, if it's one stored in the document.
-    fn push_image(&mut self, id: Option<String>, alt: String, size: Option<(u32, u32)>) {
-        if let Some(part) = id.and_then(|id| self.targets.images.get(&id)) {
-            self.builder.image(part.clone(), alt, size);
         }
     }
 

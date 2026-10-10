@@ -23,10 +23,11 @@ use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
-use crate::document::builder::{BlockBuilder, Paragraph, image_run};
+use crate::document::builder::{BlockBuilder, Paragraph};
 use crate::document::{
-    Align, Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, display_size, is_blank,
+    Align, Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, is_blank,
 };
+use crate::drawingml::Picture;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 
@@ -197,16 +198,6 @@ impl Shape {
     }
 }
 
-#[derive(Default)]
-struct Picture {
-    alt: Option<String>,
-    part: Option<String>,
-    link: Option<String>,
-    /// From the picture's own `a:xfrm`. In a group that was resized after the picture was
-    /// added, this is the size before the group was resized.
-    size: Option<(u32, u32)>,
-}
-
 /// What a paragraph's properties (`a:pPr`) say about it.
 #[derive(Default)]
 struct ParagraphProps {
@@ -251,16 +242,9 @@ impl<'a> SlideParser<'a> {
 
     /// A picture becomes its own paragraph, where it sits among the slide's shapes.
     fn finish_picture(&mut self) {
-        let Some(picture) = self.picture.take() else {
-            return;
-        };
-        let Some(part) = picture.part else {
-            return;
-        };
-
-        let alt = picture.alt.unwrap_or_default();
-        let run = image_run(part, alt, picture.size, picture.link);
-        self.builder.push(Block::paragraph(vec![run]));
+        if let Some(run) = self.picture.take().and_then(|mut p| p.take_run()) {
+            self.builder.push(Block::paragraph(vec![run]));
+        }
     }
 
     fn finish_shape(&mut self) {
@@ -320,35 +304,15 @@ impl XmlHandler for SlideParser<'_> {
     const SKIP: &'static [&'static str] = &["Fallback"];
 
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+        if let Some(picture) = self.picture.as_mut() {
+            picture.read(e, open, self.targets);
+        }
         match e.local_name().as_ref() {
             "sld" => self.hidden = attr(e, "show").as_deref() == Some("0"),
             "sp" if !is_empty => self.shape = Some(Shape::default()),
+            // A picture's size is from its own `a:xfrm`. In a group that was resized after the
+            // picture was added, that's the size before the group was resized.
             "pic" if !is_empty && !self.notes => self.picture = Some(Picture::default()),
-            "cNvPr" => {
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.alt = attr(e, "descr").or_else(|| attr(e, "title"));
-                }
-            }
-            "blip" => {
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.part =
-                        attr(e, "embed").and_then(|id| self.targets.images.get(&id).cloned());
-                }
-            }
-            // The picture's size is `a:ext` in its `a:xfrm`. Extensions (`a:extLst`) also have
-            // `a:ext` elements, which aren't sizes.
-            "ext" if open.inside("xfrm") => {
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.size = display_size(attr(e, "cx"), attr(e, "cy"));
-                }
-            }
-            // Clicking a picture can open a link.
-            "hlinkClick" if self.picture.is_some() && !in_run(open) => {
-                let link = attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.link = link;
-                }
-            }
             "ph" => {
                 if let Some(shape) = self.shape.as_mut() {
                     // A placeholder with no type is a content placeholder.

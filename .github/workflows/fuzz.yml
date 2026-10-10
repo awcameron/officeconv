@@ -1,0 +1,78 @@
+name: Fuzz
+
+# Fuzzes each target in fuzz/ for 10 minutes every night, starting from the seeds
+# fuzz/make-seeds.sh writes, so a crash is found within a day of the change that caused it. A
+# target that panics, hangs or runs out of memory fails its job, and the input that did it is
+# uploaded as an artifact named fuzz-<target> to replay locally (see CONTRIBUTING.md#fuzzing).
+# "Run workflow" fuzzes for as long as asked. PRs that change this file, the fuzz targets or the
+# seeds fuzz each target for a minute, to check the workflow still runs.
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz each target for
+        default: "600"
+  pull_request:
+    paths: [.github/workflows/fuzz.yml, fuzz/**, tests/cli/seeds.rs]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Change it with CARGO_FUZZ_VERSION in .devcontainer/Dockerfile. It's compiled, not
+  # downloaded: the prebuilt binary is a musl build, and cargo-fuzz builds the targets for the
+  # target it was built for.
+  CARGO_FUZZ_VERSION: 0.13.2
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [archive, delimited, docx, pptx, xlsx]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: nightly
+      # One cache per target: each job builds only its own target. It keeps cargo-fuzz too, so
+      # installing it again is a version check.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: fuzz-${{ matrix.target }}
+          workspaces: ". -> fuzz/target"
+
+      - name: Install cargo-fuzz
+        run: cargo install --locked "cargo-fuzz@$CARGO_FUZZ_VERSION"
+
+      - name: Seeds
+        working-directory: fuzz
+        run: ./make-seeds.sh
+
+      # From fuzz/, so fuzz/.cargo/config.toml turns off LTO and symbol stripping. -max_len is
+      # what CONTRIBUTING.md suggests. -timeout makes an input that takes 25 seconds a failure
+      # (a hang), instead of libFuzzer's default of 20 minutes, longer than the whole run.
+      - name: Fuzz
+        working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '600' }}
+        run: >-
+          cargo +nightly fuzz run "$TARGET" --
+          -max_len=65536 -timeout=25 -max_total_time="$SECONDS_PER_TARGET"
+
+      - name: Upload the crashing input
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

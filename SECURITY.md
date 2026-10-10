@@ -28,8 +28,8 @@ below. [ADR 0002](docs/adr/0002-untrusted-input.md) explains why.
 | Text that turns into Markdown or HTML | Text, table cells and link targets are escaped, so the Markdown shows what the document holds instead of new formatting, raw HTML or a different link. | `markdown::escape_text`, `markdown::escape_url` |
 
 CI also runs [`cargo deny`](deny.toml) to check every dependency against the RustSec advisory
-database. The zip reader and the four readers are fuzzed, with what they read rendered in every
-output format; see [Fuzzing](CONTRIBUTING.md#fuzzing).
+database. The zip reader and the four readers are fuzzed every night, with what they read
+rendered in every output format; see [Fuzzing](CONTRIBUTING.md#fuzzing).
 
 ## Verifying a download
 

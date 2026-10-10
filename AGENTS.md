@@ -61,6 +61,9 @@ installed.
   `tools/compare/compare.sh`, which compares the working tree with `main` on generated files,
   and explain every difference it lists. The readers decide from the stack of open elements
   (`opc::Open`), not from per-reader flags.
+  - A change that reads a new part or element adds it to the generated files
+    (`tools/compare/gen-nesting.py`) and to a fuzz seed (`tests/cli/seeds.rs`). Otherwise
+    neither `compare.sh` nor the fuzzer ever reaches it.
 - **Document model.** `Block` holds everything at least one writer can show, and each writer
   drops what it can't ([ADR 0004](docs/adr/0004-document-model.md)). A new field defaults to
   today's behavior, the reader bounds its value, Markdown output doesn't change unless the issue

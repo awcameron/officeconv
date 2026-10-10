@@ -86,9 +86,15 @@ on Linux and macOS:
 rustup toolchain install nightly
 cargo install cargo-fuzz
 cd fuzz
-./make-seeds.sh                                  # a small .docx, .pptx, .xlsx and .csv to start from
+./make-seeds.sh                                  # small files to start from
 cargo +nightly fuzz run docx -- -max_len=65536   # or archive, delimited, pptx, xlsx; Ctrl-C to stop
 ```
+
+`make-seeds.sh` writes seeds that between them use every part and element the readers handle:
+footnotes, headers and footers, page number fields, merged cells, sized and linked pictures,
+speaker notes and so on. [`tests/cli/seeds.rs`](tests/cli/seeds.rs) builds them with the same
+helpers as the tests, and its `every_seed_converts` test checks that each one converts. A
+reader change that reads a new part or element adds a seed there.
 
 Run `cargo fuzz` from `fuzz/`: [`fuzz/.cargo/config.toml`](fuzz/.cargo/config.toml) turns off
 the release profile's LTO and symbol stripping, which make fuzz builds slow and crash reports
@@ -117,9 +123,12 @@ tools/compare/compare.sh v0.3.0     # or against any commit, branch or tag
 
 It builds both versions (with LTO off, so each build takes about a minute), generates 2,000
 `.docx`, `.pptx` and `.xlsx` files whose XML nests elements at random, converts each with both
-builds in parallel, and lists every file whose Markdown, saved images, messages or exit status
-differ. For each one, `diff -r` on the two folders it prints shows what changed. It needs
-Python 3, and takes a few minutes. `COUNT`, `SEED`, `CORPUS` and `JOBS` change what it runs; see
+builds in parallel, and lists every file whose Markdown, saved images, PDF, messages or exit
+status differ. The PDF shows what Markdown leaves out, such as headers, footers, page numbers
+and alignment, and its bytes are the same on every run. For each file that differs, `diff -r`
+on the two folders it prints shows what changed. It needs Python 3, and takes a few minutes. A
+reader change that reads a new part or element adds it to
+[`gen-nesting.py`](tools/compare/gen-nesting.py) first, so the generated files have it. `COUNT`, `SEED`, `CORPUS` and `JOBS` change what it runs; see
 the top of the script.
 
 ## Layout

@@ -40,6 +40,10 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    Every difference must be explained in the report. Either it's the intended change, or it's a
    bug to fix. `diff -r FOLDER/a FOLDER/b` shows one. Don't also run the fuzz corpus unless
    there's a reason: most of its inputs never reach the readers.
+
+   If the change reads a part or element the readers didn't before, first add it to
+   `tools/compare/gen-nesting.py` and to a seed in `tests/cli/seeds.rs`. Otherwise
+   `compare.sh` can't show what the change does to it, and the fuzzer never reaches it.
 5. Run the checks:
 
    ```sh

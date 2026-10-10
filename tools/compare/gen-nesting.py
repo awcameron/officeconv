@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Writes valid .docx, .pptx and .xlsx files whose XML nests the elements the readers care about
 at random: mostly the way Office does, sometimes not (runs in runs, text outside runs, tables in
-odd places, Fallback anywhere). Table cells are merged at random too, sometimes past the table. compare.sh converts them with two builds of officeconv.
+odd places, Fallback anywhere). Table cells are merged at random too, sometimes past the table.
+Documents usually have footnotes, endnotes, a header and a footer, and decks speaker notes with
+their own links, each part sometimes missing. compare.sh converts them with two builds of
+officeconv.
+
+A reader change that reads a new part or element adds it here, as tests/cli/seeds.rs does for
+the fuzz seeds: otherwise compare.sh can't see what the change does to it.
 
 Fuzz corpus inputs rarely get this far: most are broken zips. These are always valid packages,
 so every one reaches the XML readers.
@@ -59,6 +65,9 @@ def a(**kw):
     return make
 
 
+# Sizes in EMU, for `wp:extent` and `a:ext`: ordinary ones, and ones the readers reject.
+SIZES = ["914400", "457200", "12700", "0", "-1", "x", "99999999999"]
+
 # ---- Word ----
 W = {
     "w:p": a(), "w:pPr": a(), "w:pStyle": a(w_val=["Heading1", "Title", "Heading9", "x"]),
@@ -72,30 +81,78 @@ W = {
     "w:txbxContent": a(), "m:r": a(), "m:t": a(), "w:delText": a(), "x:other": a(),
     "w:tblGrid": a(), "w:gridCol": a(), "w:tcPr": a(), "w:tcPrChange": a(),
     "w:gridSpan": a(w_val=["1", "2", "3", "x", "4000000000"]), "w:vMerge": a(w_val=["restart", "continue"]),
+    "w:jc": a(w_val=["center", "right", "both", "left", "start", "x"]),
+    "w:footnoteReference": a(w_id=["1", "2", "9", "-1"]), "w:endnoteReference": a(w_id=["1", "9"]),
+    "w:fldSimple": a(w_instr=["PAGE", " NUMPAGES ", "DATE", "x"]),
+    "w:fldChar": a(w_fldCharType=["begin", "separate", "end"]), "w:instrText": a(),
+    "w:sectPr": a(), "w:headerReference": a(w_type=["default", "first", "even"], r_id=["rId3", "rId9"]),
+    "w:footerReference": a(w_type=["default", "first", "even"], r_id=["rId4", "rId9"]),
+    "wp:inline": a(), "wp:anchor": a(), "wp:extent": a(cx=SIZES, cy=SIZES),
+    "a:hlinkClick": a(r_id=["rId1", "rId9"]), "a:graphic": a(), "a:graphicData": a(),
+    "pic:pic": a(), "pic:nvPicPr": a(), "pic:cNvPr": a(descr=["Pic", ""], title=["T"]),
+    "pic:blipFill": a(), "pic:spPr": a(), "a:xfrm": a(), "a:ext": a(cx=SIZES, cy=SIZES),
 }
 W_CHILDREN = {
     None: ["w:p", "w:p", "w:tbl"], "w:body": ["w:p", "w:tbl"],
-    "w:p": ["w:pPr", "w:r", "w:r", "w:hyperlink", "mc:AlternateContent"],
-    "w:pPr": ["w:pStyle", "w:numPr", "w:pPrChange"], "w:numPr": ["w:numId", "w:ilvl"],
-    "w:r": ["w:rPr", "w:t", "w:t", "w:tab", "w:br", "w:drawing", "mc:AlternateContent"],
+    "w:p": ["w:pPr", "w:r", "w:r", "w:hyperlink", "mc:AlternateContent", "w:fldSimple"],
+    "w:pPr": ["w:pStyle", "w:numPr", "w:pPrChange", "w:jc", "w:sectPr"], "w:numPr": ["w:numId", "w:ilvl"],
+    "w:r": ["w:rPr", "w:t", "w:t", "w:tab", "w:br", "w:drawing", "mc:AlternateContent",
+            "w:footnoteReference", "w:endnoteReference", "w:fldChar", "w:instrText"],
+    "w:fldSimple": ["w:r"], "w:instrText": [],
+    "w:sectPr": ["w:headerReference", "w:footerReference"],
     "w:rPr": ["w:b", "w:i", "w:rPrChange"], "w:t": [], "w:hyperlink": ["w:r"],
     "w:tbl": ["w:tblGrid", "w:tr", "w:tr"], "w:tblGrid": ["w:gridCol"], "w:tr": ["w:tc"],
     "w:tc": ["w:tcPr", "w:p", "w:tbl"], "w:tcPr": ["w:gridSpan", "w:vMerge", "w:tcPrChange"],
     "mc:AlternateContent": ["mc:Choice", "mc:Fallback"], "mc:Choice": ["w:r", "w:drawing"],
-    "mc:Fallback": ["w:r", "w:t"], "w:drawing": ["wp:docPr", "a:blip", "w:txbxContent"],
+    "mc:Fallback": ["w:r", "w:t"],
+    "w:drawing": ["wp:inline", "wp:inline", "wp:anchor", "wp:docPr", "a:blip", "w:txbxContent"],
     "w:txbxContent": ["w:p"],
+    "wp:inline": ["wp:extent", "wp:docPr", "a:graphic"], "wp:anchor": ["wp:extent", "wp:docPr", "a:graphic"],
+    "wp:docPr": ["a:hlinkClick"], "a:graphic": ["a:graphicData"], "a:graphicData": ["pic:pic"],
+    "pic:pic": ["pic:nvPicPr", "pic:blipFill", "pic:spPr"], "pic:nvPicPr": ["pic:cNvPr"],
+    "pic:cNvPr": ["a:hlinkClick"], "pic:blipFill": ["a:blip"], "pic:spPr": ["a:xfrm"],
+    "a:xfrm": ["a:ext"],
 }
+
+
+W_NS = ('xmlns:w="w" xmlns:r="{REL}" xmlns:a="a" xmlns:wp="wp" xmlns:pic="pic" xmlns:mc="mc" '
+        'xmlns:v="v" xmlns:o="o" xmlns:m="m" xmlns:x="x"').format(REL=REL)
+# The links and images every Word part's own relationships give it.
+W_PART_RELS = (("rId1", "hyperlink", "https://example.com", ' TargetMode="External"'),
+               ("rId2", "image", "media/image1.png", ""))
+
+
+def notes(kind):
+    """A footnotes or endnotes part: Word's separator, then notes 1 and 2 holding anything."""
+    content = "".join(f'<w:{kind} w:id="{i}">{tree(W, W_CHILDREN, "w:body", 0)}</w:{kind}>'
+                      for i in (1, 2))
+    return (f'<w:{kind}s {W_NS}><w:{kind} w:type="separator" w:id="-1"><w:p><w:r><w:separator/>'
+            f'</w:r></w:p></w:{kind}>{content}</w:{kind}s>')
 
 
 def docx(path):
     body = tree(W, W_CHILDREN, None, 0)
-    doc = (f'<w:document xmlns:w="w" xmlns:r="{REL}" xmlns:a="a" xmlns:wp="wp" xmlns:mc="mc" '
-           f'xmlns:v="v" xmlns:o="o" xmlns:m="m" xmlns:x="x"><w:body>{body}</w:body></w:document>')
+    # Usually the section that ends the body has a header and a footer, as most documents do.
+    if rng.random() < 0.7:
+        body += ('<w:sectPr><w:headerReference w:type="default" r:id="rId3"/>'
+                 '<w:footerReference w:type="default" r:id="rId4"/></w:sectPr>')
+    doc = f'<w:document {W_NS}><w:body>{body}</w:body></w:document>'
+    # Each part is sometimes missing, though the document refers to it.
+    parts = {name: xml for name, xml in (
+        ("header1.xml", f'<w:hdr {W_NS}>{tree(W, W_CHILDREN, "w:body", 0)}</w:hdr>'),
+        ("footer1.xml", f'<w:ftr {W_NS}>{tree(W, W_CHILDREN, "w:body", 0)}</w:ftr>'),
+        ("footnotes.xml", notes("footnote")),
+        ("endnotes.xml", notes("endnote")),
+    ) if rng.random() < 0.8}
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("word/document.xml", doc)
         z.writestr("word/_rels/document.xml.rels", rels(
-            ("rId1", "hyperlink", "https://example.com", ' TargetMode="External"'),
-            ("rId2", "image", "media/image1.png", "")))
+            *W_PART_RELS,
+            ("rId3", "header", "header1.xml", ""), ("rId4", "footer", "footer1.xml", ""),
+            ("rId5", "footnotes", "footnotes.xml", ""), ("rId6", "endnotes", "endnotes.xml", "")))
+        for name, xml in parts.items():
+            z.writestr(f"word/{name}", xml)
+            z.writestr(f"word/_rels/{name}.rels", rels(*W_PART_RELS))
         z.writestr("word/numbering.xml", '<w:numbering xmlns:w="w"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl><w:lvl w:ilvl="1"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>')
         z.writestr("word/styles.xml", '<w:styles xmlns:w="w"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style></w:styles>')
         z.writestr("word/media/image1.png", PNG)
@@ -105,7 +162,8 @@ def docx(path):
 P = {
     "p:sp": a(), "p:nvSpPr": a(), "p:cNvPr": a(descr=["Pic", ""], title=["T"]), "p:nvPr": a(),
     "p:ph": a(type=["title", "ctrTitle", "body", "subTitle", "sldNum"]), "p:txBody": a(),
-    "a:p": a(), "a:pPr": a(lvl=["0", "1", "x"]), "a:buNone": a(), "a:buChar": a(),
+    "a:p": a(), "a:pPr": a(lvl=["0", "1", "x"], algn=["ctr", "r", "just", "l", "dist", "x"]),
+    "a:buNone": a(), "a:buChar": a(),
     "a:buAutoNum": a(), "a:r": a(), "a:rPr": a(b=["0", "1", "true"], i=["1"]),
     "a:hlinkClick": a(r_id=["rId2", "rId9"]), "a:t": a(), "a:br": a(), "a:fld": a(),
     "p:graphicFrame": a(), "a:tbl": a(), "a:tblGrid": a(), "a:gridCol": a(), "a:tr": a(),
@@ -113,6 +171,8 @@ P = {
               hMerge=["1", "0"], vMerge=["1", "true"]),
     "p:pic": a(),
     "p:nvPicPr": a(), "p:blipFill": a(), "a:blip": a(r_embed=["rId3", "rId9"]),
+    "p:spPr": a(), "a:xfrm": a(), "a:off": a(x=["0"], y=["0"]), "a:ext": a(cx=SIZES, cy=SIZES),
+    "a:extLst": a(),
     "mc:AlternateContent": a(), "mc:Choice": a(), "mc:Fallback": a(), "x:other": a(),
 }
 P_CHILDREN = {
@@ -123,7 +183,9 @@ P_CHILDREN = {
     "a:fld": ["a:rPr", "a:t"], "a:rPr": ["a:hlinkClick"], "a:t": [],
     "p:graphicFrame": ["a:tbl"], "a:tbl": ["a:tblGrid", "a:tr", "a:tr"], "a:tblGrid": ["a:gridCol"],
     "a:tr": ["a:tc"], "a:tc": ["p:txBody"],
-    "p:pic": ["p:nvPicPr", "p:blipFill"], "p:nvPicPr": ["p:cNvPr"], "p:cNvPr": ["a:hlinkClick"],
+    "p:pic": ["p:nvPicPr", "p:blipFill", "p:spPr"], "p:nvPicPr": ["p:cNvPr"], "p:cNvPr": ["a:hlinkClick"],
+    # Extensions (`a:extLst`) hold `a:ext` elements too, which aren't sizes.
+    "p:spPr": ["a:xfrm", "a:extLst"], "a:xfrm": ["a:off", "a:ext"], "a:extLst": ["a:ext"], "a:ext": [],
     "p:blipFill": ["a:blip"], "mc:AlternateContent": ["mc:Choice", "mc:Fallback"],
     "mc:Choice": ["p:sp", "p:pic"], "mc:Fallback": ["p:sp", "p:pic"],
 }
@@ -145,6 +207,11 @@ def pptx(path):
                 ("rId2", "hyperlink", "https://example.com", ' TargetMode="External"'),
                 ("rId3", "image", "../media/image1.png", "")))
             z.writestr(f"ppt/notesSlides/notesSlide{i}.xml", f"<p:notes {P_NS}><p:cSld><p:spTree>{tree(P, P_CHILDREN, None, 0)}</p:spTree></p:cSld></p:notes>")
+            # The notes' own links, which aren't the slide's. Sometimes there are none.
+            if rng.random() < 0.8:
+                z.writestr(f"ppt/notesSlides/_rels/notesSlide{i}.xml.rels", rels(
+                    ("rId2", "hyperlink", "https://example.com/notes", ' TargetMode="External"'),
+                    ("rId3", "image", "../media/image1.png", "")))
         z.writestr("ppt/media/image1.png", PNG)
 
 

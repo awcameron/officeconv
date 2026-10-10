@@ -122,6 +122,23 @@ fn reports_docx_without_document_xml() {
 }
 
 #[test]
+fn names_the_part_that_is_not_well_formed_xml() {
+    let mut parts = presentation(&["slides/slide1.xml", "slides/slide2.xml"]).to_vec();
+    parts.extend([
+        part("ppt/slides/slide1.xml", slide("")),
+        part("ppt/slides/slide2.xml", "<p:sld><p:cSld></p:sld>"),
+    ]);
+    let (_dir, path) = sample_package("talk.pptx", &parts);
+
+    officeconv()
+        .arg(&path)
+        .args(["--to", "md"])
+        .assert()
+        .code(65)
+        .stderr(contains("could not parse ppt/slides/slide2.xml: "));
+}
+
+#[test]
 fn rejects_pptx_to_csv_and_sheet_options() {
     let (_dir, path) = touch("talk.pptx");
     officeconv()

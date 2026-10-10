@@ -102,6 +102,12 @@ pub enum ConvertError {
     #[error("could not parse document: {0}")]
     Xml(#[from] quick_xml::Error),
 
+    #[error("could not parse {part}: {source}")]
+    PartXml {
+        part: String,
+        source: quick_xml::Error,
+    },
+
     #[error(
         "{part} in the input decompresses to more than {}, the most officeconv reads from one part",
         megabytes(*.limit)
@@ -192,6 +198,7 @@ impl ConvertError {
             | MissingPart { .. }
             | PartNotUtf8 { .. }
             | Xml(_)
+            | PartXml { .. }
             | PartTooLarge { .. }
             | InputTooLarge { .. }
             | StdinTooLarge { .. }

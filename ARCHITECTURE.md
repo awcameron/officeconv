@@ -85,7 +85,8 @@ readers share:
 
 - **`Archive`** reads parts and counts every byte it decompresses against `Limits`, so a zip
   bomb fails on the bytes actually read, whatever its headers claim. Every part a reader uses,
-  images included, comes through it.
+  images included, comes through it. Readers parse XML parts with `Archive::parse_part`, so an
+  error in one names the part.
 - **`Archive::relationships`** returns a part's `Relationships`, which find the parts it links
   to: by ID or by kind, only of the kind the reader asks for, and never through an external
   target. `Relationships::targets` turns the IDs into links and image parts for the reader.

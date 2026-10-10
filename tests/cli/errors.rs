@@ -233,3 +233,67 @@ fn says_when_pdf_output_is_not_built_in() {
         .code(64)
         .stderr(contains("doesn't include PDF output"));
 }
+
+/// Runs officeconv in `dir` with `args`, and checks that it refuses to write over its input:
+/// exit 64, naming the `-o` path, with `input` left as it was.
+fn refuses_to_overwrite(dir: &std::path::Path, input: &std::path::Path, args: &[&str]) {
+    let before = std::fs::read(input).unwrap();
+    officeconv()
+        .current_dir(dir)
+        .args(args)
+        .assert()
+        .code(64)
+        .stderr(contains(
+            "is the input file, so converting would replace it",
+        ));
+    assert_eq!(std::fs::read(input).unwrap(), before, "the input changed");
+}
+
+#[test]
+fn refuses_to_write_over_its_input() {
+    let dir = TempDir::new().unwrap();
+    let csv = dir.path().join("y.csv");
+    std::fs::write(&csv, "a,b\n1,2\n").unwrap();
+    refuses_to_overwrite(dir.path(), &csv, &["y.csv", "--to", "md", "-o", "y.csv"]);
+    // However the two are spelled.
+    refuses_to_overwrite(dir.path(), &csv, &["y.csv", "--to", "csv", "-o", "./y.csv"]);
+    let absolute = csv.to_str().unwrap();
+    refuses_to_overwrite(dir.path(), &csv, &[absolute, "--to", "json", "-o", "y.csv"]);
+
+    let (dir, docx) = sample_docx("<w:p><w:r><w:t>Hello</w:t></w:r></w:p>");
+    let name = docx.file_name().unwrap().to_str().unwrap();
+    refuses_to_overwrite(dir.path(), &docx, &[name, "--to", "md", "-o", name]);
+}
+
+#[test]
+fn refuses_to_write_over_a_workbook_whose_pictures_it_saves() {
+    // Writing the Markdown would cut the workbook short before its pictures were read.
+    let (dir, book) = crate::images::xlsx_with_pictures();
+    refuses_to_overwrite(
+        dir.path(),
+        &book,
+        &[
+            "book.xlsx",
+            "--to",
+            "md",
+            "--images",
+            "img",
+            "-o",
+            "book.xlsx",
+        ],
+    );
+    assert!(!dir.path().join("img").exists(), "it saved pictures");
+}
+
+#[test]
+#[cfg(unix)]
+fn refuses_to_write_over_its_input_through_a_link() {
+    let dir = TempDir::new().unwrap();
+    let csv = dir.path().join("y.csv");
+    std::fs::write(&csv, "a,b\n1,2\n").unwrap();
+    std::os::unix::fs::symlink(&csv, dir.path().join("symlink.md")).unwrap();
+    std::fs::hard_link(&csv, dir.path().join("hardlink.md")).unwrap();
+    for link in ["symlink.md", "hardlink.md"] {
+        refuses_to_overwrite(dir.path(), &csv, &["y.csv", "--to", "md", "-o", link]);
+    }
+}

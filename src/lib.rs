@@ -79,6 +79,7 @@ pub fn main() -> ExitCode {
 /// Plans the conversion the options ask for, then carries it out.
 fn run(cli: &Cli) -> Result<()> {
     plan::check_options(cli)?;
+    output::check_not_input(&cli.input, cli.output.as_deref())?;
     let source = Source::from_arg(&cli.input)?;
     let kind = source.kind(cli.from)?;
     let output = cli.output.as_deref();

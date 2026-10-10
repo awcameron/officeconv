@@ -103,20 +103,28 @@ Error: cannot convert docx to csv; docx supports: md, pdf
 
 The exit status says what kind of error it was, using the codes from BSD's `sysexits.h`:
 
-| Code | Meaning                                      | Examples                                                                                |
-| ---- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
-| 0    | Success                                      | Also when the reader of a pipe stops early, as with `\| head`                           |
-| 2    | Arguments that can't be parsed               | An unknown option, `--to xml`                                                           |
-| 64   | Options that don't fit together or the input | `--typed` without `--to json`, `--to csv` for a `.docx`, an unknown `--sheet`           |
-| 65   | Input officeconv can't read                  | A corrupt or unsupported file, `--from` that doesn't match, a file over the size limits |
-| 66   | No input                                     | A missing or unreadable file, empty stdin                                               |
-| 74   | Reading stdin or writing the output failed   | An `-o` path in a folder that doesn't exist, a full disk                                |
+| Code | Meaning                                      | Examples                                                                                             |
+| ---- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 0    | Success                                      | Also when the reader of a pipe stops early, as with `\| head`                                        |
+| 2    | Arguments that can't be parsed               | An unknown option, `--to xml`                                                                        |
+| 64   | Options that don't fit together or the input | `--typed` without `--to json`, `--to csv` for a `.docx`, an unknown `--sheet`, `-o` naming the input |
+| 65   | Input officeconv can't read                  | A corrupt or unsupported file, `--from` that doesn't match, a file over the size limits              |
+| 66   | No input                                     | A missing or unreadable file, empty stdin                                                            |
+| 74   | Reading stdin or writing the output failed   | An `-o` path in a folder that doesn't exist, a full disk                                             |
 
 When a part of an Office file is missing or broken, the message names it:
 
 ```text
 $ officeconv talk.pptx --to md
 Error: could not parse ppt/slides/slide2.xml: ill-formed document: expected `</p:cSld>`, but `</p:sld>` was found
+```
+
+`officeconv` never writes over its input, however `-o` names it: by another relative path, a
+symbolic link, or on Linux and macOS, a hard link. It stops before reading anything:
+
+```text
+$ officeconv notes.docx --to md -o ./notes.docx
+Error: -o ./notes.docx is the input file, so converting would replace it: choose another output
 ```
 
 ## Size limits

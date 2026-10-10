@@ -146,6 +146,12 @@ pub enum ConvertError {
     #[error("could not write PDF: {0}")]
     Pdf(String),
 
+    #[error(
+        "-o {} is the input file, so converting would replace it: choose another output",
+        .0.display()
+    )]
+    OutputIsInput(PathBuf),
+
     #[error("could not create {}: {source}", path.display())]
     CreateOutput {
         path: PathBuf,
@@ -186,6 +192,7 @@ impl ConvertError {
             | ImagesWithPdf
             | PdfToTerminal
             | PdfNotBuilt
+            | OutputIsInput(_)
             | SheetNotFound { .. } => exit_code::USAGE,
 
             // The input is there but isn't something officeconv can convert.

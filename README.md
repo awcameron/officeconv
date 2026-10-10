@@ -145,7 +145,7 @@ officeconv [OPTIONS] --to <FORMAT> <INPUT>
 | --------------------- | ------------------------------------------------------------------------------------------- |
 | `-t, --to <FORMAT>`   | `csv`, `tsv`, `json`, `md` (`markdown` also works), or `pdf`                                |
 | `--from <TYPE>`       | `xlsx`, `docx`, `pptx`, `csv`, or `tsv`: the input type, instead of detecting it            |
-| `-o, --output <PATH>` | Write to a file instead of stdout. With `--all-sheets`, a directory                         |
+| `-o, --output <PATH>` | Write to a file instead of stdout, never the input file. With `--all-sheets`, a directory   |
 | `--sheet <NAME>`      | XLSX only: which sheet to convert. Defaults to the first one. Not with `--all-sheets`       |
 | `--all-sheets`        | XLSX only: write each sheet to its own file, such as `sales-Q1.csv`                         |
 | `--typed`             | JSON only: write numbers, booleans and empty cells as JSON values. Not for CSV or TSV input |

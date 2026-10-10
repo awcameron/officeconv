@@ -25,7 +25,7 @@ const GREEN_PNG: &[u8] = &[
 
 /// A workbook with pictures: "Sales" has a logo at D5 (inserted first) and a chart at D2;
 /// "R&D" has one picture at B2.
-fn xlsx_with_pictures() -> (TempDir, PathBuf) {
+pub fn xlsx_with_pictures() -> (TempDir, PathBuf) {
     use rust_xlsxwriter::{Image, Workbook};
 
     let dir = TempDir::new().unwrap();

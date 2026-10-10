@@ -12,21 +12,20 @@
 //!
 //! Each picture in the drawing sits in an anchor that says which cell its top-left corner is in.
 
-use std::collections::HashMap;
 use std::io::{Read, Seek};
 
 use quick_xml::events::BytesStart;
 
 use crate::document::{Block, ImagePart, Run};
+use crate::drawingml;
 use crate::error::Result;
-use crate::opc::{self, Archive, Open, XmlHandler, attr};
+use crate::opc::{self, Archive, Open, Targets, XmlHandler};
 
 /// One picture on a sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picture {
-    /// The image's part in the package (`xl/media/image1.png`).
-    pub part: String,
-    pub alt: String,
+    /// The image run, naming the image's part in the package (`xl/media/image1.png`).
+    pub image: Run<ImagePart>,
     /// The cell holding the picture's top-left corner, counting from 0.
     /// Pictures placed by position instead of by cell sort last.
     pub row: u32,
@@ -42,9 +41,7 @@ pub fn sheet_pictures<R: Read + Seek>(
 ) -> Result<Vec<Block<ImagePart>>> {
     Ok(read_pictures(archive, sheet_part)?
         .into_iter()
-        .map(|picture| {
-            Block::paragraph(vec![Run::image(ImagePart::new(picture.part), picture.alt)])
-        })
+        .map(|picture| Block::paragraph(vec![picture.image]))
         .collect())
 }
 
@@ -60,8 +57,8 @@ pub fn read_pictures<R: Read + Seek>(
         let Some(xml) = archive.read_part(&drawing)? else {
             continue;
         };
-        let images = archive.relationships(&drawing)?.targets().images;
-        pictures.extend(parse_drawing(&xml, &images)?);
+        let targets = archive.relationships(&drawing)?.targets();
+        pictures.extend(parse_drawing(&xml, &targets)?);
     }
 
     // A stable sort keeps pictures in the same cell in the order they were drawn.
@@ -69,10 +66,10 @@ pub fn read_pictures<R: Read + Seek>(
     Ok(pictures)
 }
 
-/// Reads the pictures in a drawing part. `images` maps relationship IDs to image parts.
-pub fn parse_drawing(xml: &str, images: &HashMap<String, String>) -> Result<Vec<Picture>> {
+/// Reads the pictures in a drawing part. `targets` are the drawing's relationships.
+pub fn parse_drawing(xml: &str, targets: &Targets) -> Result<Vec<Picture>> {
     let mut parser = DrawingParser {
-        images,
+        targets,
         pictures: Vec::new(),
         anchor: None,
         picture: None,
@@ -88,37 +85,23 @@ struct Anchor {
     col: Option<u32>,
 }
 
-#[derive(Default)]
-struct PictureBuilder {
-    alt: Option<String>,
-    part: Option<String>,
-}
-
 struct DrawingParser<'a> {
-    images: &'a HashMap<String, String>,
+    targets: &'a Targets,
     pictures: Vec<Picture>,
     anchor: Option<Anchor>,
-    picture: Option<PictureBuilder>,
+    picture: Option<drawingml::Picture>,
 }
 
 impl XmlHandler for DrawingParser<'_> {
-    fn start(&mut self, e: &BytesStart, is_empty: bool, _open: &Open) {
+    fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+        if let Some(picture) = self.picture.as_mut() {
+            picture.read(e, open, self.targets);
+        }
         match e.local_name().as_ref() {
             "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor" if !is_empty => {
                 self.anchor = Some(Anchor::default());
             }
-            "pic" if !is_empty => self.picture = Some(PictureBuilder::default()),
-            "cNvPr" => {
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.alt = attr(e, "descr").or_else(|| attr(e, "title"));
-                }
-            }
-            "blip" => {
-                let part = attr(e, "embed").and_then(|id| self.images.get(&id).cloned());
-                if let Some(picture) = self.picture.as_mut() {
-                    picture.part = part;
-                }
-            }
+            "pic" if !is_empty => self.picture = Some(drawingml::Picture::default()),
             _ => {}
         }
     }
@@ -126,17 +109,12 @@ impl XmlHandler for DrawingParser<'_> {
     fn end(&mut self, name: &str) {
         match name {
             "pic" => {
-                let Some(PictureBuilder {
-                    alt,
-                    part: Some(part),
-                }) = self.picture.take()
-                else {
+                let Some(image) = self.picture.take().and_then(|mut p| p.take_run()) else {
                     return;
                 };
                 let anchor = self.anchor.as_ref();
                 self.pictures.push(Picture {
-                    part,
-                    alt: alt.unwrap_or_default(),
+                    image,
                     row: anchor.and_then(|a| a.row).unwrap_or(u32::MAX),
                     col: anchor.and_then(|a| a.col).unwrap_or(u32::MAX),
                 });
@@ -166,7 +144,24 @@ impl XmlHandler for DrawingParser<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+
+    /// Targets holding only images, by relationship ID.
+    fn images(entries: &[(&str, &str)]) -> Targets {
+        Targets {
+            images: entries
+                .iter()
+                .map(|(id, part)| (id.to_string(), part.to_string()))
+                .collect(),
+            ..Targets::default()
+        }
+    }
+
+    fn image(part: &str, alt: &str) -> Run<ImagePart> {
+        Run::image(ImagePart::new(part), alt)
+    }
 
     fn anchor(kind: &str, row: u32, col: u32, picture: &str) -> String {
         format!(
@@ -187,9 +182,9 @@ mod tests {
 
     #[test]
     fn reads_pictures_with_their_top_left_cell() {
-        let images = HashMap::from([
-            ("rId1".to_string(), "xl/media/image1.jpeg".to_string()),
-            ("rId2".to_string(), "xl/media/image2.png".to_string()),
+        let targets = images(&[
+            ("rId1", "xl/media/image1.jpeg"),
+            ("rId2", "xl/media/image2.png"),
         ]);
         let xml = drawing(&format!(
             "{}{}{}",
@@ -199,19 +194,17 @@ mod tests {
             anchor("twoCellAnchor", 0, 0, "<xdr:graphicFrame/>"),
         ));
 
-        let pictures = parse_drawing(&xml, &images).unwrap();
+        let pictures = parse_drawing(&xml, &targets).unwrap();
         assert_eq!(
             pictures,
             [
                 Picture {
-                    part: "xl/media/image1.jpeg".into(),
-                    alt: "Company logo".into(),
+                    image: image("xl/media/image1.jpeg", "Company logo"),
                     row: 4,
                     col: 3
                 },
                 Picture {
-                    part: "xl/media/image2.png".into(),
-                    alt: "Sales chart".into(),
+                    image: image("xl/media/image2.png", "Sales chart"),
                     row: 1,
                     col: 3
                 },
@@ -277,7 +270,10 @@ mod tests {
         let pictures = read_pictures(&mut archive, "xl/worksheets/sheet1.xml").unwrap();
         let read: Vec<(&str, &str)> = pictures
             .iter()
-            .map(|p| (p.alt.as_str(), p.part.as_str()))
+            .map(|p| {
+                let part = p.image.image.as_ref().map(|i| i.part.as_str());
+                (p.image.text.as_str(), part.unwrap_or_default())
+            })
             .collect();
         // Top to bottom, then left to right: A2, D2, D5.
         assert_eq!(
@@ -336,12 +332,12 @@ mod tests {
     #[test]
     fn handles_unprefixed_xml_and_absolute_anchors() {
         // openpyxl writes the drawing namespace as the default, with no `xdr:` prefix.
-        let images = HashMap::from([("rId1".to_string(), "xl/media/image1.png".to_string())]);
+        let targets = images(&[("rId1", "xl/media/image1.png")]);
         let xml = r#"<wsDr xmlns="xdr"><absoluteAnchor><pos x="0" y="0"/><pic><nvPicPr><cNvPr id="1" name="Image 1"/></nvPicPr><blipFill><a:blip xmlns:a="a" xmlns:r="r" r:embed="rId1"/></blipFill></pic></absoluteAnchor></wsDr>"#;
 
-        let pictures = parse_drawing(xml, &images).unwrap();
+        let pictures = parse_drawing(xml, &targets).unwrap();
         assert_eq!(pictures.len(), 1);
-        assert_eq!(pictures[0].alt, "");
+        assert_eq!(pictures[0].image, image("xl/media/image1.png", ""));
         assert_eq!((pictures[0].row, pictures[0].col), (u32::MAX, u32::MAX));
     }
 }

@@ -22,7 +22,8 @@ modules:
   reader uses.
 - `src/docx/`, `src/pptx.rs`, `src/xlsx/`: the readers. DOCX and PPTX build their blocks
   through `document::builder`, which owns open paragraphs and tables. The workbook reader
-  returns each sheet's table and, with `--images`, its pictures. Readers name each image by its
+  returns each sheet's table and, with `--images`, its pictures. All three read a picture's alt
+  text, image, size and link through `drawingml::Picture`. Readers name each image by its
   part in the package; `images::resolve` then saves, embeds or drops them for the output
   ([ADR 0005](docs/adr/0005-image-types.md)).
 - `src/document/`, `src/writers.rs`, `src/pdf/`: the outputs.
@@ -92,6 +93,7 @@ installed.
     | `docx`         | `src/docx/`                         |
     | `pptx`         | `src/pptx.rs`                       |
     | `xlsx`         | `src/xlsx/`                         |
+    | `drawingml`    | `src/drawingml.rs`                  |
     | `opc`          | `src/opc.rs`                        |
     | `model`        | `src/document/`                     |
     | `pdf`          | `src/pdf/`                          |

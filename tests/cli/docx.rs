@@ -201,3 +201,55 @@ fn keeps_every_column_of_a_table_with_merged_cells() {
 "
     );
 }
+
+/// A paragraph holding a picture whose drawing links to `rId9`, then a plain picture.
+const LINKED_PICTURE: &str = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="wp"><wp:docPr id="1" name="Picture 1" descr="Logo"><a:hlinkClick xmlns:a="a" r:id="rId9"/></wp:docPr><a:graphic xmlns:a="a"><a:graphicData><pic:pic xmlns:pic="pic"><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:inline xmlns:wp="wp"><wp:docPr id="2" name="Picture 2" descr="Plain"/><a:graphic xmlns:a="a"><a:graphicData><pic:pic xmlns:pic="pic"><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+
+/// A `.docx` whose body is [`LINKED_PICTURE`], linking to `target`.
+pub fn docx_with_linked_picture(target: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    sample_docx_with_parts(
+        LINKED_PICTURE,
+        &[
+            part(
+                "word/_rels/document.xml.rels",
+                rels(&[
+                    ("rId4", "image", "media/image1.png"),
+                    ("rId9", "hyperlink", target),
+                ]),
+            ),
+            part("word/media/image1.png", RED_PNG),
+        ],
+    )
+}
+
+/// Converts `path` to `notes.md` beside it, saving its images to `notes_images`, and returns
+/// the Markdown.
+fn markdown_with_images(dir: &std::path::Path, path: &std::path::Path) -> String {
+    officeconv()
+        .arg(path)
+        .args(["--to", "md", "-o"])
+        .arg(dir.join("notes.md"))
+        .arg("--images")
+        .arg(dir.join("notes_images"))
+        .assert()
+        .success();
+    std::fs::read_to_string(dir.join("notes.md")).unwrap()
+}
+
+#[test]
+fn keeps_a_pictures_own_link() {
+    let (dir, path) = docx_with_linked_picture("https://example.com");
+    assert_eq!(
+        markdown_with_images(dir.path(), &path),
+        "[![Logo](notes_images/image1.png)](https://example.com)![Plain](notes_images/image1.png)\n"
+    );
+}
+
+#[test]
+fn drops_a_pictures_unsafe_link() {
+    let (dir, path) = docx_with_linked_picture("javascript:alert(1)");
+    assert_eq!(
+        markdown_with_images(dir.path(), &path),
+        "![Logo](notes_images/image1.png)![Plain](notes_images/image1.png)\n"
+    );
+}

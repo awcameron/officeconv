@@ -103,6 +103,10 @@ and the parser builds blocks through `document::builder::BlockBuilder`. The read
 an element means; the builder owns what's open (the paragraph, the table and its cells, the
 current run's formatting and link) and where finished content goes.
 
+Pictures are DrawingML in all three formats. `drawingml::Picture` reads what each element says
+about a picture (its alt text, image part, size and link), and each reader decides where a
+picture starts and when it's finished.
+
 - **DOCX** reads `word/document.xml` with its supporting parts: numbering, styles, and footnotes
   and endnotes, which are numbered in the order the body refers to them and added after it. The
   first section's header and footer come before the body, as `Block::Header` and

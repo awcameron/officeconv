@@ -37,7 +37,7 @@ pub mod fuzzing {
     pub use crate::docx::read_blocks as read_docx;
     pub use crate::images::{EmbeddedImages, Images, resolve as resolve_images};
     pub use crate::input::InputKind;
-    pub use crate::opc::{Archive, Limits, parse_relationships};
+    pub use crate::opc::{Archive, Limits};
     #[cfg(feature = "pdf")]
     pub use crate::pdf::{layout::PageSetup, render as render_pdf};
     pub use crate::pptx::{Notes, read_blocks as read_pptx};

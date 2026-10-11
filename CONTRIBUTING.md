@@ -112,7 +112,7 @@ nightly's tools first instead, in place of `cargo +nightly`:
 PATH="$(dirname "$(rustup which --toolchain nightly rustc)"):$PATH" cargo fuzz run docx
 ```
 
-The [Fuzz workflow](.github/workflows/fuzz.yml) fuzzes each target for 10 minutes every night,
+The [Fuzz workflow](.github/workflows/fuzz.yml) fuzzes each target for an hour every Monday,
 from the seeds, with the same `-max_len` as above and `-timeout=25`, so an input that takes 25
 seconds counts as a hang. "Run workflow" on its Actions page fuzzes for as many seconds as you
 ask, and a PR that changes the workflow, `fuzz/` or the seeds fuzzes each target for a minute.

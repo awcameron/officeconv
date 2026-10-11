@@ -1,19 +1,22 @@
 name: Fuzz
 
-# Fuzzes each target in fuzz/ for 10 minutes every night, starting from the seeds
-# fuzz/make-seeds.sh writes, so a crash is found within a day of the change that caused it. A
+# Fuzzes each target in fuzz/ for an hour every Monday, starting from the seeds
+# fuzz/make-seeds.sh writes. Weekly, not nightly: each run starts again from the seeds, and one
+# long run gets further than seven short ones that each rediscover the same inputs. Once a run
+# keeps the corpus the last one found (#200), nightly runs would build on each other. A
 # target that panics, hangs or runs out of memory fails its job, and the input that did it is
 # uploaded as an artifact named fuzz-<target> to replay locally (see CONTRIBUTING.md#fuzzing).
 # "Run workflow" fuzzes for as long as asked. PRs that change this file, the fuzz targets or the
 # seeds fuzz each target for a minute, to check the workflow still runs.
 on:
   schedule:
-    - cron: "0 5 * * *"
+    # An hour before dev-container.yml's weekly build.
+    - cron: "0 5 * * 1"
   workflow_dispatch:
     inputs:
       seconds:
         description: Seconds to fuzz each target for
-        default: "600"
+        default: "3600"
   pull_request:
     paths: [.github/workflows/fuzz.yml, fuzz/**, tests/cli/seeds.rs]
 
@@ -63,7 +66,7 @@ jobs:
         working-directory: fuzz
         env:
           TARGET: ${{ matrix.target }}
-          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '600' }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '3600' }}
         run: >-
           cargo +nightly fuzz run "$TARGET" --
           -max_len=65536 -timeout=25 -max_total_time="$SECONDS_PER_TARGET"

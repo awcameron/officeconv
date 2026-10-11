@@ -50,7 +50,7 @@ and wait: don't push, open a PR or clean up until the user asks for that step.
    scripts/check.sh
    ```
 
-   It runs CI's checks plus the two CI doesn't build, and `cargo deny check` if it's installed,
+   It runs CI's checks plus the one CI doesn't build, and `cargo deny check` if it's installed,
    stopping at the first failure. If `Cargo.toml` or `Cargo.lock` changed and `cargo-deny`
    isn't installed, say so in the report: CI's `deny` job is the first to check them.
 6. Commit only the files you changed. The user keeps untracked files in the repo root that

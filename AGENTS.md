@@ -38,8 +38,8 @@ modules:
 ## Checks
 
 Run [`scripts/check.sh`](scripts/check.sh) before committing. It stops at the first check that
-fails and says which. Its first six checks are the steps of CI's `check` job; the other two
-cover what CI doesn't build: the fuzz crate and the private-item docs.
+fails and says which. Its first seven checks are the steps of CI's `check` job; the last one
+covers the private-item docs, which CI doesn't build.
 
 Two of the checks build without the `pdf` feature (`--no-default-features`), so code used only
 by PDF output needs `#[cfg(feature = "pdf")]`.

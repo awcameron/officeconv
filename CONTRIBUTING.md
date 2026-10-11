@@ -112,6 +112,15 @@ nightly's tools first instead, in place of `cargo +nightly`:
 PATH="$(dirname "$(rustup which --toolchain nightly rustc)"):$PATH" cargo fuzz run docx
 ```
 
+The [Fuzz workflow](.github/workflows/fuzz.yml) fuzzes each target for an hour every Monday,
+from the seeds, with the same `-max_len` as above and `-timeout=25`, so an input that takes 25
+seconds counts as a hang. "Run workflow" on its Actions page fuzzes for as many seconds as you
+ask, and a PR that changes the workflow, `fuzz/` or the seeds fuzzes each target for a minute.
+When a target fails, its job uploads the input as an artifact named `fuzz-<target>`. Download
+it from the run's page, or with `gh run download <run> -n fuzz-<target>`, and replay it with
+`cargo +nightly fuzz run <target> <file>`. A crash it finds is a bug to fix like any other,
+with the input as its test.
+
 ## Comparing two builds
 
 Before merging a change to a reader, check that its output changes only where you meant it to:
@@ -149,7 +158,7 @@ assets/fonts/        Noto Sans, built into the binary for PDF output, and its li
 docs/                the user guide beyond the README: installing, usage, and formats
 docs/adr/            design decisions, one record each
 .devcontainer/       a Linux image to build, test and fuzz in, for Docker, VS Code and Codespaces
-.github/             CI, release and dev container workflows, Dependabot, and release notes
+.github/             CI, fuzz, release and dev container workflows, Dependabot, and release notes
 .agents/skills/      agent skills for this repo's workflows: filing issues, issue to PR, releasing
 .claude/skills       a symlink to .agents/skills, so Claude Code finds them too
 AGENTS.md            the rules and checks for coding agents

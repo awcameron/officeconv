@@ -28,7 +28,7 @@ RUN rustup component add rustfmt clippy rust-src \
 # cargo-deny's own prebuilt binary, checked against the hashes above: compiling it takes minutes.
 # cargo-fuzz is compiled, which takes under a minute: its prebuilt binary is a musl build, and
 # cargo-fuzz builds fuzz targets for the target it was itself built for, which nightly here
-# doesn't have.
+# doesn't have. Change CARGO_FUZZ_VERSION with the one in .github/workflows/fuzz.yml.
 RUN set -eu; \
     arch=$(dpkg --print-architecture); \
     case $arch in \

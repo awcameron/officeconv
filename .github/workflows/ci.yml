@@ -15,7 +15,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The same checks as the first six in scripts/check.sh, kept as separate steps so a failure's
+  # The same checks as the first seven in scripts/check.sh, kept as separate steps so a failure's
   # log is easy to find. Change both together.
   check:
     runs-on: ${{ matrix.os }}
@@ -44,6 +44,10 @@ jobs:
         run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
       - name: Test without PDF
         run: cargo test --locked --no-default-features
+      # A change to the library can stop a fuzz target compiling without touching fuzz/, so
+      # fuzz.yml never runs on it. Clippy builds the targets on stable.
+      - name: Lint fuzz
+        run: cargo clippy --locked -p officeconv-fuzz --all-targets -- -D warnings
 
   # The tests with the exact version in Cargo.toml's rust-version, the oldest Rust officeconv
   # claims to build with and the one releases build with. A dependency update that needs a newer

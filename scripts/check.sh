@@ -1,8 +1,8 @@
 #!/bin/sh
 # Runs the checks a change has to pass before it's committed, in order, and stops at the first
-# one that fails. The first six are the steps of CI's check job (.github/workflows/ci.yml), so
-# change both together. The last two cover what CI doesn't build: the fuzz crate and the
-# private-item docs. If cargo-deny is installed, it also runs CI's deny job.
+# one that fails. The first seven are the steps of CI's check job (.github/workflows/ci.yml),
+# so change both together. The last one covers the private-item docs, which CI doesn't build.
+# If cargo-deny is installed, it also runs CI's deny job.
 #
 # Usage, from anywhere in the repo: scripts/check.sh
 set -eu

@@ -127,4 +127,6 @@ installed.
 Skills for this repo's three main workflows live in `.agents/skills/`: filing an issue, taking
 an issue to a merged PR, and cutting a release. Codex, Cursor and other agents that support
 [Agent Skills](https://agentskills.io) read them from there; `.claude/skills` is a symlink to
-the same directory for Claude Code.
+the same directory for Claude Code. `model` and `effort` in a skill's frontmatter are Claude
+Code's own fields, not the spec's: Claude Code runs the turn that invokes the skill on that
+model and effort, and they mean nothing to other agents.

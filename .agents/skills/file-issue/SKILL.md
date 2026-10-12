@@ -2,6 +2,8 @@
 name: file-issue
 description: 'Files officeconv GitHub issues in the repo''s format: a priority or severity line, the problem, the change, acceptance criteria and a label. Use when the user says "create a ticket (or issue) for this", asks for a ticket before starting work, asks to split an issue or file follow-ups, and before issue-to-pr when there''s no issue yet.'
 compatibility: Requires an authenticated GitHub CLI (gh).
+model: sonnet
+effort: medium
 allowed-tools: 'Read Write Bash(gh issue list *) Bash(gh issue view *) Bash(gh issue create *) Bash(gh issue comment *) Bash(gh issue close *) Bash(git log *) Bash(git grep *) Bash(.agents/skills/file-issue/scripts/check-issue.sh *)'
 ---
 
@@ -14,12 +16,17 @@ anything. Filing ends at the issue: the work starts when the user says "start on
 ## Steps
 
 1. **Gather the evidence.** Read the code, docs, issue or conversation the request comes from.
-   Done when every claim the issue will make points at something checkable: a file and line, a
-   command and its output, a version, an issue or PR number.
-2. **Check for duplicates.** Search open and closed issues with two or three phrasings:
+   Most issues are filed straight after an investigation: when the conversation already shows
+   the evidence, use it, and don't re-read files to confirm what's already there. Done when
+   every claim the issue will make points at something checkable: a file and line, a command
+   and its output, a version, an issue or PR number.
+2. **Check for duplicates.** Search open and closed issues with two or three phrasings, in one
+   command:
 
    ```sh
-   gh issue list --state all --search "<keywords>" --limit 10
+   for q in "<keywords>" "<other keywords>"; do
+       gh issue list --state all --search "$q" --limit 10
+   done
    ```
 
    - An open issue already covers it: show it to the user and ask whether to add to it instead.
@@ -30,21 +37,18 @@ anything. Filing ends at the issue: the work starts when the user says "start on
    request mixes priorities, split it by priority too. Follow-ups noticed while working on a PR
    become their own issues, keeping the PR's scope as it was.
 4. **Write each body** to a temporary file outside the repo, from the [template](#template),
-   replacing every `<!-- -->` comment. Then check it:
+   replacing every `<!-- -->` comment. Then check and create it in one command, so a body that
+   passes is filed without another call:
 
    ```sh
-   .agents/skills/file-issue/scripts/check-issue.sh <file>
+   .agents/skills/file-issue/scripts/check-issue.sh <file> &&
+       gh issue create --title "<title>" --label <label> --body-file <file>
    ```
 
-   Fix every problem it lists and run it again. Done when it prints `ok`.
-5. **Create each issue:**
-
-   ```sh
-   gh issue create --title "<title>" --label <label> --body-file <file>
-   ```
-
-   Pass `--label` once for each label (see [Labels](#labels)).
-6. **When splitting an existing issue**, comment on it listing the new issues by priority, one
+   Pass `--label` once for each label (see [Labels](#labels)). The check lists every problem
+   it finds, so there's no need to read the script. If it lists any, fix them all and run the
+   command again.
+5. **When splitting an existing issue**, comment on it listing the new issues by priority, one
    line each, then close it as not planned:
 
    ```sh
@@ -52,7 +56,7 @@ anything. Filing ends at the issue: the work starts when the user says "start on
    ```
 
    This is how #53 was split into #131–#136.
-7. **Report** each issue's link, title and priority or severity, one line each. Recommend which
+6. **Report** each issue's link, title and priority or severity, one line each. Recommend which
    to start first and offer "start on #N". The turn ends here, on `main`, with no branch created.
 
 ## Template

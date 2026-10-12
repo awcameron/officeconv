@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::document::{Block, ImagePart, resolve_images};
@@ -49,16 +49,23 @@ impl ImageExport {
         self.skipped.len()
     }
 
-    /// Prints how many images were saved, and how many parts were left out, to stderr.
-    pub fn report(&self) {
-        eprintln!("saved {} images to {}", self.count(), self.dir.display());
+    /// Says how many images were saved, and how many parts were left out, on `log`.
+    pub fn report(&self, log: &mut impl Write) -> io::Result<()> {
+        writeln!(
+            log,
+            "saved {} images to {}",
+            self.count(),
+            self.dir.display()
+        )?;
         if self.skipped() > 0 {
-            eprintln!(
+            writeln!(
+                log,
                 "warning: left out {} files that aren't PNG, JPEG, GIF, WebP, BMP, TIFF, EMF or \
                  WMF images",
                 self.skipped()
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Saves the image stored at `part` and returns its Markdown link.
@@ -101,6 +108,13 @@ impl ImageExport {
         self.links.insert(part.to_string(), link.clone());
         Ok(Some(link))
     }
+}
+
+/// Where `--images` saves images, linked from Markdown in `markdown_dir`, or `None` without it.
+pub fn export_to(images: Option<&Path>, markdown_dir: &Path) -> Result<Option<ImageExport>> {
+    images
+        .map(|dir| ImageExport::new(dir, markdown_dir))
+        .transpose()
 }
 
 /// An image format, recognized by a file's first bytes rather than its name.

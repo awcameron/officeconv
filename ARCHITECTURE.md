@@ -22,7 +22,8 @@ flowchart TD
     source["input::Source, InputKind"] --> plan
 
     plan -->|"Plan::Delimited"| delimited["delimited::read_table"]
-    plan -->|"Plan::Workbook"| xlsx["xlsx::read_sheet, read_all_sheets"]
+    plan -->|"Plan::Workbook"| workbook["workbook::convert"]
+    workbook --> xlsx["xlsx::read_sheet, read_all_sheets"]
     plan -->|"Plan::Document"| archive["opc::Archive"]
 
     archive --> docx["docx::read_blocks"]
@@ -173,6 +174,10 @@ their pictures are never saved.
   then paints them with krilla. `pdf::fonts` sets text in the built-in Noto Sans and loads
   installed fonts only for characters it lacks. What couldn't go in, missing characters or
   images, comes back in `pdf::Rendered` and is printed as warnings.
+- **`workbook::convert`** carries out a `Plan::Workbook`: it reads the sheets, writes each
+  one's table with `write_table`, and with `--images` saves its pictures, listing them after the
+  table in Markdown. It writes one sheet to stdout or the `-o` file, or with `--all-sheets` each
+  sheet to `<stem>-<sheet>.<ext>`, and says what it wrote on the log `run()` passes, stderr.
 - **`output`** opens stdout or the `-o` file, and with `--all-sheets` names one file per sheet,
   using `output::safe_file_name` and `UniqueNames` so names can't leave the folder or collide.
 

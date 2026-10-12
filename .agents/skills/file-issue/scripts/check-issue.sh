@@ -22,7 +22,7 @@ severity=no
 if echo "$first" | grep -Eq 'Severity: \*\*(high|medium|low|low to medium)\*\*'; then
     severity=yes
 elif ! echo "$first" | grep -Eq 'Priority: \*\*P[0-3]\*\*'; then
-    problem "the first line must give 'Priority: **P0**' (to P3), or for a bug 'Severity: **high**' (medium, low); it is: $first"
+    problem "the first line must give 'Priority: **P0**' (to P3), or for a bug 'Severity: **high**' (medium, low); it is \"$first\". Where the issue came from, such as 'Found while fixing #N.', goes in its own paragraph after it"
 fi
 
 change=$(grep -n -m1 -E '^## Change( \(.+\))?$' "$body" | cut -d: -f1)

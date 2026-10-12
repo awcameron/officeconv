@@ -64,6 +64,9 @@ anything. Filing ends at the issue: the work starts when the user says "start on
 ```markdown
 Priority: **P2**: <!-- one clause on why this priority -->.
 
+<!-- Where the issue came from, if it isn't a direct request, such as "Found while fixing #N.";
+otherwise delete this paragraph. -->
+
 <!-- The problem: what's wrong or missing, and the evidence for it. Bullets for several points,
 each led by a bold phrase. -->
 
@@ -79,10 +82,12 @@ each led by a bold phrase. -->
 - [ ] <!-- A test covers it, in `tests/cli/` if a user would see it -->
 ```
 
-- **The first line** gives the priority, or a bug's severity (see [Bugs](#bugs)). Before it,
-  name where the issue came from when it isn't a direct request: `Split from #N.`,
-  `Found while fixing #N.`, or ``From the adversarial review of v0.2.2 (`b38f411`).`` After it,
-  name any issue that has to land first: `Needs the ADR in #131 first.`
+- **The first line** gives the priority, or a bug's severity (see [Bugs](#bugs)), so it's the
+  first thing a reader sees. End it with any issue that has to land first: `Needs the ADR in
+  #131 first.`
+- **Where the issue came from**, when it isn't a direct request, is its own paragraph straight
+  after the first line: `Split from #N.`, `Found while fixing #N.`, or
+  ``From the adversarial review of v0.2.2 (`b38f411`).``
 - **The title** says what changes, in the imperative, without a type prefix: "Draw merged table
   cells as one cell in PDF".
 - **Context sections** go between the problem and `## Change` when the problem needs them, such

@@ -6,17 +6,15 @@
 //!
 //! Coordinates are in points (1/72 inch), measured from the top-left corner of the page.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::mem;
 use std::ops::Range;
 
 use krilla::Data;
 use krilla::image::Image;
 use krilla::text::KrillaGlyph;
-use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use super::fonts::{FontId, Fonts};
+use super::lines::{self, LineBox};
 use crate::document::{
     Align, Block, CellRuns, EMU_PER_POINT, Field, ImageRef, ListKind, Run, RunKind, RunStyle,
     TableCell,
@@ -151,15 +149,6 @@ impl Item {
     }
 }
 
-/// One line of text, or one image, laid out from (0, 0) until it's placed.
-#[derive(Debug, Default)]
-struct LineBox {
-    width: f32,
-    height: f32,
-    items: Vec<Item>,
-    links: Vec<Link>,
-}
-
 /// A table cell laid out from (0, 0), padding included, before it's placed. It starts at
 /// `row` and `col` and spans `rows` and `cols`.
 #[derive(Debug)]
@@ -186,10 +175,8 @@ pub const MAX_REPEATED_CHARS: usize = 1_000;
 pub struct Layout<'a> {
     fonts: &'a mut Fonts,
     images: &'a EmbeddedImages,
+    /// The pages to lay out on, which [`run`](Self::run) starts a [`Cursor`] from.
     setup: PageSetup,
-    pages: Vec<Page>,
-    /// Where the next block goes on the last page.
-    y: f32,
     /// Decoded images by key; `None` for ones left out of the PDF.
     decoded: HashMap<String, Option<Image>>,
     skipped_images: SkippedImages,
@@ -327,8 +314,6 @@ impl<'a> Layout<'a> {
             fonts,
             images,
             setup,
-            pages: vec![Page::default()],
-            y: setup.margin,
             decoded: HashMap::new(),
             skipped_images: SkippedImages::default(),
         }
@@ -336,15 +321,16 @@ impl<'a> Layout<'a> {
 
     /// Lays out every block, returning the pages and how many images were left out.
     pub fn run(mut self, blocks: &[Block]) -> (Vec<Page>, SkippedImages) {
-        self.place_blocks(blocks);
+        let mut cursor = Cursor::new(self.setup);
+        self.place_blocks(&mut cursor, blocks);
         for block in blocks {
             match block {
-                Block::Header(header) => self.repeat(header, Edge::Top),
-                Block::Footer(footer) => self.repeat(footer, Edge::Bottom),
+                Block::Header(header) => self.repeat(&mut cursor, header, Edge::Top),
+                Block::Footer(footer) => self.repeat(&mut cursor, footer, Edge::Bottom),
                 _ => {}
             }
         }
-        (self.pages, self.skipped_images)
+        (cursor.pages, self.skipped_images)
     }
 
     /// Draws `blocks` in the margin at `edge` of every page, as Word draws a header or footer:
@@ -353,28 +339,435 @@ impl<'a> Layout<'a> {
     /// The blocks are cut to [`MAX_REPEATED_CHARS`] first. Without page number fields they're
     /// laid out once and copied onto every page; with them, laid out again for each page, with
     /// its numbers filled in.
-    fn repeat(&mut self, blocks: &[Block], edge: Edge) {
-        let margin = self.setup.margin;
-        let room = margin / 2.0 - self.setup.body_size / 2.0;
+    fn repeat(&mut self, cursor: &mut Cursor, blocks: &[Block], edge: Edge) {
+        let margin = cursor.setup.margin;
+        let room = margin / 2.0 - cursor.setup.body_size / 2.0;
         if room <= 0.0 {
             return;
         }
+        let setup = cursor.setup;
         let blocks = cut_to(blocks, MAX_REPEATED_CHARS);
-        let count = self.pages.len();
+        let count = cursor.pages.len();
         let mut same_on_every_page = None;
         for index in 0..count {
             let (laid_out, height) = if has_fields(&blocks) {
-                self.lay_out_apart(&fill_fields(&blocks, index + 1, count), room)
+                self.lay_out_apart(&setup, &fill_fields(&blocks, index + 1, count), room)
             } else {
                 same_on_every_page
-                    .get_or_insert_with(|| self.lay_out_apart(&blocks, room))
+                    .get_or_insert_with(|| self.lay_out_apart(&setup, &blocks, room))
                     .clone()
             };
-            self.place_in_margin(index, laid_out, height, edge);
+            cursor.place_in_margin(index, laid_out, height, edge);
         }
     }
 
-    /// Adds a header or footer laid out by [`lay_out_apart`](Self::lay_out_apart) to page
+    /// Lays out `blocks` apart from the pages `setup` describes, in a box as wide as their text
+    /// and `height` tall. Returns what fits, at positions inside the box, and the height it
+    /// takes up. What doesn't fit is left out, so a header can't cover the page.
+    fn lay_out_apart(&mut self, setup: &PageSetup, blocks: &[Block], height: f32) -> (Page, f32) {
+        let mut apart = Cursor::new(PageSetup {
+            width: setup.content_width(),
+            height,
+            margin: 0.0,
+            ..*setup
+        });
+        self.place_blocks(&mut apart, blocks);
+        // Only the first page is kept. If the blocks ran onto another, the first is full.
+        let used = if apart.pages.len() > 1 {
+            height
+        } else {
+            apart.y
+        };
+        let first = apart.pages.into_iter().next().unwrap_or_default();
+        (first, used.min(height))
+    }
+
+    /// Lays out blocks one under another, each after a gap that depends on what came before it.
+    fn place_blocks(&mut self, cursor: &mut Cursor, blocks: &[Block]) {
+        let body = cursor.setup.body_size;
+        // How many numbered items came before at each list level, for "1.", "2.", ...
+        let mut numbers: Vec<u32> = Vec::new();
+        let mut previous: Option<&Block> = None;
+
+        for (i, block) in blocks.iter().enumerate() {
+            // Headers and footers go in the margins, once every page is laid out.
+            if block.is_page_furniture() {
+                continue;
+            }
+            if !matches!(block, Block::ListItem { .. }) {
+                numbers.clear();
+            }
+            let gap = match (previous, block) {
+                (_, Block::Heading { level, .. }) => body * heading_scale(*level) * 0.8,
+                (Some(Block::ListItem { .. }), Block::ListItem { .. }) => body * 0.25,
+                _ => body * 0.7,
+            };
+            if previous.is_some() {
+                cursor.add_gap(gap);
+            }
+
+            match block {
+                Block::Heading { level, runs, align } => {
+                    let size = body * heading_scale(*level);
+                    let runs = all_bold(runs);
+                    let lines =
+                        self.layout_runs(&cursor.setup, &runs, size, cursor.setup.content_width());
+                    // Keep a heading on the same page as the first lines after it.
+                    let height: f32 = lines.iter().map(|l| l.height).sum();
+                    let follows = blocks.get(i + 1).is_some_and(|b| !matches!(b, Block::Rule));
+                    let keep = if follows {
+                        2.0 * self.line_height(body)
+                    } else {
+                        0.0
+                    };
+                    cursor.ensure_space(height + keep);
+                    cursor.place_aligned(lines, *align);
+                }
+                Block::Paragraph { runs, align } => {
+                    let lines =
+                        self.layout_runs(&cursor.setup, runs, body, cursor.setup.content_width());
+                    cursor.place_aligned(lines, *align);
+                }
+                Block::ListItem { kind, level, runs } => {
+                    let marker = list_marker(&mut numbers, *kind, *level);
+                    self.place_list_item(cursor, &marker, *level, runs);
+                }
+                Block::Table(rows) => self.place_table(cursor, rows),
+                Block::Rule => match cursor.setup.rule {
+                    RuleStyle::PageBreak => cursor.new_page(),
+                    RuleStyle::Line => cursor.draw_line(),
+                },
+                Block::Note { number, blocks } => {
+                    // A line sets the notes apart from the document, as Word does above them.
+                    if !matches!(previous, Some(Block::Note { .. })) {
+                        cursor.draw_line();
+                        cursor.add_gap(gap);
+                    }
+                    self.place_blocks(cursor, &with_note_marker(*number, blocks));
+                }
+                Block::Header(_) | Block::Footer(_) => {}
+            }
+            previous = Some(block);
+        }
+    }
+
+    fn line_height(&self, size: f32) -> f32 {
+        self.fonts.line_metrics().1 * size
+    }
+
+    /// A list item: the marker hangs to the left of the text, indented by level.
+    fn place_list_item(&mut self, cursor: &mut Cursor, marker: &str, level: u8, runs: &[Run]) {
+        let body = cursor.setup.body_size;
+        let indent = cursor.setup.margin + f32::from(level) * body * 1.5;
+        let hang = body * 1.5;
+        let width =
+            (cursor.setup.content_width() - (indent - cursor.setup.margin) - hang).max(hang);
+
+        let mut lines = self.layout_runs(&cursor.setup, runs, body, width);
+        if lines.is_empty() {
+            lines.push(LineBox {
+                height: self.line_height(body),
+                ..LineBox::default()
+            });
+        }
+        let marker_runs = [Run::new(marker, RunStyle::default())];
+        let marker_line = self.layout_runs(&cursor.setup, &marker_runs, body, f32::INFINITY);
+
+        let first = lines.remove(0);
+        cursor.ensure_space(first.height);
+        let y = cursor.y;
+        for marker in marker_line {
+            cursor.emit(marker, indent, y);
+        }
+        cursor.emit(first, indent + hang, y);
+        cursor.place_lines(lines, indent + hang);
+    }
+
+    /// A table with a border around every cell, drawing a merged cell once across its columns
+    /// and rows. Columns get their natural width when the table fits, and otherwise share the
+    /// page so that words aren't broken unless they have to be (the way browsers size tables).
+    /// The header row is bold, shaded, and repeated on each page the table continues onto,
+    /// unless a cell spans from it into the rows below.
+    fn place_table(&mut self, cursor: &mut Cursor, rows: &[Vec<TableCell>]) {
+        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if columns == 0 {
+            return;
+        }
+        let body = cursor.setup.body_size;
+        let padding = body * 0.4;
+
+        // Every cell, with a short row's missing cells as empty ones. The readers keep spans
+        // inside the table; clamping them again keeps a bad one from panicking here.
+        let mut cells = Vec::new();
+        for (r, row) in rows.iter().enumerate() {
+            for c in 0..columns {
+                let (runs, cols, tall) = match row.get(c) {
+                    Some(TableCell::Content { runs, cols, rows }) => {
+                        (cell_runs(runs, r == 0), *cols, *rows)
+                    }
+                    Some(TableCell::Covered) => continue,
+                    None => (Vec::new(), 1, 1),
+                };
+                cells.push((
+                    r,
+                    c,
+                    cols.clamp(1, columns - c),
+                    tall.clamp(1, rows.len() - r),
+                    runs,
+                ));
+            }
+        }
+
+        // Each column's narrowest width (its longest word) and natural width (its widest
+        // line, unwrapped). One-column cells go first; then a merged cell that needs more room
+        // than its columns have widens them evenly.
+        let mut narrowest = vec![2.0 * padding; columns];
+        let mut natural = vec![2.0 * padding; columns];
+        let mut needs = Vec::with_capacity(cells.len());
+        for (_, c, cols, _, runs) in &cells {
+            let word = self.longest_word(runs, body);
+            let lines = self.layout_runs(&cursor.setup, runs, body, f32::INFINITY);
+            let widest = lines.iter().map(|l| l.width).fold(0.0, f32::max);
+            needs.push((*c..c + cols, word + 2.0 * padding, widest + 2.0 * padding));
+        }
+        needs.sort_by_key(|(span, ..)| span.len());
+        for (span, word, widest) in needs {
+            widen(&mut narrowest[span.clone()], word);
+            widen(&mut natural[span], widest);
+        }
+        for (natural, narrowest) in natural.iter_mut().zip(&narrowest) {
+            *natural = natural.max(*narrowest);
+        }
+        let widths = column_widths(&narrowest, &natural, cursor.setup.content_width());
+
+        let mut boxes: Vec<TableBox> = cells
+            .into_iter()
+            .map(|(row, col, cols, rows, runs)| {
+                let width = widths[col..col + cols].iter().sum();
+                let content = self.layout_cell(&cursor.setup, &runs, width, padding);
+                TableBox {
+                    row,
+                    col,
+                    cols,
+                    rows,
+                    content,
+                }
+            })
+            .collect();
+
+        // Rows a merged cell joins go on one page. When they can't fit on any page, they're
+        // drawn as separate rows instead, with the cell's text in the first, as Markdown has it.
+        let min_height = self.line_height(body) + 2.0 * padding;
+        let mut heights = row_heights(&boxes, rows.len(), min_height);
+        // Leave room for the header, which may repeat above them.
+        let room = cursor.setup.bottom() - cursor.setup.margin - heights[0];
+        let mut too_tall = vec![false; rows.len()];
+        for group in row_groups(&boxes, rows.len()) {
+            if group.len() > 1 && heights[group.clone()].iter().sum::<f32>() > room {
+                too_tall[group].fill(true);
+            }
+        }
+        if too_tall.contains(&true) {
+            let mut split = Vec::new();
+            for cell in &mut boxes {
+                if cell.rows > 1 && too_tall[cell.row] {
+                    split.extend((cell.row + 1..cell.row + cell.rows).map(|row| TableBox {
+                        row,
+                        rows: 1,
+                        content: LineBox::default(),
+                        ..*cell
+                    }));
+                    cell.rows = 1;
+                }
+            }
+            boxes.extend(split);
+            boxes.sort_by_key(|cell| (cell.row, cell.col));
+            heights = row_heights(&boxes, rows.len(), min_height);
+        }
+
+        let header_end = boxes.partition_point(|cell| cell.row == 0);
+        let repeat_header = boxes[..header_end].iter().all(|cell| cell.rows == 1);
+        let mut start = 0;
+        for group in row_groups(&boxes, rows.len()) {
+            let end = start + boxes[start..].partition_point(|cell| cell.row < group.end);
+            cursor.ensure_space(heights[group.clone()].iter().sum());
+            // The table needs a top border wherever it starts on a page.
+            let mut top = group.start == 0 || cursor.at_page_top();
+            if group.start > 0 && repeat_header && cursor.at_page_top() {
+                let header = &boxes[..header_end];
+                cursor.place_rows(header, 0..1, &heights, &widths, true, false);
+                top = false;
+            }
+            cursor.place_rows(&boxes[start..end], group, &heights, &widths, top, true);
+            start = end;
+        }
+    }
+
+    /// Lays out a cell's runs inside its padding. The box is as tall as they are, padding
+    /// included.
+    fn layout_cell(
+        &mut self,
+        setup: &PageSetup,
+        runs: &[Run],
+        width: f32,
+        padding: f32,
+    ) -> LineBox {
+        let mut cell = LineBox::default();
+        let mut y = padding;
+        for line in self.layout_runs(setup, runs, setup.body_size, width - 2.0 * padding) {
+            cell.items
+                .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
+            cell.links.extend(line.links.into_iter().map(|link| Link {
+                x: link.x + padding,
+                y: link.y + y,
+                ..link
+            }));
+            y += line.height;
+        }
+        cell.height = y + padding;
+        cell
+    }
+
+    /// Lays out runs as lines no wider than `width`. Each image gets a line of its own.
+    fn layout_runs(
+        &mut self,
+        setup: &PageSetup,
+        runs: &[Run],
+        size: f32,
+        width: f32,
+    ) -> Vec<LineBox> {
+        let mut lines = Vec::new();
+        let mut after_image = false;
+        for group in runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none()) {
+            match image(&group[0]) {
+                Some(image) => {
+                    if let Some(line) =
+                        self.layout_image(setup, image, group[0].link.as_deref(), width)
+                    {
+                        lines.push(line);
+                    }
+                    after_image = true;
+                }
+                None if after_image => {
+                    // Text after an image starts a new line, so drop the space before it.
+                    let mut group = group.to_vec();
+                    group[0].text = group[0].text.trim_start().to_string();
+                    lines.extend(lines::break_lines(self.fonts, &group, size, width));
+                }
+                None => lines.extend(lines::break_lines(self.fonts, group, size, width)),
+            }
+        }
+        lines
+    }
+
+    /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
+    fn longest_word(&mut self, runs: &[Run], size: f32) -> f32 {
+        runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none())
+            .filter(|group| image(&group[0]).is_none())
+            .map(|group| lines::longest_word(self.fonts, group, size))
+            .fold(0.0, f32::max)
+    }
+
+    /// An image at the size the document shows it, or at its pixel size if it doesn't say,
+    /// then scaled down, if needed, to fit `width` and the page's height.
+    fn layout_image(
+        &mut self,
+        setup: &PageSetup,
+        image_ref: &ImageRef,
+        link: Option<&str>,
+        width: f32,
+    ) -> Option<LineBox> {
+        let image = self.decode(&image_ref.source)?;
+        let (pixels_wide, pixels_high) = image.size();
+        let natural_width = pixels_wide as f32 * POINTS_PER_PIXEL;
+        let natural_height = pixels_high as f32 * POINTS_PER_PIXEL;
+        // Fit within the document's size, keeping the image's shape. A cropped picture's size
+        // is the size of the part shown, and the whole image is drawn, so stretching it to
+        // that size would distort it.
+        let (box_width, box_height) = match image_ref.size {
+            Some((cx, cy)) => (
+                cx as f32 / EMU_PER_POINT as f32,
+                cy as f32 / EMU_PER_POINT as f32,
+            ),
+            None => (natural_width, natural_height),
+        };
+        let max_height = setup.bottom() - setup.margin;
+        let scale = (box_width / natural_width)
+            .min(box_height / natural_height)
+            .min(width / natural_width)
+            .min(max_height / natural_height);
+        let (w, h) = (natural_width * scale, natural_height * scale);
+        if !(w > 0.0 && h > 0.0) {
+            return None;
+        }
+
+        let mut line = LineBox {
+            width: w,
+            height: h,
+            items: vec![Item::Image {
+                x: 0.0,
+                y: 0.0,
+                width: w,
+                height: h,
+                image,
+            }],
+            links: Vec::new(),
+        };
+        if let Some(url) = link {
+            line.links.push(Link {
+                x: 0.0,
+                y: 0.0,
+                width: w,
+                height: h,
+                url: url.to_string(),
+            });
+        }
+        Some(line)
+    }
+
+    /// The decoded image for `key`, or `None` if it's missing or left out (see [`decode_image`]).
+    /// Each image is decoded once, and counted once when left out.
+    fn decode(&mut self, key: &str) -> Option<Image> {
+        if let Some(image) = self.decoded.get(key) {
+            return image.clone();
+        }
+        let image = match self.images.get(key).map(decode_image) {
+            Some(Ok(image)) => Some(image),
+            Some(Err(LeftOut::TooLarge)) => {
+                self.skipped_images.too_large += 1;
+                None
+            }
+            None | Some(Err(LeftOut::Unsupported)) => {
+                self.skipped_images.unsupported += 1;
+                None
+            }
+        };
+        self.decoded.insert(key.to_string(), image.clone());
+        image
+    }
+}
+
+/// Where the next block goes: the pages laid out so far, and how far down the last one the
+/// blocks have reached. The page cursor is a value, so a header or footer lays out into a
+/// cursor of its own, apart from the pages.
+struct Cursor {
+    setup: PageSetup,
+    pages: Vec<Page>,
+    /// Where the next block goes on the last page.
+    y: f32,
+}
+
+impl Cursor {
+    /// An empty first page, with the next block at the top margin.
+    fn new(setup: PageSetup) -> Self {
+        Cursor {
+            setup,
+            pages: vec![Page::default()],
+            y: setup.margin,
+        }
+    }
+
+    /// Adds a header or footer laid out by [`Layout::lay_out_apart`] to page
     /// `index`, in the margin at `edge`.
     fn place_in_margin(&mut self, index: usize, laid_out: Page, height: f32, edge: Edge) {
         let margin = self.setup.margin;
@@ -402,98 +795,6 @@ impl<'a> Layout<'a> {
             }));
     }
 
-    /// Lays out `blocks` apart from the pages, in a box as wide as the text and `height` tall.
-    /// Returns what fits, at positions inside the box, and the height it takes up. What doesn't
-    /// fit is left out, so a header can't cover the page.
-    fn lay_out_apart(&mut self, blocks: &[Block], height: f32) -> (Page, f32) {
-        let setup = PageSetup {
-            width: self.setup.content_width(),
-            height,
-            margin: 0.0,
-            ..self.setup
-        };
-        let setup = mem::replace(&mut self.setup, setup);
-        let pages = mem::replace(&mut self.pages, vec![Page::default()]);
-        let y = mem::replace(&mut self.y, 0.0);
-
-        self.place_blocks(blocks);
-        // Only the first page is kept. If the blocks ran onto another, the first is full.
-        let used = if self.pages.len() > 1 { height } else { self.y };
-        let first = mem::take(&mut self.pages[0]);
-
-        self.setup = setup;
-        self.pages = pages;
-        self.y = y;
-        (first, used.min(height))
-    }
-
-    /// Lays out blocks one under another, each after a gap that depends on what came before it.
-    fn place_blocks(&mut self, blocks: &[Block]) {
-        let body = self.setup.body_size;
-        // How many numbered items came before at each list level, for "1.", "2.", ...
-        let mut numbers: Vec<u32> = Vec::new();
-        let mut previous: Option<&Block> = None;
-
-        for (i, block) in blocks.iter().enumerate() {
-            // Headers and footers go in the margins, once every page is laid out.
-            if block.is_page_furniture() {
-                continue;
-            }
-            if !matches!(block, Block::ListItem { .. }) {
-                numbers.clear();
-            }
-            let gap = match (previous, block) {
-                (_, Block::Heading { level, .. }) => body * heading_scale(*level) * 0.8,
-                (Some(Block::ListItem { .. }), Block::ListItem { .. }) => body * 0.25,
-                _ => body * 0.7,
-            };
-            if previous.is_some() {
-                self.add_gap(gap);
-            }
-
-            match block {
-                Block::Heading { level, runs, align } => {
-                    let size = body * heading_scale(*level);
-                    let runs = all_bold(runs);
-                    let lines = self.layout_runs(&runs, size, self.setup.content_width());
-                    // Keep a heading on the same page as the first lines after it.
-                    let height: f32 = lines.iter().map(|l| l.height).sum();
-                    let follows = blocks.get(i + 1).is_some_and(|b| !matches!(b, Block::Rule));
-                    let keep = if follows {
-                        2.0 * self.line_height(body)
-                    } else {
-                        0.0
-                    };
-                    self.ensure_space(height + keep);
-                    self.place_aligned(lines, *align);
-                }
-                Block::Paragraph { runs, align } => {
-                    let lines = self.layout_runs(runs, body, self.setup.content_width());
-                    self.place_aligned(lines, *align);
-                }
-                Block::ListItem { kind, level, runs } => {
-                    let marker = list_marker(&mut numbers, *kind, *level);
-                    self.place_list_item(&marker, *level, runs);
-                }
-                Block::Table(rows) => self.place_table(rows),
-                Block::Rule => match self.setup.rule {
-                    RuleStyle::PageBreak => self.new_page(),
-                    RuleStyle::Line => self.draw_line(),
-                },
-                Block::Note { number, blocks } => {
-                    // A line sets the notes apart from the document, as Word does above them.
-                    if !matches!(previous, Some(Block::Note { .. })) {
-                        self.draw_line();
-                        self.add_gap(gap);
-                    }
-                    self.place_blocks(&with_note_marker(*number, blocks));
-                }
-                Block::Header(_) | Block::Footer(_) => {}
-            }
-            previous = Some(block);
-        }
-    }
-
     /// A horizontal line across the page.
     fn draw_line(&mut self) {
         self.ensure_space(1.0);
@@ -509,7 +810,7 @@ impl<'a> Layout<'a> {
 
     #[expect(
         clippy::expect_used,
-        reason = "`Layout::new` starts a page, and pages are never removed"
+        reason = "`Cursor::new` starts a page, and pages are never removed"
     )]
     fn page(&mut self) -> &mut Page {
         self.pages.last_mut().expect("there is always a page")
@@ -536,10 +837,6 @@ impl<'a> Layout<'a> {
         if !self.at_page_top() {
             self.y = (self.y + gap).min(self.setup.bottom());
         }
-    }
-
-    fn line_height(&self, size: f32) -> f32 {
-        self.fonts.line_metrics().1 * size
     }
 
     /// Places lines one under another at `x`, moving to a new page when one doesn't fit.
@@ -579,172 +876,6 @@ impl<'a> Layout<'a> {
         self.y = y + line.height;
     }
 
-    /// A list item: the marker hangs to the left of the text, indented by level.
-    fn place_list_item(&mut self, marker: &str, level: u8, runs: &[Run]) {
-        let body = self.setup.body_size;
-        let indent = self.setup.margin + f32::from(level) * body * 1.5;
-        let hang = body * 1.5;
-        let width = (self.setup.content_width() - (indent - self.setup.margin) - hang).max(hang);
-
-        let mut lines = self.layout_runs(runs, body, width);
-        if lines.is_empty() {
-            lines.push(LineBox {
-                height: self.line_height(body),
-                ..LineBox::default()
-            });
-        }
-        let marker_runs = [Run::new(marker, RunStyle::default())];
-        let marker_line = self.layout_runs(&marker_runs, body, f32::INFINITY);
-
-        let first = lines.remove(0);
-        self.ensure_space(first.height);
-        let y = self.y;
-        for marker in marker_line {
-            self.emit(marker, indent, y);
-        }
-        self.emit(first, indent + hang, y);
-        self.place_lines(lines, indent + hang);
-    }
-
-    /// A table with a border around every cell, drawing a merged cell once across its columns
-    /// and rows. Columns get their natural width when the table fits, and otherwise share the
-    /// page so that words aren't broken unless they have to be (the way browsers size tables).
-    /// The header row is bold, shaded, and repeated on each page the table continues onto,
-    /// unless a cell spans from it into the rows below.
-    fn place_table(&mut self, rows: &[Vec<TableCell>]) {
-        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
-        if columns == 0 {
-            return;
-        }
-        let body = self.setup.body_size;
-        let padding = body * 0.4;
-
-        // Every cell, with a short row's missing cells as empty ones. The readers keep spans
-        // inside the table; clamping them again keeps a bad one from panicking here.
-        let mut cells = Vec::new();
-        for (r, row) in rows.iter().enumerate() {
-            for c in 0..columns {
-                let (runs, cols, tall) = match row.get(c) {
-                    Some(TableCell::Content { runs, cols, rows }) => {
-                        (cell_runs(runs, r == 0), *cols, *rows)
-                    }
-                    Some(TableCell::Covered) => continue,
-                    None => (Vec::new(), 1, 1),
-                };
-                cells.push((
-                    r,
-                    c,
-                    cols.clamp(1, columns - c),
-                    tall.clamp(1, rows.len() - r),
-                    runs,
-                ));
-            }
-        }
-
-        // Each column's narrowest width (its longest word) and natural width (its widest
-        // line, unwrapped). One-column cells go first; then a merged cell that needs more room
-        // than its columns have widens them evenly.
-        let mut narrowest = vec![2.0 * padding; columns];
-        let mut natural = vec![2.0 * padding; columns];
-        let mut needs = Vec::with_capacity(cells.len());
-        for (_, c, cols, _, runs) in &cells {
-            let word = self.longest_word(runs, body);
-            let lines = self.layout_runs(runs, body, f32::INFINITY);
-            let widest = lines.iter().map(|l| l.width).fold(0.0, f32::max);
-            needs.push((*c..c + cols, word + 2.0 * padding, widest + 2.0 * padding));
-        }
-        needs.sort_by_key(|(span, ..)| span.len());
-        for (span, word, widest) in needs {
-            widen(&mut narrowest[span.clone()], word);
-            widen(&mut natural[span], widest);
-        }
-        for (natural, narrowest) in natural.iter_mut().zip(&narrowest) {
-            *natural = natural.max(*narrowest);
-        }
-        let widths = column_widths(&narrowest, &natural, self.setup.content_width());
-
-        let mut boxes: Vec<TableBox> = cells
-            .into_iter()
-            .map(|(row, col, cols, rows, runs)| {
-                let width = widths[col..col + cols].iter().sum();
-                let content = self.layout_cell(&runs, width, padding);
-                TableBox {
-                    row,
-                    col,
-                    cols,
-                    rows,
-                    content,
-                }
-            })
-            .collect();
-
-        // Rows a merged cell joins go on one page. When they can't fit on any page, they're
-        // drawn as separate rows instead, with the cell's text in the first, as Markdown has it.
-        let min_height = self.line_height(body) + 2.0 * padding;
-        let mut heights = row_heights(&boxes, rows.len(), min_height);
-        // Leave room for the header, which may repeat above them.
-        let room = self.setup.bottom() - self.setup.margin - heights[0];
-        let mut too_tall = vec![false; rows.len()];
-        for group in row_groups(&boxes, rows.len()) {
-            if group.len() > 1 && heights[group.clone()].iter().sum::<f32>() > room {
-                too_tall[group].fill(true);
-            }
-        }
-        if too_tall.contains(&true) {
-            let mut split = Vec::new();
-            for cell in &mut boxes {
-                if cell.rows > 1 && too_tall[cell.row] {
-                    split.extend((cell.row + 1..cell.row + cell.rows).map(|row| TableBox {
-                        row,
-                        rows: 1,
-                        content: LineBox::default(),
-                        ..*cell
-                    }));
-                    cell.rows = 1;
-                }
-            }
-            boxes.extend(split);
-            boxes.sort_by_key(|cell| (cell.row, cell.col));
-            heights = row_heights(&boxes, rows.len(), min_height);
-        }
-
-        let header_end = boxes.partition_point(|cell| cell.row == 0);
-        let repeat_header = boxes[..header_end].iter().all(|cell| cell.rows == 1);
-        let mut start = 0;
-        for group in row_groups(&boxes, rows.len()) {
-            let end = start + boxes[start..].partition_point(|cell| cell.row < group.end);
-            self.ensure_space(heights[group.clone()].iter().sum());
-            // The table needs a top border wherever it starts on a page.
-            let mut top = group.start == 0 || self.at_page_top();
-            if group.start > 0 && repeat_header && self.at_page_top() {
-                let header = &boxes[..header_end];
-                self.place_rows(header, 0..1, &heights, &widths, true, false);
-                top = false;
-            }
-            self.place_rows(&boxes[start..end], group, &heights, &widths, top, true);
-            start = end;
-        }
-    }
-
-    /// Lays out a cell's runs inside its padding. The box is as tall as they are, padding
-    /// included.
-    fn layout_cell(&mut self, runs: &[Run], width: f32, padding: f32) -> LineBox {
-        let mut cell = LineBox::default();
-        let mut y = padding;
-        for line in self.layout_runs(runs, self.setup.body_size, width - 2.0 * padding) {
-            cell.items
-                .extend(line.items.into_iter().map(|item| item.moved(padding, y)));
-            cell.links.extend(line.links.into_iter().map(|link| Link {
-                x: link.x + padding,
-                y: link.y + y,
-                ..link
-            }));
-            y += line.height;
-        }
-        cell.height = y + padding;
-        cell
-    }
-
     /// Adds table rows `rows`, holding `cells`, at the current position: the header's shading,
     /// each cell's content with its left and bottom borders, then the right border, and the
     /// top border if `top`. Links are left out of a repeated header, whose first copy has them.
@@ -763,7 +894,7 @@ impl<'a> Layout<'a> {
         let bottom = top + heights[rows.clone()].iter().sum::<f32>();
         #[expect(
             clippy::expect_used,
-            reason = "`Layout::new` starts a page, and pages are never removed"
+            reason = "`Cursor::new` starts a page, and pages are never removed"
         )]
         let page = self.pages.last_mut().expect("there is always a page");
 
@@ -818,331 +949,6 @@ impl<'a> Layout<'a> {
             });
         }
         self.y = bottom;
-    }
-
-    /// Lays out runs as lines no wider than `width`. Each image gets a line of its own.
-    fn layout_runs(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
-        let mut lines = Vec::new();
-        let mut after_image = false;
-        for group in runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none()) {
-            match image(&group[0]) {
-                Some(image) => {
-                    if let Some(line) = self.layout_image(image, group[0].link.as_deref(), width) {
-                        lines.push(line);
-                    }
-                    after_image = true;
-                }
-                None if after_image => {
-                    // Text after an image starts a new line, so drop the space before it.
-                    let mut group = group.to_vec();
-                    group[0].text = group[0].text.trim_start().to_string();
-                    lines.extend(self.layout_text(&group, size, width));
-                }
-                None => lines.extend(self.layout_text(group, size, width)),
-            }
-        }
-        lines
-    }
-
-    /// The width of the widest word in `runs`, which can't be narrowed without breaking it.
-    fn longest_word(&mut self, runs: &[Run], size: f32) -> f32 {
-        runs.chunk_by(|a, b| image(a).is_none() && image(b).is_none())
-            .filter(|group| image(&group[0]).is_none())
-            .map(|group| Paragraph::shape(self.fonts, group).longest_word() * size)
-            .fold(0.0, f32::max)
-    }
-
-    /// An image at the size the document shows it, or at its pixel size if it doesn't say,
-    /// then scaled down, if needed, to fit `width` and the page's height.
-    fn layout_image(
-        &mut self,
-        image_ref: &ImageRef,
-        link: Option<&str>,
-        width: f32,
-    ) -> Option<LineBox> {
-        let image = self.decode(&image_ref.source)?;
-        let (pixels_wide, pixels_high) = image.size();
-        let natural_width = pixels_wide as f32 * POINTS_PER_PIXEL;
-        let natural_height = pixels_high as f32 * POINTS_PER_PIXEL;
-        // Fit within the document's size, keeping the image's shape. A cropped picture's size
-        // is the size of the part shown, and the whole image is drawn, so stretching it to
-        // that size would distort it.
-        let (box_width, box_height) = match image_ref.size {
-            Some((cx, cy)) => (
-                cx as f32 / EMU_PER_POINT as f32,
-                cy as f32 / EMU_PER_POINT as f32,
-            ),
-            None => (natural_width, natural_height),
-        };
-        let max_height = self.setup.bottom() - self.setup.margin;
-        let scale = (box_width / natural_width)
-            .min(box_height / natural_height)
-            .min(width / natural_width)
-            .min(max_height / natural_height);
-        let (w, h) = (natural_width * scale, natural_height * scale);
-        if !(w > 0.0 && h > 0.0) {
-            return None;
-        }
-
-        let mut line = LineBox {
-            width: w,
-            height: h,
-            items: vec![Item::Image {
-                x: 0.0,
-                y: 0.0,
-                width: w,
-                height: h,
-                image,
-            }],
-            links: Vec::new(),
-        };
-        if let Some(url) = link {
-            line.links.push(Link {
-                x: 0.0,
-                y: 0.0,
-                width: w,
-                height: h,
-                url: url.to_string(),
-            });
-        }
-        Some(line)
-    }
-
-    /// The decoded image for `key`, or `None` if it's missing or left out (see [`decode_image`]).
-    /// Each image is decoded once, and counted once when left out.
-    fn decode(&mut self, key: &str) -> Option<Image> {
-        if let Some(image) = self.decoded.get(key) {
-            return image.clone();
-        }
-        let image = match self.images.get(key).map(decode_image) {
-            Some(Ok(image)) => Some(image),
-            Some(Err(LeftOut::TooLarge)) => {
-                self.skipped_images.too_large += 1;
-                None
-            }
-            None | Some(Err(LeftOut::Unsupported)) => {
-                self.skipped_images.unsupported += 1;
-                None
-            }
-        };
-        self.decoded.insert(key.to_string(), image.clone());
-        image
-    }
-
-    /// Wraps text runs into lines no wider than `width`, breaking where Unicode allows (after
-    /// spaces and hyphens, between CJK characters) and always at `"\n"`. A word wider than a
-    /// whole line is broken between characters.
-    fn layout_text(&mut self, runs: &[Run], size: f32, width: f32) -> Vec<LineBox> {
-        let paragraph = Paragraph::shape(self.fonts, runs);
-        if paragraph.text.trim().is_empty() {
-            return Vec::new();
-        }
-        let (baseline, line_height) = self.fonts.line_metrics();
-        let line_height = line_height * size;
-        let fits = |range: Range<usize>| paragraph.width(range) * size <= width;
-
-        let mut lines: Vec<Range<usize>> = Vec::new();
-        let mut start = 0;
-        // End of the current line's text, without trailing spaces; `start` while empty.
-        let mut end = 0;
-        let mut word_start = 0;
-        for (word_end, opportunity) in linebreaks(&paragraph.text) {
-            let word_content = word_start + paragraph.text[word_start..word_end].trim_end().len();
-            if word_content > word_start {
-                if end > start && !fits(start..word_content) {
-                    lines.push(start..end);
-                    start = word_start;
-                }
-                // A word too long for a line on its own is split between characters.
-                while !fits(start..word_content) {
-                    let split = paragraph.longest_fit(start..word_content, width / size);
-                    lines.push(start..split);
-                    start = split;
-                }
-                end = word_content;
-            }
-            if opportunity == BreakOpportunity::Mandatory {
-                lines.push(start..end.max(start));
-                start = word_end;
-                end = word_end;
-            }
-            word_start = word_end;
-        }
-        // The text always ends with a mandatory break, so `start` is at the end now.
-
-        lines
-            .into_iter()
-            .map(|range| paragraph.line(range, size, baseline * size, line_height))
-            .collect()
-    }
-}
-
-/// Runs joined into one string and shaped, ready to be broken into lines.
-struct Paragraph {
-    text: String,
-    /// Each glyph with the run it came from, in text order.
-    glyphs: Vec<(KrillaGlyph, FontId, usize)>,
-    /// The link of each run.
-    links: Vec<Option<String>>,
-    /// `advance_before[i]` is the total advance of glyphs `0..i`, in ems.
-    advance_before: Vec<f32>,
-}
-
-impl Paragraph {
-    fn shape(fonts: &mut Fonts, runs: &[Run]) -> Self {
-        let mut text = String::new();
-        let mut glyphs = Vec::new();
-        for (r, run) in runs.iter().enumerate() {
-            let run_text = match run.kind {
-                RunKind::Note(number) => Cow::Owned(note_marker(number)),
-                RunKind::Text | RunKind::Image(_) | RunKind::Field(_) => {
-                    Cow::Borrowed(run.text.as_str())
-                }
-            };
-            let offset = text.len();
-            text.push_str(&run_text);
-
-            // Split the run where the font changes, and shape each piece.
-            let mut pieces: Vec<(FontId, Range<usize>)> = Vec::new();
-            for (i, c) in run_text.char_indices() {
-                let font = fonts.font_for(c, run.style);
-                let at = offset + i;
-                match pieces.last_mut() {
-                    Some((last, range)) if *last == font => range.end = at + c.len_utf8(),
-                    _ => pieces.push((font, at..at + c.len_utf8())),
-                }
-            }
-            for (font, range) in pieces {
-                glyphs.extend(
-                    fonts
-                        .shape(font, &text, range)
-                        .into_iter()
-                        .map(|g| (g, font, r)),
-                );
-            }
-        }
-
-        let mut advance_before = Vec::with_capacity(glyphs.len() + 1);
-        let mut total = 0.0;
-        advance_before.push(total);
-        for (glyph, _, _) in &glyphs {
-            total += glyph.x_advance;
-            advance_before.push(total);
-        }
-
-        Paragraph {
-            text,
-            glyphs,
-            links: runs.iter().map(|run| run.link.clone()).collect(),
-            advance_before,
-        }
-    }
-
-    /// The glyphs whose text starts inside `range`.
-    fn glyph_span(&self, range: Range<usize>) -> Range<usize> {
-        let first = self
-            .glyphs
-            .partition_point(|(g, _, _)| g.text_range.start < range.start);
-        let last = self
-            .glyphs
-            .partition_point(|(g, _, _)| g.text_range.start < range.end);
-        first..last
-    }
-
-    /// How wide `range` of the text is, in ems.
-    fn width(&self, range: Range<usize>) -> f32 {
-        let span = self.glyph_span(range);
-        self.advance_before[span.end] - self.advance_before[span.start]
-    }
-
-    /// The width of the widest word, without trailing spaces, in ems.
-    fn longest_word(&self) -> f32 {
-        let mut start = 0;
-        let mut widest = 0.0_f32;
-        for (end, _) in linebreaks(&self.text) {
-            let content = start + self.text[start..end].trim_end().len();
-            widest = widest.max(self.width(start..content));
-            start = end;
-        }
-        widest
-    }
-
-    /// The furthest point in `range` that fits in `width` ems: always past at least one
-    /// character, so a line can't be empty.
-    fn longest_fit(&self, range: Range<usize>, width: f32) -> usize {
-        let span = self.glyph_span(range.clone());
-        let start_advance = self.advance_before[span.start];
-        let mut fit = None;
-        for i in span.clone() {
-            let (glyph, _, _) = &self.glyphs[i];
-            // Only split where a new character starts, never inside one.
-            if i > span.start && glyph.text_range.start != self.glyphs[i - 1].0.text_range.start {
-                if self.advance_before[i] - start_advance > width {
-                    break;
-                }
-                fit = Some(glyph.text_range.start);
-            }
-        }
-        fit.unwrap_or_else(|| {
-            let first = &self.text[range.start..range.end];
-            range.start + first.chars().next().map_or(0, char::len_utf8)
-        })
-    }
-
-    /// One line of the paragraph, as text items grouped by font and run.
-    fn line(&self, range: Range<usize>, size: f32, baseline: f32, height: f32) -> LineBox {
-        let span = self.glyph_span(range);
-        let mut line = LineBox {
-            height,
-            ..LineBox::default()
-        };
-        let mut x = 0.0;
-        let glyphs = &self.glyphs[span];
-        for group in glyphs.chunk_by(|a, b| a.1 == b.1 && a.2 == b.2) {
-            let (_, font, run) = group[0];
-            let start = group
-                .iter()
-                .map(|(g, _, _)| g.text_range.start)
-                .min()
-                .unwrap_or(0);
-            let end = group
-                .iter()
-                .map(|(g, _, _)| g.text_range.end)
-                .max()
-                .unwrap_or(start);
-            let rebased: Vec<KrillaGlyph> = group
-                .iter()
-                .map(|(g, _, _)| {
-                    let mut g = g.clone();
-                    g.text_range = g.text_range.start - start..g.text_range.end - start;
-                    g
-                })
-                .collect();
-            let advance: f32 = rebased.iter().map(|g| g.x_advance).sum::<f32>() * size;
-
-            let link = &self.links[run];
-            if let Some(url) = link {
-                line.links.push(Link {
-                    x,
-                    y: 0.0,
-                    width: advance,
-                    height,
-                    url: url.clone(),
-                });
-            }
-            line.items.push(Item::Text(TextItem {
-                x,
-                baseline,
-                font,
-                size,
-                glyphs: rebased,
-                text: self.text[start..end].to_string(),
-                link: link.is_some(),
-            }));
-            x += advance;
-        }
-        line.width = x;
-        line
     }
 }
 
@@ -1228,7 +1034,7 @@ fn image(run: &Run) -> Option<&ImageRef> {
 
 /// How a note reference reads in the text, and the marker before the note: `[1]`. The layout
 /// draws every run on one baseline, so the number isn't raised as Word raises it.
-fn note_marker(number: usize) -> String {
+pub fn note_marker(number: usize) -> String {
     format!("[{number}]")
 }
 

@@ -97,6 +97,16 @@ On Linux without `shasum`, use `sha256sum -c "officeconv-$target.sha256"` instea
 `~/.local/bin` isn't on your `PATH` (macOS doesn't add it), add
 `export PATH="$HOME/.local/bin:$PATH"` to your shell's startup file.
 
+Downloaded the archive in a browser instead? macOS then won't run `officeconv`, saying it can't
+check it for malware, because the binary isn't signed by Apple. Remove the mark the browser
+left, giving the path where you put `officeconv`:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/officeconv
+```
+
+[Unsigned binaries](docs/install.md#unsigned-binaries) explains why.
+
 #### Windows
 
 In PowerShell, set `$target` to `x86_64-pc-windows-msvc`, or `aarch64-pc-windows-msvc` for an
@@ -120,6 +130,10 @@ Then add that folder to your user `PATH`, and open a new terminal:
 $path = [Environment]::GetEnvironmentVariable("Path", "User")
 [Environment]::SetEnvironmentVariable("Path", "$path;$dir", "User")
 ```
+
+Downloaded the `.zip` in a browser instead? Windows SmartScreen may stop `officeconv.exe` with
+"Windows protected your PC". Choose **More info**, then **Run anyway**, or remove the mark from
+the unpacked files with `Get-ChildItem $dir | Unblock-File`.
 
 ### Build from source
 

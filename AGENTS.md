@@ -57,6 +57,9 @@ installed.
   change adds a promise.
   - Read parts through `opc::Archive`, which enforces the size limits.
   - Never make work grow with how many times a file refers to the same thing.
+  - Code outside tests doesn't panic. `Cargo.toml` denies `unwrap`, `expect`, `panic!`,
+    `unreachable!`, `todo!` and `unimplemented!`. Return an error, or mark a real invariant
+    with `#[expect(clippy::expect_used, reason = "...")]` saying why it can't fail.
 - **Reader changes.** Any change to `src/opc.rs` or a reader can change output. Run
   `tools/compare/compare.sh`, which compares the working tree with `main` on generated files,
   and explain every difference it lists. The readers decide from the stack of open elements

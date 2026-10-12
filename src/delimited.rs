@@ -74,7 +74,10 @@ pub fn read_table_with_limits(reader: impl Read, kind: InputKind, limits: Limits
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut width = 0;
     for record in reader.records() {
-        // The text is valid UTF-8 and reading from memory can't fail, so this can't happen.
+        #[expect(
+            clippy::expect_used,
+            reason = "the text is valid UTF-8 and reading from memory can't fail"
+        )]
         let record = record.expect("the csv crate accepts any UTF-8 text");
         width = width.max(record.len());
         // Checked as rows arrive, so a file over the limit stops before it's all held.

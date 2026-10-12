@@ -199,6 +199,10 @@ impl TableBuilder {
                     .zip(claimed)
                     .map(|(slot, claimed)| match slot {
                         Slot::Cell { runs, .. } => {
+                            #[expect(
+                                clippy::expect_used,
+                                reason = "the first pass pushes one span per cell, in this order"
+                            )]
                             let (cols, rows) = spans.next().expect("a span for every cell");
                             TableCell::Content { runs, cols, rows }
                         }

@@ -44,6 +44,10 @@ pub fn render(blocks: &[Block], images: &EmbeddedImages, setup: PageSetup) -> Re
     let mut document = Document::new();
     document
         .set_metadata(Metadata::new().creator(format!("officeconv {}", env!("CARGO_PKG_VERSION"))));
+    #[expect(
+        clippy::expect_used,
+        reason = "pages are `PageSetup::DOCUMENT` or `SLIDES`, both positive and finite"
+    )]
     let settings = PageSettings::from_wh(setup.width, setup.height)
         .expect("page sizes are positive and finite");
     for page in pages {

@@ -1,6 +1,9 @@
 //! Compresses the built-in Noto Sans fonts before they're embedded in the binary, which
 //! roughly halves their size. `pdf::fonts` decompresses them the first time a PDF is written.
 
+// A panic here fails the build, not a conversion.
+#![allow(clippy::expect_used, clippy::panic)]
+
 use std::env;
 use std::fs;
 use std::io::Write;

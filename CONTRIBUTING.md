@@ -114,12 +114,19 @@ PATH="$(dirname "$(rustup which --toolchain nightly rustc)"):$PATH" cargo fuzz r
 
 The [Fuzz workflow](.github/workflows/fuzz.yml) fuzzes each target for an hour every Monday,
 from the seeds, with the same `-max_len` as above and `-timeout=25`, so an input that takes 25
-seconds counts as a hang. "Run workflow" on its Actions page fuzzes for as many seconds as you
-ask, and a PR that changes the workflow, `fuzz/` or the seeds fuzzes each target for a minute.
-When a target fails, its job uploads the input as an artifact named `fuzz-<target>`. Download
-it from the run's page, or with `gh run download <run> -n fuzz-<target>`, and replay it with
-`cargo +nightly fuzz run <target> <file>`. A crash it finds is a bug to fix like any other,
-with the input as its test.
+seconds counts as a hang. It allows 4 GB of RSS, twice libFuzzer's default, because
+AddressSanitizer alone grows a run's RSS by 1 to 2 GB over an hour, and keeps the default 2 GB
+limit on any one allocation, which is what catches an input that blows up. "Run workflow" on its
+Actions page fuzzes for as many seconds as you ask, and a PR that changes the workflow, `fuzz/`
+or the seeds fuzzes each target for a minute. When a target fails, its job uploads the input as
+an artifact named `fuzz-<target>`. Download it from the run's page, or with `gh run download
+<run> -n fuzz-<target>`, and replay it with `cargo +nightly fuzz run <target> <file>`. A crash
+it finds is a bug to fix like any other, with the input as its test.
+
+An out-of-memory failure whose saved `oom-` input is empty (its `Base64:` line in the log is
+blank) wasn't caused by one input: RSS crept up over the run until it passed the limit. Look at
+how `rss:` grows in the log before looking for a leak; a leak in officeconv shows up in a run
+built with `cargo fuzz build -s none` too, and AddressSanitizer's growth doesn't.
 
 ## Comparing two builds
 

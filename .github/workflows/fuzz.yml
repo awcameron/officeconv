@@ -62,6 +62,10 @@ jobs:
       # From fuzz/, so fuzz/.cargo/config.toml turns off LTO and symbol stripping. -max_len is
       # what CONTRIBUTING.md suggests. -timeout makes an input that takes 25 seconds a failure
       # (a hang), instead of libFuzzer's default of 20 minutes, longer than the whole run.
+      # AddressSanitizer's quarantine and allocator grow RSS by 1 to 2 GB over an hour while
+      # officeconv's live heap stays small (#213), so the RSS limit is twice libFuzzer's default.
+      # -malloc_limit_mb keeps that default for a single allocation, which is what catches one
+      # input blowing up and saves it.
       - name: Fuzz
         working-directory: fuzz
         env:
@@ -69,7 +73,8 @@ jobs:
           SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60') || '3600' }}
         run: >-
           cargo +nightly fuzz run "$TARGET" --
-          -max_len=65536 -timeout=25 -max_total_time="$SECONDS_PER_TARGET"
+          -max_len=65536 -timeout=25 -rss_limit_mb=4096 -malloc_limit_mb=2048
+          -max_total_time="$SECONDS_PER_TARGET"
 
       - name: Upload the crashing input
         if: failure()

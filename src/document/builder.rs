@@ -5,10 +5,8 @@
 //! goes: a paragraph inside a table becomes part of the open cell, and a finished table
 //! becomes a block.
 
-use super::{
-    Block, Field, ImagePart, Run, RunStyle, TableBuilder, TableCell, append_paragraph, append_run,
-    is_blank,
-};
+use super::table_builder::{MergedCells, TableBuilder};
+use super::{Block, Field, ImagePart, Run, RunStyle, TableCell, append_run, is_blank};
 
 /// Collects blocks for a reader. `P` is what the reader records about each paragraph, such as
 /// its style or list level; the builder only carries it.
@@ -98,14 +96,14 @@ impl<P: Default> BlockBuilder<P> {
             return None;
         }
         if let Some(table) = self.tables.last_mut() {
-            append_paragraph(&mut table.cell, paragraph.runs);
+            table.append_paragraph(paragraph.runs);
             return None;
         }
         Some(paragraph)
     }
 
-    pub fn start_table(&mut self) {
-        self.tables.push(TableBuilder::default());
+    pub fn start_table(&mut self, merged_cells: MergedCells) {
+        self.tables.push(TableBuilder::new(merged_cells));
     }
 
     /// The innermost open table, for the reader to record its grid and merged cells.
@@ -138,7 +136,7 @@ impl<P: Default> BlockBuilder<P> {
         if let Some(outer) = self.tables.last_mut() {
             for cell in rows.into_iter().flatten() {
                 if let TableCell::Content { runs, .. } = cell {
-                    append_paragraph(&mut outer.cell, runs);
+                    outer.append_paragraph(runs);
                 }
             }
             return;
@@ -191,7 +189,7 @@ mod tests {
 
     /// A one-row table with a cell per entry, each holding that text.
     fn table(builder: &mut BlockBuilder<()>, cells: &[&str]) {
-        builder.start_table();
+        builder.start_table(MergedCells::Omitted);
         for text in cells {
             paragraph(builder, text);
             builder.end_cell();
@@ -279,7 +277,7 @@ mod tests {
     #[test]
     fn paragraphs_in_a_table_fill_its_cells() {
         let mut builder = BlockBuilder::<()>::new();
-        builder.start_table();
+        builder.start_table(MergedCells::Omitted);
         assert!(paragraph(&mut builder, "Bobby").is_none());
         assert!(paragraph(&mut builder, "Don").is_none());
         builder.end_cell();
@@ -296,7 +294,7 @@ mod tests {
     #[test]
     fn a_table_without_rows_adds_nothing() {
         let mut builder = BlockBuilder::<()>::new();
-        builder.start_table();
+        builder.start_table(MergedCells::Omitted);
         builder.end_table();
         builder.end_table();
         assert!(builder.into_blocks().is_empty());
@@ -305,7 +303,7 @@ mod tests {
     #[test]
     fn a_nested_table_goes_into_the_outer_cell() {
         let mut builder = BlockBuilder::<()>::new();
-        builder.start_table();
+        builder.start_table(MergedCells::Omitted);
         paragraph(&mut builder, "One");
         table(&mut builder, &["x", "y"]);
         builder.end_cell();

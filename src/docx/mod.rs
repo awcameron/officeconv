@@ -28,7 +28,8 @@ use std::mem;
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
-use crate::document::{Align, Block, Field, ImagePart, Merged, RunStyle};
+use crate::document::table_builder::{Merged, MergedCells};
+use crate::document::{Align, Block, Field, ImagePart, RunStyle};
 use crate::drawingml::Picture;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
@@ -358,15 +359,15 @@ impl XmlHandler for Parser<'_> {
                     self.builder.text("\n");
                 }
             }
-            "tbl" if !is_empty => self.builder.start_table(),
+            "tbl" if !is_empty => self.builder.start_table(MergedCells::Omitted),
             "gridCol" => {
                 if let Some(table) = self.builder.table() {
-                    table.columns += 1;
+                    table.add_grid_column();
                 }
             }
             "gridSpan" if open.inside("tcPr") => {
                 if let Some(table) = self.builder.table() {
-                    table.span = attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(1);
+                    table.span_columns(attr(e, "val").and_then(|v| v.parse().ok()).unwrap_or(1));
                 }
             }
             // A cell merged down several rows is a `restart` cell, then a `<w:vMerge/>` in the
@@ -375,7 +376,7 @@ impl XmlHandler for Parser<'_> {
                 if let Some(table) = self.builder.table()
                     && attr(e, "val").as_deref() != Some("restart")
                 {
-                    table.merged = Merged::Up;
+                    table.merge(Merged::Up);
                 }
             }
             // The rest of a drawing: its alt text, size and link.

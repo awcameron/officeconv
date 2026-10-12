@@ -173,7 +173,8 @@ their pictures are never saved.
   `Page`s as positioned `Item`s, so layout can be tested without reading a PDF back; `render`
   then paints them with krilla. `pdf::fonts` sets text in the built-in Noto Sans and loads
   installed fonts only for characters it lacks. What couldn't go in, missing characters or
-  images, comes back in `pdf::Rendered` and is printed as warnings.
+  images, comes back in `pdf::Rendered`, and `Rendered::report` writes it as warnings to the
+  log it's given: stderr, or a buffer in tests.
 - **`workbook::convert`** carries out a `Plan::Workbook`: it reads the sheets, writes each
   one's table with `write_table`, and with `--images` saves its pictures, listing them after the
   table in Markdown. It writes one sheet to stdout or the `-o` file, or with `--all-sheets` each

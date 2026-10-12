@@ -894,6 +894,7 @@ dependencies = [
  "skrifa",
  "tempfile",
  "thiserror",
+ "unicode-bidi",
  "unicode-linebreak",
  "unicode-normalization",
  "zip",

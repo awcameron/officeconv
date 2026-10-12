@@ -43,6 +43,7 @@ serde = "1.0.229"
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 skrifa = { version = "0.42.1", optional = true }
 thiserror = "2.0.21"
+unicode-bidi = { version = "0.3.18", optional = true }
 unicode-linebreak = { version = "0.1.5", optional = true }
 unicode-normalization = "0.1.25"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
@@ -59,6 +60,7 @@ pdf = [
     "dep:imagesize",
     "dep:krilla",
     "dep:skrifa",
+    "dep:unicode-bidi",
     "dep:unicode-linebreak",
 ]
 

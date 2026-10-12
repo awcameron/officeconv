@@ -219,8 +219,11 @@ links, tables, line breaks, footnotes and endnotes, and pictures.
   through the installed fonts takes about a second the first time a document needs one.
 - A PDF is binary, so it's only written to stdout when stdout is piped or redirected
   (`officeconv notes.docx --to pdf > notes.pdf`). In a terminal, use `-o`.
-- Right-to-left text, such as Arabic or Hebrew, is laid out left to right, so it comes out in the
-  wrong order.
+- Right-to-left text, such as Arabic or Hebrew, is drawn in the right order, with numbers and
+  Latin words inside it left to right, as the Unicode Bidirectional Algorithm says. A
+  paragraph's direction comes from its first letter, not from the document's setting, so a
+  right-to-left paragraph that starts with a Latin word reads left to right. Alignment is the
+  document's: a right-to-left paragraph is aligned right only if the document says so.
 
 ### Images
 

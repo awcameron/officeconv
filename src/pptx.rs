@@ -24,9 +24,8 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph};
-use crate::document::{
-    Align, Block, ImagePart, ListKind, Merged, Run, RunStyle, append_run, is_blank,
-};
+use crate::document::table_builder::{Merged, MergedCells};
+use crate::document::{Align, Block, ImagePart, ListKind, Run, RunStyle, append_run, is_blank};
 use crate::drawingml::Picture;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
@@ -357,10 +356,7 @@ impl XmlHandler for SlideParser<'_> {
             }
             "br" => self.builder.text("\n"),
             "tbl" if !is_empty => {
-                self.builder.start_table();
-                if let Some(table) = self.builder.table() {
-                    table.lists_merged_cells = true;
-                }
+                self.builder.start_table(MergedCells::Listed);
             }
             // A merged cell keeps the cells it covers in the XML, each marked `hMerge` or
             // `vMerge`, so every row already has all its columns; only their text is hidden.
@@ -368,14 +364,14 @@ impl XmlHandler for SlideParser<'_> {
             "tc" if !is_empty => {
                 if let Some(table) = self.builder.table() {
                     let span = |name| attr(e, name).and_then(|v| v.parse().ok()).unwrap_or(1);
-                    table.span = span("gridSpan");
-                    table.row_span = span("rowSpan");
-                    table.merged = match (is_on(attr(e, "hMerge")), is_on(attr(e, "vMerge"))) {
+                    table.span_columns(span("gridSpan"));
+                    table.span_rows(span("rowSpan"));
+                    table.merge(match (is_on(attr(e, "hMerge")), is_on(attr(e, "vMerge"))) {
                         (false, false) => Merged::No,
                         (true, false) => Merged::Left,
                         (false, true) => Merged::Up,
                         (true, true) => Merged::Both,
-                    };
+                    });
                 }
             }
             _ => {}

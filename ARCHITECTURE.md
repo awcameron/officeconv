@@ -134,7 +134,7 @@ picture starts and when it's finished.
 - **`document::Block`**: headings, paragraphs, list items, tables, rules, notes, headers and
   footers, made of `Run`s of formatted text. It holds everything at least one output can show,
   and each writer drops what it can't, such as alignment in Markdown
-  ([ADR 0004](docs/adr/0004-document-model.md)). `document::TableBuilder` works out merged
+  ([ADR 0004](docs/adr/0004-document-model.md)). `document::table_builder` works out merged
   cells, keeping every span inside the table.
   - **Runs:** a run's `RunKind` says what it is: text, an image, a note reference or a page
     number field. Each writer matches it exhaustively, so a new kind of run doesn't compile

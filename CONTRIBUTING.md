@@ -27,6 +27,17 @@ cargo run -- sales.xlsx --to md                       # run without installing
 Run `scripts/check.sh` before committing: a change that passes it passes CI's checks. It runs
 `cargo deny` too if [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) is installed.
 
+Code outside tests doesn't panic: officeconv reads files from anyone, and the fuzzer treats a
+panic as a bug. `Cargo.toml` denies clippy's `unwrap_used`, `expect_used`, `panic`,
+`unreachable`, `todo` and `unimplemented` lints, and [`clippy.toml`](clippy.toml) lets tests
+use them. Return an error instead, or, where a value can't be missing, mark the call with the
+reason it can't fail:
+
+```rust
+#[expect(clippy::expect_used, reason = "`Layout::new` starts a page, and pages are never removed")]
+let page = self.pages.last_mut().expect("there is always a page");
+```
+
 `officeconv` is a binary: its library has no public API, so internals can change in any release.
 See [ADR 0003](docs/adr/0003-binary-only.md).
 
@@ -170,8 +181,9 @@ docs/adr/            design decisions, one record each
 .claude/skills       a symlink to .agents/skills, so Claude Code finds them too
 AGENTS.md            the rules and checks for coding agents
 CLAUDE.md            imports AGENTS.md for Claude Code
-Cargo.toml           the package, its dependencies, features and minimum Rust version
+Cargo.toml           the package, its dependencies, features, lints and minimum Rust version
 Cargo.lock           the exact dependency versions builds and CI use
+clippy.toml          lets tests use the panicking calls Cargo.toml denies elsewhere
 deny.toml            which licenses, advisories and sources cargo deny allows
 README.md            what officeconv does, and how to install it and start using it
 CONTRIBUTING.md      this file

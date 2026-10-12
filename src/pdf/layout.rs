@@ -366,10 +366,9 @@ impl<'a> Layout<'a> {
             let (laid_out, height) = if has_fields(&blocks) {
                 self.lay_out_apart(&fill_fields(&blocks, index + 1, count), room)
             } else {
-                if same_on_every_page.is_none() {
-                    same_on_every_page = Some(self.lay_out_apart(&blocks, room));
-                }
-                same_on_every_page.clone().expect("laid out above")
+                same_on_every_page
+                    .get_or_insert_with(|| self.lay_out_apart(&blocks, room))
+                    .clone()
             };
             self.place_in_margin(index, laid_out, height, edge);
         }
@@ -508,6 +507,10 @@ impl<'a> Layout<'a> {
         });
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "`Layout::new` starts a page, and pages are never removed"
+    )]
     fn page(&mut self) -> &mut Page {
         self.pages.last_mut().expect("there is always a page")
     }
@@ -758,6 +761,10 @@ impl<'a> Layout<'a> {
         let top = self.y;
         let right = left + widths.iter().sum::<f32>();
         let bottom = top + heights[rows.clone()].iter().sum::<f32>();
+        #[expect(
+            clippy::expect_used,
+            reason = "`Layout::new` starts a page, and pages are never removed"
+        )]
         let page = self.pages.last_mut().expect("there is always a page");
 
         if rows.start == 0 {

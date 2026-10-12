@@ -17,6 +17,17 @@ categories = ["command-line-utilities", "text-processing"]
 [workspace]
 members = [".", "fuzz"]
 
+# officeconv reads files from anyone, and the fuzz targets treat any panic as a bug, so code
+# outside tests doesn't call anything that panics. Mark an invariant with
+# `#[expect(clippy::expect_used, reason = "...")]`; clippy.toml lets tests panic.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [dependencies]
 calamine = "0.36.1"
 clap = { version = "4.6.7", features = ["derive"] }

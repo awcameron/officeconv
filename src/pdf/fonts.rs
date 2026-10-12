@@ -97,7 +97,13 @@ impl Fonts {
     pub fn new() -> Self {
         let loaded = noto_sans()
             .iter()
-            .map(|data| LoadedFont::new(data, 0).expect("the built-in fonts are valid"))
+            .map(|data| {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "the built-in fonts are fixed at build time and load in every test"
+                )]
+                LoadedFont::new(data, 0).expect("the built-in fonts are valid")
+            })
             .collect();
         Fonts {
             loaded,
@@ -248,6 +254,11 @@ fn noto_sans() -> &'static [Vec<u8>; 4] {
     FONTS.get_or_init(|| {
         NOTO_SANS_DEFLATED.map(|deflated| {
             let mut font = Vec::new();
+            #[expect(
+                clippy::expect_used,
+                reason = "build.rs compressed these bytes, and every test that writes a PDF \
+                          decompresses them"
+            )]
             DeflateDecoder::new(deflated)
                 .read_to_end(&mut font)
                 .expect("the built-in fonts are valid");

@@ -21,6 +21,10 @@ pub enum OutputFormat {
 impl fmt::Display for OutputFormat {
     /// Prints the name the user types on the command line (`csv`, `md`, ...).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[expect(
+            clippy::expect_used,
+            reason = "only a `#[value(skip)]` variant has no name, and none is skipped"
+        )]
         let value = self
             .to_possible_value()
             .expect("every variant has a CLI name");

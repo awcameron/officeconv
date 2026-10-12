@@ -81,6 +81,11 @@ fn render_list_item(kind: ListKind, level: u8, runs: &[Run]) -> String {
 /// Renders a table with the same Markdown writer the XLSX converter uses. Markdown has no
 /// merged cells, so a merged cell's text goes in its first cell and the cells it covers are
 /// left empty.
+#[expect(
+    clippy::expect_used,
+    reason = "writing to a Vec can't fail, and the table writer copies the UTF-8 strings it's \
+              given and ASCII"
+)]
 fn render_table(rows: &[Vec<TableCell>]) -> String {
     let rows: Vec<Vec<String>> = rows
         .iter()

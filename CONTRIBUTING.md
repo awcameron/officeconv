@@ -21,7 +21,14 @@ moves through the code.
 scripts/check.sh                                      # every check CI runs, and a few more
 cargo fmt                                             # fix formatting
 cargo doc --no-deps --document-private-items --open   # browse the code's documentation
-cargo run -- sales.xlsx --to md                       # run without installing
+```
+
+To run it without installing, pipe in a few lines of CSV, which needs no file, or give it a file
+of your own:
+
+```sh
+printf 'name,city\nAda,London\n' | cargo run -- - --from csv --to md
+cargo run -- your.xlsx --to md
 ```
 
 Run `scripts/check.sh` before committing: a change that passes it passes CI's checks. It runs

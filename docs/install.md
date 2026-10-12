@@ -44,10 +44,23 @@ name the `.zip` instead.
 
 ## Unsigned binaries
 
-The binaries aren't code-signed by Apple or Microsoft. A file downloaded in a browser is marked
-as coming from the internet, so macOS refuses to open it and Windows SmartScreen warns about it;
-`curl`, `gh` and `Invoke-WebRequest` downloads aren't marked. On macOS,
-`xattr -d com.apple.quarantine officeconv` removes the mark.
+The binaries aren't code-signed by Apple or Microsoft. A browser marks a file it downloads as
+coming from the internet, and unpacking the archive in Finder or File Explorer passes the mark on
+to the binary inside. macOS then refuses to run `officeconv`, and Windows SmartScreen warns about
+it. `curl`, `gh` and `Invoke-WebRequest` downloads aren't marked, which is why the
+[README's steps](../README.md#download-a-binary) use them.
+
+To remove the mark, give the path to the unpacked binary. On macOS:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/officeconv
+```
+
+On Windows, in PowerShell:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\Programs\officeconv" | Unblock-File
+```
 
 ## An older version
 

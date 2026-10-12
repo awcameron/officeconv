@@ -52,7 +52,8 @@ officeconv talk.pptx --to pdf -o talk.pdf   # a slide deck as PDF
 
 - **Content, not layout.** Fonts, colors, margins, columns and slide designs aren't kept.
 - **Formulas aren't calculated.** A cell shows the result Excel last saved.
-- **Right-to-left text in PDF**, such as Arabic or Hebrew, comes out in the wrong order.
+- **Right-to-left paragraphs in PDF**, such as Arabic or Hebrew, take their direction from their
+  first letter, not from the document, and keep the document's alignment.
 - **Merged table cells** can't be shown in Markdown, which has none. PDF draws each as one cell.
 - **Not converted yet:** comments in DOCX; charts, SmartArt, and the slide master and layout in
   PPTX; charts, shapes and in-cell pictures as images. DOCX headers and footers appear in PDF

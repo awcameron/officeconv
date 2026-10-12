@@ -107,8 +107,8 @@ Decisions that came with it:
 ## Consequences
 
 - **Known gaps, and ours to fix:**
-  - Right-to-left text (Arabic, Hebrew) is laid out left to right, so it comes out in the wrong
-    order.
+  - Right-to-left text (Arabic, Hebrew) was laid out left to right, so it came out in the wrong
+    order. [ADR 0006](0006-right-to-left-text.md) reorders it.
   - Table rows taller than a page run off the bottom instead of splitting.
   - No hyphenation, justification, footnotes, or headers and footers.
 - **Font search is slow:** the first character Noto Sans lacks costs about 1 s on macOS, spent
@@ -123,7 +123,8 @@ Decisions that came with it:
 The #29 prototype shows a switch to Typst would be small in code but large in size: the binary
 6.4× bigger and clean release builds 5× slower. If right-to-left support is needed, first size
 the middle path of adding bidi reordering (`unicode-bidi`) and right-to-left shaping (which
-rustybuzz already supports) to A's layout; that hasn't been tried.
+rustybuzz already supports) to A's layout. [ADR 0006](0006-right-to-left-text.md) did that, for
+under 1% of the binary.
 
 Reconsider **Typst (B)** if any of these happen:
 

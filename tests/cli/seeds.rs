@@ -154,7 +154,8 @@ fn layout_docx() -> (TempDir, PathBuf) {
     let body = format!(
         "{}{}{}{table}{picture}",
         para("center", "Centered"),
-        para("right", "Right"),
+        // Right-to-left words and a number inside them, for the PDF line reordering.
+        para("right", "Right שלום 123 مرحبا"),
         para("both", "Justified"),
     );
     sample_docx_with_parts(

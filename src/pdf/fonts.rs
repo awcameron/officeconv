@@ -152,11 +152,20 @@ impl Fonts {
         (ascent + (height - ascent - descent) / 2.0, height)
     }
 
-    /// Shapes `text[range]` with one font, left to right.
+    /// Shapes `text[range]` with one font, right to left if `rtl`.
     ///
-    /// Each glyph's `text_range` is a range of `text` (not of the slice), and its advance and
-    /// offsets are fractions of the font size, which is what krilla expects.
-    pub fn shape(&self, id: FontId, text: &str, range: Range<usize>) -> Vec<KrillaGlyph> {
+    /// The glyphs come back in text order whichever way the text reads, so that line breaking
+    /// can slice them by text position: a right-to-left piece's glyphs are reversed from the
+    /// order they're drawn in. Each glyph's `text_range` is a range of `text` (not of the
+    /// slice), and its advance and offsets are fractions of the font size, which is what krilla
+    /// expects.
+    pub fn shape(
+        &self,
+        id: FontId,
+        text: &str,
+        range: Range<usize>,
+        rtl: bool,
+    ) -> Vec<KrillaGlyph> {
         let loaded = &self.loaded[id.0];
         let shaper = loaded.shaper.shaper(&loaded.font).build();
         let em = shaper.units_per_em() as f32;
@@ -164,22 +173,25 @@ impl Fonts {
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(&text[range.clone()]);
         buffer.guess_segment_properties();
-        // Lines are laid out left to right, and the glyph slicing in `layout` relies on
-        // clusters only going forward.
-        buffer.set_direction(Direction::LeftToRight);
+        buffer.set_direction(if rtl {
+            Direction::RightToLeft
+        } else {
+            Direction::LeftToRight
+        });
         let shaped = shaper.shape(buffer, ShapeOptions::new());
 
         let infos = shaped.glyph_infos();
         let positions = shaped.glyph_positions();
-        (0..shaped.len())
+        // A cluster ends where the next one in the text starts. Right to left, the shaper
+        // returns clusters in the order they're drawn, so the next one isn't the next glyph's.
+        let mut starts: Vec<usize> = infos.iter().map(|info| info.cluster as usize).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut glyphs: Vec<KrillaGlyph> = (0..shaped.len())
             .map(|i| {
                 let start = infos[i].cluster as usize;
-                // A cluster ends where the next different one starts.
-                let end = infos[i + 1..]
-                    .iter()
-                    .map(|info| info.cluster as usize)
-                    .find(|&cluster| cluster != start)
-                    .unwrap_or(range.len());
+                let next = starts.partition_point(|&s| s <= start);
+                let end = starts.get(next).copied().unwrap_or(range.len());
                 let position = positions[i];
                 KrillaGlyph::new(
                     GlyphId::new(infos[i].glyph_id),
@@ -191,7 +203,11 @@ impl Fonts {
                     None,
                 )
             })
-            .collect()
+            .collect();
+        if rtl {
+            glyphs.reverse();
+        }
+        glyphs
     }
 
     /// A loaded or installed font that has `c`, loading it if needed.
@@ -343,7 +359,7 @@ mod tests {
     fn shaping_maps_glyphs_back_to_the_whole_text() {
         let fonts = Fonts::new();
         let text = "ab café";
-        let glyphs = fonts.shape(FontId(0), text, 3..text.len());
+        let glyphs = fonts.shape(FontId(0), text, 3..text.len(), false);
 
         let ranges: Vec<_> = glyphs.iter().map(|g| g.text_range.clone()).collect();
         assert_eq!(ranges.first(), Some(&(3..4)));

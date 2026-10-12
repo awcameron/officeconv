@@ -647,3 +647,16 @@ fn rejects_images_flag_with_pdf() {
         .code(64)
         .stderr(contains("--images doesn't apply to --to pdf"));
 }
+
+#[test]
+fn draws_right_to_left_text_from_the_right() {
+    let body = [para("Hello שלום עולם world"), para("שלום 123 עולם")].concat();
+    let (_dir, path) = sample_docx(&body);
+    let (pdf, _) = convert_to_pdf(&path, &[]);
+
+    // A PDF holds glyphs in the order they're drawn, left to right, so a reader extracting the
+    // text gets each right-to-left word's letters reversed and its words in drawing order.
+    let pages = page_texts(&pdf);
+    assert!(pages[0].contains("Hello םלוע םולש world"), "{}", pages[0]);
+    assert!(pages[0].contains("םלוע 123 םולש"), "{}", pages[0]);
+}

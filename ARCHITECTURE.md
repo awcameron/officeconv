@@ -171,7 +171,9 @@ their pictures are never saved.
 - **`pdf::render`** writes `Block`s as a PDF, built only with the `pdf` feature
   ([ADR 0001](docs/adr/0001-pdf-rendering.md)). `pdf::layout::Layout` places everything on
   `Page`s as positioned `Item`s, so layout can be tested without reading a PDF back; `render`
-  then paints them with krilla. `pdf::fonts` sets text in the built-in Noto Sans and loads
+  then paints them with krilla. Block flow moves a page `Cursor`, and a header or footer lays
+  out into a cursor of its own. `pdf::lines` breaks a paragraph's runs into lines, needing only
+  the fonts. `pdf::fonts` sets text in the built-in Noto Sans and loads
   installed fonts only for characters it lacks. What couldn't go in, missing characters or
   images, comes back in `pdf::Rendered`, and `Rendered::report` writes it as warnings to the
   log it's given: stderr, or a buffer in tests.

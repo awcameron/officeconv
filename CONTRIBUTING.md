@@ -41,7 +41,7 @@ use them. Return an error instead, or, where a value can't be missing, mark the 
 reason it can't fail:
 
 ```rust
-#[expect(clippy::expect_used, reason = "`Layout::new` starts a page, and pages are never removed")]
+#[expect(clippy::expect_used, reason = "`Cursor::new` starts a page, and pages are never removed")]
 let page = self.pages.last_mut().expect("there is always a page");
 ```
 

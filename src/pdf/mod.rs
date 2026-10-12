@@ -6,6 +6,7 @@
 
 pub mod fonts;
 pub mod layout;
+pub mod lines;
 
 use std::collections::BTreeSet;
 use std::io::{self, Write};

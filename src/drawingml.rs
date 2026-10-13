@@ -202,8 +202,7 @@ impl Picture {
                 } else {
                     Source::Picture
                 };
-                let link = attr(e, "id").and_then(|id| targets.links.get(&id).cloned());
-                self.link.offer(source, link);
+                self.link.offer(source, targets.link(e));
             }
             _ => {}
         }

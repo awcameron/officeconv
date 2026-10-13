@@ -3,7 +3,8 @@
 //! The DOCX and PPTX readers decide what each element means; the builder keeps what's open
 //! (paragraphs, tables, the current run's formatting and link) and where finished content
 //! goes: a paragraph inside a table becomes part of the open cell, and a finished table
-//! becomes a block.
+//! becomes a block. A paragraph that isn't in a table goes back to its reader, which decides
+//! what kind of block it is.
 
 use super::table_builder::{MergedCells, TableBuilder};
 use super::{Block, Field, ImagePart, Run, RunStyle, TableCell, append_run, is_blank};
@@ -16,10 +17,10 @@ pub struct BlockBuilder<P> {
     paragraphs: Vec<Paragraph<P>>,
     /// Tables we're inside. More than one means a table inside a table cell.
     tables: Vec<TableBuilder>,
-    /// Formatting of the run we're inside. Readers reset it where their format starts a run.
-    pub style: RunStyle,
+    /// Formatting of the run we're inside, plain between runs.
+    style: RunStyle,
     /// Target of the link the text we're reading is in, if any.
-    pub link: Option<String>,
+    link: Option<String>,
 }
 
 /// A finished paragraph that isn't in a table, for the reader to turn into a block.
@@ -49,6 +50,34 @@ impl<P: Default> BlockBuilder<P> {
     /// What the reader has recorded about the innermost open paragraph.
     pub fn paragraph(&mut self) -> Option<&mut P> {
         self.paragraphs.last_mut().map(|p| &mut p.props)
+    }
+
+    /// Starts a run of text, with no formatting until the reader sets some.
+    pub fn start_run(&mut self) {
+        self.style = RunStyle::default();
+    }
+
+    pub fn set_bold(&mut self, bold: bool) {
+        self.style.bold = bold;
+    }
+
+    pub fn set_italic(&mut self, italic: bool) {
+        self.style.italic = italic;
+    }
+
+    /// Ends a run, so what comes between runs, such as a line break, isn't formatted.
+    pub fn end_run(&mut self) {
+        self.style = RunStyle::default();
+    }
+
+    /// Starts text that links to `link`. `None`, a link to nowhere the file says, links the
+    /// text to nothing.
+    pub fn start_link(&mut self, link: Option<String>) {
+        self.link = link;
+    }
+
+    pub fn end_link(&mut self) {
+        self.link = None;
     }
 
     /// Adds text to the innermost paragraph with the current style and link, extending the
@@ -204,10 +233,11 @@ mod tests {
         builder.start_paragraph();
         builder.text("Hel");
         builder.text("lo ");
-        builder.style = BOLD;
+        builder.start_run();
+        builder.set_bold(true);
         builder.text("world");
-        builder.style = RunStyle::default();
-        builder.link = Some("https://example.com".into());
+        builder.end_run();
+        builder.start_link(Some("https://example.com".into()));
         builder.text("!");
 
         let runs = builder.end_paragraph().unwrap().runs;
@@ -217,6 +247,39 @@ mod tests {
                 Run::new("Hello ", RunStyle::default()),
                 Run::new("world", BOLD),
                 Run::new("!", RunStyle::default()).linked("https://example.com"),
+            ]
+        );
+    }
+
+    #[test]
+    fn formatting_ends_with_its_run_and_a_link_with_its_text() {
+        let mut builder = BlockBuilder::<()>::new();
+        builder.start_paragraph();
+        builder.start_link(Some("https://example.com".into()));
+        builder.start_run();
+        builder.set_bold(true);
+        builder.text("Bold link");
+        builder.end_run();
+        builder.text(" plain link");
+        builder.end_link();
+        builder.start_run();
+        builder.set_italic(true);
+        builder.text(" italic");
+        builder.end_run();
+        builder.start_link(None);
+        builder.text(" bookmark");
+
+        let italic = RunStyle {
+            bold: false,
+            italic: true,
+        };
+        assert_eq!(
+            builder.end_paragraph().unwrap().runs,
+            [
+                Run::new("Bold link", BOLD).linked("https://example.com"),
+                Run::new(" plain link", RunStyle::default()).linked("https://example.com"),
+                Run::new(" italic", italic),
+                Run::new(" bookmark", RunStyle::default()),
             ]
         );
     }
@@ -260,7 +323,7 @@ mod tests {
         };
         let mut builder = BlockBuilder::<()>::new();
         builder.start_paragraph();
-        builder.link = Some("https://example.com".into());
+        builder.start_link(Some("https://example.com".into()));
         builder.image(image("Logo", None));
         builder.image(image("Map", Some("https://maps.example.com")));
 

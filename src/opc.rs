@@ -337,6 +337,13 @@ pub struct Targets {
     pub images: HashMap<String, String>,
 }
 
+impl Targets {
+    /// The web link the relationship in `e`'s `r:id` points at, if it's one.
+    pub fn link(&self, e: &BytesStart) -> Option<String> {
+        attr(e, "id").and_then(|id| self.links.get(&id).cloned())
+    }
+}
+
 /// The elements open at a point in [`walk`], by local name (`<w:r>` -> `"r"`).
 ///
 /// Readers decide what an element or piece of text means from where it is, such as "text

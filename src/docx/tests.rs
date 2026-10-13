@@ -1,7 +1,7 @@
 //! Unit tests for the DOCX reader. A child module of `docx`, so it can use private items.
 
 use super::*;
-use crate::document::{Field, ImagePart, ListKind, Run, RunKind, TableCell};
+use crate::document::{Field, ImagePart, ListKind, Run, RunKind, RunStyle, TableCell};
 
 const BOLD: RunStyle = RunStyle {
     bold: true,

@@ -29,52 +29,62 @@ pub fn convert(
     output: Option<&Path>,
     log: &mut impl Write,
 ) -> Result<()> {
-    let pictures = if images.is_some() {
+    // Image links are relative to the folder the Markdown goes in. The images folder is
+    // created before the workbook is read, as for a document.
+    let markdown_dir = match sheets {
+        Sheets::One(_) => output::markdown_dir(output),
+        Sheets::All => {
+            let dir = output.unwrap_or(Path::new("."));
+            output::ensure_dir(dir)?;
+            dir
+        }
+    };
+    let mut export = images::export_to(images, markdown_dir)?;
+
+    // Pictures are read only when there's somewhere to save them.
+    let pictures = if export.is_some() {
         Pictures::Include
     } else {
         Pictures::Skip
     };
-    let export = match sheets {
-        Sheets::One(name) => {
-            let workbook = xlsx::read_sheet(source.reader()?, name.as_deref(), pictures)?;
-            let mut export = images::export_to(images, output::markdown_dir(output))?;
-            write_one(workbook, format, export.as_mut(), output)?;
-            export
-        }
-        Sheets::All => {
-            let dir = output.unwrap_or(Path::new("."));
-            output::ensure_dir(dir)?;
-            let mut export = images::export_to(images, dir)?;
-            let workbook = xlsx::read_all_sheets(source.reader()?, pictures)?;
-            write_all(workbook, format, export.as_mut(), dir, &source.stem(), log)?;
-            export
-        }
+    let Workbook {
+        sheets: read,
+        mut archive,
+    } = match sheets {
+        Sheets::One(name) => xlsx::read_sheet(source.reader()?, name.as_deref(), pictures)?,
+        Sheets::All => xlsx::read_all_sheets(source.reader()?, pictures)?,
     };
+    let saving = export.as_mut().map(|export| SavePictures {
+        archive: &mut archive,
+        export,
+    });
+    match sheets {
+        Sheets::One(_) => write_one(read, format, saving, output)?,
+        Sheets::All => write_all(read, format, saving, markdown_dir, &source.stem(), log)?,
+    }
+
     if let Some(export) = &export {
         export.report(log)?;
     }
     Ok(())
 }
 
+/// Where `--images` reads a workbook's pictures from, and saves them to.
+struct SavePictures<'a, R> {
+    archive: &'a mut Archive<R>,
+    export: &'a mut ImageExport,
+}
+
 /// Writes the sheets read to stdout or the `output` file, one after another.
 fn write_one<R: Read + Seek>(
-    workbook: Workbook<R>,
+    sheets: Vec<Sheet>,
     format: TableFormat,
-    mut export: Option<&mut ImageExport>,
+    mut saving: Option<SavePictures<'_, R>>,
     output: Option<&Path>,
 ) -> Result<()> {
-    let Workbook {
-        sheets,
-        mut archive,
-    } = workbook;
     let mut out = output::open_output(output)?;
     for sheet in sheets {
-        write_sheet(
-            sheet,
-            format,
-            archive.as_mut().zip(export.as_deref_mut()),
-            &mut out,
-        )?;
+        write_sheet(sheet, format, saving.as_mut(), &mut out)?;
     }
     // BufWriter flushes on drop but ignores errors there, so flush explicitly.
     out.flush()?;
@@ -83,49 +93,40 @@ fn write_one<R: Read + Seek>(
 
 /// Writes each sheet to `<dir>/<stem>-<sheet>.<ext>`, numbering names that clash.
 fn write_all<R: Read + Seek>(
-    workbook: Workbook<R>,
+    sheets: Vec<Sheet>,
     format: TableFormat,
-    mut export: Option<&mut ImageExport>,
+    mut saving: Option<SavePictures<'_, R>>,
     dir: &Path,
     stem: &str,
     log: &mut impl Write,
 ) -> Result<()> {
-    let Workbook {
-        sheets,
-        mut archive,
-    } = workbook;
     let mut names = UniqueNames::default();
     for sheet in sheets {
         let path = output::sheet_output_path(dir, stem, &sheet.name, format, &mut names);
         let mut out = output::open_output(Some(&path))?;
-        write_sheet(
-            sheet,
-            format,
-            archive.as_mut().zip(export.as_deref_mut()),
-            &mut out,
-        )?;
+        write_sheet(sheet, format, saving.as_mut(), &mut out)?;
         out.flush()?;
         writeln!(log, "wrote {}", path.display())?;
     }
     Ok(())
 }
 
-/// Writes a sheet's table, then saves its pictures through `images` if asked to.
+/// Writes a sheet's table, then saves its pictures if asked to.
 ///
 /// Markdown lists the pictures after the table. CSV, TSV and JSON have no way to point at an
 /// image, so for those the files are saved and the data is left as it is.
 fn write_sheet<R: Read + Seek>(
     sheet: Sheet,
     format: TableFormat,
-    images: Option<(&mut Archive<R>, &mut ImageExport)>,
+    saving: Option<&mut SavePictures<'_, R>>,
     out: &mut impl Write,
 ) -> Result<()> {
     writers::write_table(&sheet.table, format, &mut *out)?;
 
-    let Some((archive, export)) = images else {
+    let Some(saving) = saving else {
         return Ok(());
     };
-    let pictures = images::resolve(sheet.pictures, archive, Images::Save(export))?;
+    let pictures = images::resolve(sheet.pictures, saving.archive, Images::Save(saving.export))?;
     if format == TableFormat::Markdown && !pictures.is_empty() {
         if !sheet.table.is_empty() {
             writeln!(out)?;
@@ -273,5 +274,52 @@ mod tests {
             fs::read_to_string(dir.path().join("stdin-Sales.csv")).unwrap(),
             "Sales\n"
         );
+    }
+
+    #[test]
+    fn one_sheet_without_images_saves_nothing_and_says_nothing() {
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("sales.md");
+        let source = source(&["Sales"], &["Sales"]);
+        let log = convert_to(
+            &source,
+            Sheets::One(None),
+            TableFormat::Markdown,
+            None,
+            &output,
+        );
+
+        assert_eq!(
+            fs::read_to_string(&output).unwrap(),
+            "| Sales |\n| ----- |\n"
+        );
+        assert_eq!(files(dir.path()), ["sales.md"]);
+        assert_eq!(log, "");
+    }
+
+    #[test]
+    fn all_sheets_in_markdown_list_their_own_pictures() {
+        let dir = TempDir::new().unwrap();
+        let out = dir.path().join("out");
+        let images = out.join("images");
+        let source = source(&["Plain", "Sales"], &["Sales"]);
+        let log = convert_to(
+            &source,
+            Sheets::All,
+            TableFormat::Markdown,
+            Some(&images),
+            &out,
+        );
+
+        assert_eq!(
+            fs::read_to_string(out.join("stdin-Plain.md")).unwrap(),
+            "| Plain |\n| ----- |\n"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("stdin-Sales.md")).unwrap(),
+            "| Sales |\n| ----- |\n\n![Logo](images/image1.png)\n"
+        );
+        assert_eq!(files(&images), ["image1.png"]);
+        assert!(log.ends_with(&format!("saved 1 images to {}\n", images.display())));
     }
 }

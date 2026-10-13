@@ -30,7 +30,7 @@ use quick_xml::events::BytesStart;
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
 use crate::document::table_builder::{Merged, MergedCells};
 use crate::document::{Align, Block, Field, ImagePart, RunStyle};
-use crate::drawingml::Picture;
+use crate::drawingml::PictureReader;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 use package::{NoteId, NoteKind, Package};
@@ -193,7 +193,7 @@ struct Parser<'p> {
     /// Inside the saved text of a page number field that's become a [`Field`].
     in_page_field: bool,
     /// The drawing being read, from its `wp:inline` or `wp:anchor`.
-    picture: Picture,
+    pictures: PictureReader,
 }
 
 /// The notes the body refers to, in the order it first refers to each.
@@ -273,6 +273,10 @@ impl XmlHandler for Parser<'_> {
     ];
 
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
+        // Each image in a drawing is added where its `a:blip` is.
+        if let Some(run) = self.pictures.start(e, is_empty, open, self.targets) {
+            self.builder.image(run);
+        }
         let in_run = open.inside("r");
         match e.local_name().as_ref() {
             "p" if !is_empty => self.builder.start_paragraph(),
@@ -305,15 +309,6 @@ impl XmlHandler for Parser<'_> {
             "r" if !is_empty => self.builder.style = RunStyle::default(),
             "b" if in_run => self.builder.style.bold = is_on(e),
             "i" if in_run => self.builder.style.italic = is_on(e),
-            // A drawing starts afresh, so nothing carries over from the last one. Each image in it
-            // is added where its `a:blip` is, as a group can hold several.
-            "drawing" | "inline" | "anchor" if in_run => self.picture = Picture::default(),
-            "blip" if in_run => {
-                self.picture.read(e, open, self.targets);
-                if let Some(run) = self.picture.take_run() {
-                    self.builder.image(run);
-                }
-            }
             // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
             "imagedata" if in_run => {
                 if let Some(part) = attr(e, "id").and_then(|id| self.targets.images.get(&id)) {
@@ -379,8 +374,6 @@ impl XmlHandler for Parser<'_> {
                     table.merge(Merged::Up);
                 }
             }
-            // The rest of a drawing: its alt text, size and link.
-            _ if in_run => self.picture.read(e, open, self.targets),
             _ => {}
         }
     }
@@ -423,7 +416,7 @@ impl<'p> Parser<'p> {
             page_fields: false,
             field_instruction: None,
             in_page_field: false,
-            picture: Picture::default(),
+            pictures: PictureReader::word_drawings(),
         }
     }
 

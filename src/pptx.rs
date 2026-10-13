@@ -26,7 +26,7 @@ use quick_xml::events::BytesStart;
 use crate::document::builder::{BlockBuilder, Paragraph};
 use crate::document::table_builder::{Merged, MergedCells};
 use crate::document::{Align, Block, ImagePart, ListKind, Run, RunStyle, append_run, is_blank};
-use crate::drawingml::Picture;
+use crate::drawingml::PictureReader;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
 
@@ -215,8 +215,8 @@ struct SlideParser<'a> {
     title: Vec<Run<ImagePart>>,
     hidden: bool,
     shape: Option<Shape>,
-    /// The picture (`p:pic`) being read, if any.
-    picture: Option<Picture>,
+    /// Reads the pictures (`p:pic`) on a slide. Notes leave pictures out.
+    pictures: PictureReader,
     builder: BlockBuilder<ParagraphProps>,
 }
 
@@ -225,7 +225,7 @@ impl<'a> SlideParser<'a> {
         SlideParser {
             targets,
             notes,
-            picture: None,
+            pictures: PictureReader::pic_elements(),
             title: Vec::new(),
             hidden: false,
             shape: None,
@@ -238,13 +238,6 @@ impl<'a> SlideParser<'a> {
             && let Some(shape) = self.shape.as_mut()
         {
             shape.paragraphs.push(paragraph);
-        }
-    }
-
-    /// A picture becomes its own paragraph, where it sits among the slide's shapes.
-    fn finish_picture(&mut self) {
-        if let Some(run) = self.picture.take().and_then(|mut p| p.take_run()) {
-            self.builder.push(Block::paragraph(vec![run]));
         }
     }
 
@@ -305,15 +298,13 @@ impl XmlHandler for SlideParser<'_> {
     const SKIP: &'static [&'static str] = &["Fallback"];
 
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
-        if let Some(picture) = self.picture.as_mut() {
-            picture.read(e, open, self.targets);
+        if !self.notes {
+            // A slide's picture finishes at its end, never here.
+            self.pictures.start(e, is_empty, open, self.targets);
         }
         match e.local_name().as_ref() {
             "sld" => self.hidden = attr(e, "show").as_deref() == Some("0"),
             "sp" if !is_empty => self.shape = Some(Shape::default()),
-            // A picture's size is from its own `a:xfrm`. In a group that was resized after the
-            // picture was added, that's the size before the group was resized.
-            "pic" if !is_empty && !self.notes => self.picture = Some(Picture::default()),
             "ph" => {
                 if let Some(shape) = self.shape.as_mut() {
                     // A placeholder with no type is a content placeholder.
@@ -379,6 +370,12 @@ impl XmlHandler for SlideParser<'_> {
     }
 
     fn end(&mut self, name: &str) {
+        // A picture becomes its own paragraph, where it sits among the slide's shapes. Its size
+        // is from its own `a:xfrm`: in a group that was resized after the picture was added,
+        // that's the size before the group was resized.
+        if let Some(run) = self.pictures.end(name) {
+            self.builder.push(Block::paragraph(vec![run]));
+        }
         match name {
             "r" | "fld" => {
                 // Line breaks sit between runs, so they mustn't inherit the last run's formatting.
@@ -387,7 +384,6 @@ impl XmlHandler for SlideParser<'_> {
             }
             "p" => self.finish_paragraph(),
             "sp" => self.finish_shape(),
-            "pic" => self.finish_picture(),
             "tc" => self.builder.end_cell(),
             "tr" => self.builder.end_row(),
             "tbl" => self.builder.end_table(),

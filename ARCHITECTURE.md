@@ -182,7 +182,9 @@ resolving, and their pictures are never saved.
   out into a cursor of its own. `pdf::lines` breaks a paragraph's runs into lines, needing only
   the fonts, and reorders each line's right-to-left text for drawing
   ([ADR 0006](docs/adr/0006-right-to-left-text.md)). `pdf::fonts` sets text in the built-in Noto Sans and loads
-  installed fonts only for characters it lacks. What couldn't go in, missing characters or
+  installed fonts only for characters it lacks. `pdf::decoded::DecodedImages` decodes each
+  image once as layout asks for it, after checking its format and that it's no larger than
+  `MAX_IMAGE_PIXELS`. What couldn't go in, missing characters or
   images, comes back in `pdf::Rendered`, and `Rendered::report` writes it as warnings to the
   log it's given: stderr, or a buffer in tests.
 - **`workbook::convert`** carries out a `Plan::Workbook`: it reads the sheets, writes each

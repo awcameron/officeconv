@@ -4,6 +4,7 @@
 //! PowerPoint's own fonts, colors, margins or slide designs. Text is set in Noto Sans, which is
 //! built in, with installed fonts filling in characters it lacks (see [`fonts`]).
 
+pub mod decoded;
 pub mod fonts;
 pub mod layout;
 pub mod lines;
@@ -24,8 +25,9 @@ use krilla::surface::Surface;
 use crate::document::Block;
 use crate::error::{ConvertError, Result};
 use crate::images::EmbeddedImages;
+use decoded::{MAX_IMAGE_PIXELS, SkippedImages};
 use fonts::Fonts;
-use layout::{Item, Layout, MAX_IMAGE_PIXELS, Page, PageSetup, SkippedImages};
+use layout::{Item, Layout, Page, PageSetup};
 
 /// A finished PDF, and what couldn't go into it.
 #[derive(Debug)]

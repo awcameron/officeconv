@@ -37,10 +37,10 @@ pub enum Pictures {
 #[derive(Debug)]
 pub struct Workbook<R> {
     pub sheets: Vec<Sheet>,
-    /// The workbook's package, open when [`Pictures::Include`] asked for pictures, to resolve
-    /// them with [`images::resolve`](crate::images::resolve). Its size limits already count
-    /// the drawings read to find them, and go on to count the images.
-    pub archive: Option<Archive<R>>,
+    /// The workbook's package, to resolve the sheets' pictures from with
+    /// [`images::resolve`](crate::images::resolve). With [`Pictures::Include`], its size
+    /// limits already count the drawings read to find them, and go on to count the images.
+    pub archive: Archive<R>,
 }
 
 /// Reads one sheet from a workbook.
@@ -128,35 +128,26 @@ pub fn read_all_sheets_with_limits<R: Read + Seek>(
     with_pictures(reader, loaded, pictures, limits)
 }
 
-/// Finishes reading `loaded` sheets, each with its worksheet part if the workbook says. With
-/// [`Pictures::Include`], opens the package once more to find every sheet's pictures, and
-/// keeps it open for resolving them.
+/// Finishes reading `loaded` sheets, each with its worksheet part if the workbook says. Opens
+/// the package once more and keeps it open for resolving pictures, finding every sheet's
+/// pictures in it first with [`Pictures::Include`].
 fn with_pictures<R: Read + Seek>(
     reader: R,
     loaded: Vec<(Sheet, Option<String>)>,
     pictures: Pictures,
     limits: Limits,
 ) -> Result<Workbook<R>> {
-    if pictures == Pictures::Skip {
-        let sheets = loaded.into_iter().map(|(sheet, _)| sheet).collect();
-        return Ok(Workbook {
-            sheets,
-            archive: None,
-        });
-    }
-
     let mut archive = Archive::with_limits(reader, limits)?;
     let mut sheets = Vec::with_capacity(loaded.len());
     for (mut sheet, part) in loaded {
-        if let Some(part) = part {
+        if let Some(part) = part
+            && pictures == Pictures::Include
+        {
             sheet.pictures = pictures::sheet_pictures(&mut archive, &part)?;
         }
         sheets.push(sheet);
     }
-    Ok(Workbook {
-        sheets,
-        archive: Some(archive),
-    })
+    Ok(Workbook { sheets, archive })
 }
 
 /// Every sheet's worksheet part, such as `xl/worksheets/sheet1.xml`, by sheet name.
@@ -360,7 +351,6 @@ pub(crate) mod tests {
     /// Reads the sheet `name`, or the first one, without its pictures.
     fn one_sheet(name: Option<&str>) -> Sheet {
         let mut workbook = read_sheet(sample_workbook(), name, Pictures::Skip).unwrap();
-        assert!(workbook.archive.is_none());
         workbook.sheets.remove(0)
     }
 
@@ -441,7 +431,6 @@ pub(crate) mod tests {
         )]);
         let pictures: Vec<_> = workbook.sheets.iter().map(|s| &s.pictures[..]).collect();
         assert_eq!(pictures, [&[][..], &[logo.clone()][..]]);
-        assert!(workbook.archive.is_some());
 
         let mut one =
             read_sheet(workbook_with_picture(), Some("Sales"), Pictures::Include).unwrap();
@@ -452,6 +441,5 @@ pub(crate) mod tests {
     fn leaves_pictures_unread_unless_asked() {
         let workbook = read_all_sheets(workbook_with_picture(), Pictures::Skip).unwrap();
         assert!(workbook.sheets.iter().all(|s| s.pictures.is_empty()));
-        assert!(workbook.archive.is_none());
     }
 }

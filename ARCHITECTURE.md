@@ -123,9 +123,10 @@ picture starts and when it's finished.
 - **XLSX** cell values are read by [calamine](https://crates.io/crates/calamine), which has no
   size limits of its own. So `xlsx::check_sizes` first decompresses every part through
   `Archive` to check it's within `Limits`, then hands the file to calamine. Cells keep their
-  type as `table::Cell`, for `--typed` JSON. With `--images`, the archive is opened once more to
-  find each sheet's drawings (`xlsx::pictures`), and stays open in `xlsx::Workbook` for the
-  images to be read from.
+  type as `table::Cell`, for `--typed` JSON. The archive is then opened once more and stays
+  open in `xlsx::Workbook`. With `--images`, each sheet's drawings are found in it first
+  (`xlsx::pictures`), and the images are read from it. `workbook::convert` asks for pictures
+  only when it has created the `ImageExport` to save them, so the two can't disagree.
 - **CSV and TSV** are read by `delimited::read_table`, which has its own `delimited::Limits` on
   the file's size and the table's cell count. There's no archive, and no images.
 

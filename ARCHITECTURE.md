@@ -24,7 +24,8 @@ flowchart TD
     plan -->|"Plan::Delimited"| delimited["delimited::read_table"]
     plan -->|"Plan::Workbook"| workbook["workbook::convert"]
     workbook --> xlsx["xlsx::read_sheet, read_all_sheets"]
-    plan -->|"Plan::Document"| archive["opc::Archive"]
+    plan -->|"Plan::Document"| document_output["document_output::convert"]
+    document_output --> archive["opc::Archive"]
 
     archive --> docx["docx::read_blocks"]
     archive --> pptx["pptx::read_blocks"]
@@ -160,8 +161,8 @@ reader used, so the size limits count images too, and does what `Images` says:
 - **`Images::Embed`** (PDF): `EmbeddedImages` keeps the bytes in memory, keyed by part.
 - **`Images::Skip`** (Markdown without `--images`): the image is left out.
 
-Markdown can't show headers and footers, so `convert_document` drops them before resolving, and
-their pictures are never saved.
+Markdown can't show headers and footers, so `document_output::convert` drops them before
+resolving, and their pictures are never saved.
 
 ## Writing
 
@@ -182,6 +183,10 @@ their pictures are never saved.
   one's table with `write_table`, and with `--images` saves its pictures, listing them after the
   table in Markdown. It writes one sheet to stdout or the `-o` file, or with `--all-sheets` each
   sheet to `<stem>-<sheet>.<ext>`, and says what it wrote on the log `run()` passes, stderr.
+- **`document_output::convert`** carries out a `Plan::Document`: it reads the blocks, chooses
+  how their images are handled for the output, resolves them, and writes Markdown or a PDF to
+  stdout or the `-o` file. It says how many images it saved, and what PDF had to leave out, on
+  the log `run()` passes, stderr.
 - **`output`** opens stdout or the `-o` file, and with `--all-sheets` names one file per sheet,
   using `output::safe_file_name` and `UniqueNames` so names can't leave the folder or collide.
 

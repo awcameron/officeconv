@@ -7,6 +7,7 @@
 mod cli;
 mod delimited;
 mod document;
+mod document_output;
 mod docx;
 mod drawingml;
 mod error;
@@ -53,9 +54,8 @@ use std::process::ExitCode;
 use clap::Parser;
 use cli::Cli;
 use error::{ConvertError, Result};
-use images::{EmbeddedImages, Images};
 use input::{InputKind, Source};
-use plan::{DocumentOutput, DocumentReader, Pages, Plan};
+use plan::Plan;
 use writers::TableFormat;
 
 /// The `officeconv` command: parses the arguments, converts, and reports any error.
@@ -98,7 +98,9 @@ fn run(cli: &Cli) -> Result<()> {
             output,
             &mut io::stderr().lock(),
         ),
-        Plan::Document { reader, output: to } => convert_document(&source, reader, to, output),
+        Plan::Document { reader, output: to } => {
+            document_output::convert(&source, reader, to, output, &mut io::stderr().lock())
+        }
     }
 }
 
@@ -112,85 +114,6 @@ fn convert_delimited(
     let table = delimited::read_table(source.reader()?, kind)?;
     let mut out = output::open_output(output)?;
     writers::write_table(&table, format, &mut out)?;
-    out.flush()?;
-    Ok(())
-}
-
-/// Converts a Word or PowerPoint file to Markdown (saving its images if asked to) or to PDF.
-fn convert_document(
-    source: &Source,
-    reader: DocumentReader,
-    to: DocumentOutput,
-    output: Option<&Path>,
-) -> Result<()> {
-    let mut export = match &to {
-        DocumentOutput::Markdown { images } => {
-            images::export_to(images.as_deref(), output::markdown_dir(output))?
-        }
-        DocumentOutput::Pdf(_) => None,
-    };
-    let mut embedded = EmbeddedImages::default();
-    let images = match (&to, export.as_mut()) {
-        (DocumentOutput::Pdf(_), _) => Images::Embed(&mut embedded),
-        (_, Some(export)) => Images::Save(export),
-        (_, None) => Images::Skip,
-    };
-
-    let mut archive = opc::Archive::open(source.reader()?)?;
-    let mut blocks = match reader {
-        DocumentReader::Pptx(notes) => pptx::read_blocks(&mut archive, notes)?,
-        DocumentReader::Docx => docx::read_blocks(&mut archive)?,
-    };
-    if let DocumentOutput::Markdown { .. } = to {
-        // Markdown leaves headers and footers out, so `--images` mustn't save their pictures.
-        blocks.retain(|block| !block.is_page_furniture());
-    }
-    let blocks = images::resolve(blocks, &mut archive, images)?;
-
-    if let DocumentOutput::Pdf(pages) = to {
-        return write_pdf(pages, &blocks, &embedded, output);
-    }
-
-    write_output(output, document::markdown::render(&blocks).as_bytes())?;
-    if let Some(export) = &export {
-        export.report(&mut io::stderr().lock())?;
-    }
-    Ok(())
-}
-
-/// Writes a Word document as A4 pages, or a deck as one landscape page per slide. Image runs
-/// hold keys into `images`.
-#[cfg(feature = "pdf")]
-fn write_pdf(
-    pages: Pages,
-    blocks: &[document::Block],
-    images: &EmbeddedImages,
-    output: Option<&Path>,
-) -> Result<()> {
-    let setup = match pages {
-        Pages::Slides => pdf::layout::PageSetup::SLIDES,
-        Pages::Document => pdf::layout::PageSetup::DOCUMENT,
-    };
-    let rendered = pdf::render(blocks, images, setup)?;
-    write_output(output, &rendered.pdf)?;
-    rendered.report(&mut io::stderr().lock())?;
-    Ok(())
-}
-
-#[cfg(not(feature = "pdf"))]
-fn write_pdf(
-    _pages: Pages,
-    _blocks: &[document::Block],
-    _images: &EmbeddedImages,
-    _output: Option<&Path>,
-) -> Result<()> {
-    Err(ConvertError::PdfNotBuilt)
-}
-
-/// Writes the converted document to stdout or the `output` file.
-fn write_output(output: Option<&Path>, bytes: &[u8]) -> Result<()> {
-    let mut out = output::open_output(output)?;
-    out.write_all(bytes)?;
     out.flush()?;
     Ok(())
 }

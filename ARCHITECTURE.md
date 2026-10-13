@@ -106,8 +106,9 @@ and the parser builds blocks through `document::builder::BlockBuilder`. The read
 an element means and tells the builder where runs and links start and end. The builder owns
 what's open (the paragraph, the table and its cells, the current run's formatting and link)
 and where finished content goes, apart from a paragraph outside a table: the reader decides
-whether that's a heading, a list item or a paragraph, since PPTX can only tell once its shape
-ends. `Block::list_item_or_paragraph` makes the last choice for both.
+what that becomes, since DOCX needs the package's styles and numbering, and PPTX the whole shape
+([ADR 0007](docs/adr/0007-readers-route-paragraphs.md)). `Block::list_item_or_paragraph` makes
+the last choice for both.
 
 Pictures are DrawingML in all three formats. Each reader hands its XML events to a
 `drawingml::PictureReader` and gets back each finished picture as an image run. The reader

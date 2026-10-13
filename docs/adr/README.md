@@ -11,6 +11,7 @@ why, and when to reconsider it.
 | [0004](0004-document-model.md) | The document model is as rich as the most capable output | Accepted | 2026-10-07 |
 | [0005](0005-image-types.md) | Images a reader finds and images a writer shows are different types | Accepted | 2026-10-08 |
 | [0006](0006-right-to-left-text.md) | Right-to-left text in PDF is reordered on our own layout | Accepted | 2026-10-12 |
+| [0007](0007-readers-route-paragraphs.md) | Readers decide what kind of block a paragraph is | Accepted | 2026-10-13 |
 
 ## Adding one
 

@@ -17,7 +17,7 @@ use std::io::{Read, Seek};
 use quick_xml::events::BytesStart;
 
 use crate::document::{Block, ImagePart, Run};
-use crate::drawingml;
+use crate::drawingml::PictureReader;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler};
 
@@ -69,12 +69,12 @@ pub fn read_pictures<R: Read + Seek>(
 pub fn parse_drawing(xml: &str, targets: &Targets) -> Result<Vec<Picture>> {
     let mut parser = DrawingParser {
         targets,
-        pictures: Vec::new(),
+        found: Vec::new(),
         anchor: None,
-        picture: None,
+        pictures: PictureReader::pic_elements(),
     };
     opc::walk(xml, &mut parser)?;
-    Ok(parser.pictures)
+    Ok(parser.found)
 }
 
 /// Where an anchor's top-left corner is.
@@ -86,38 +86,33 @@ struct Anchor {
 
 struct DrawingParser<'a> {
     targets: &'a Targets,
-    pictures: Vec<Picture>,
+    found: Vec<Picture>,
     anchor: Option<Anchor>,
-    picture: Option<drawingml::Picture>,
+    pictures: PictureReader,
 }
 
 impl XmlHandler for DrawingParser<'_> {
     fn start(&mut self, e: &BytesStart, is_empty: bool, open: &Open) {
-        if let Some(picture) = self.picture.as_mut() {
-            picture.read(e, open, self.targets);
-        }
+        // A picture finishes at its end, never here.
+        self.pictures.start(e, is_empty, open, self.targets);
         match e.local_name().as_ref() {
             "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor" if !is_empty => {
                 self.anchor = Some(Anchor::default());
             }
-            "pic" if !is_empty => self.picture = Some(drawingml::Picture::default()),
             _ => {}
         }
     }
 
     fn end(&mut self, name: &str) {
+        if let Some(image) = self.pictures.end(name) {
+            let anchor = self.anchor.as_ref();
+            self.found.push(Picture {
+                image,
+                row: anchor.and_then(|a| a.row).unwrap_or(u32::MAX),
+                col: anchor.and_then(|a| a.col).unwrap_or(u32::MAX),
+            });
+        }
         match name {
-            "pic" => {
-                let Some(image) = self.picture.take().and_then(|mut p| p.take_run()) else {
-                    return;
-                };
-                let anchor = self.anchor.as_ref();
-                self.pictures.push(Picture {
-                    image,
-                    row: anchor.and_then(|a| a.row).unwrap_or(u32::MAX),
-                    col: anchor.and_then(|a| a.col).unwrap_or(u32::MAX),
-                });
-            }
             "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor" => self.anchor = None,
             _ => {}
         }

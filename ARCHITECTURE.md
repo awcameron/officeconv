@@ -106,9 +106,11 @@ and the parser builds blocks through `document::builder::BlockBuilder`. The read
 an element means; the builder owns what's open (the paragraph, the table and its cells, the
 current run's formatting and link) and where finished content goes.
 
-Pictures are DrawingML in all three formats. `drawingml::Picture` reads what each element says
-about a picture (its alt text, image part, size and link), and each reader decides where a
-picture starts and when it's finished.
+Pictures are DrawingML in all three formats. Each reader hands its XML events to a
+`drawingml::PictureReader` and gets back each finished picture as an image run. The reader
+knows where a picture starts and ends in each format: a `pic` element in PowerPoint and Excel,
+and in Word each `a:blip` of a drawing, which can hold a group. Inside it, `drawingml::Picture`
+reads what each element says about a picture: its alt text, image part, size and link.
 
 - **DOCX** reads `word/document.xml` with its supporting parts: numbering, styles, and footnotes
   and endnotes, which are numbered in the order the body refers to them and added after it. The

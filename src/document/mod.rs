@@ -69,6 +69,19 @@ impl<I> Block<I> {
         }
     }
 
+    /// A list item of `kind` at `level`, or a paragraph aligned `align` if it isn't in a list.
+    pub fn list_item_or_paragraph(
+        kind: Option<ListKind>,
+        level: u8,
+        align: Align,
+        runs: Vec<Run<I>>,
+    ) -> Self {
+        match kind {
+            Some(kind) => Block::ListItem { kind, level, runs },
+            None => Block::Paragraph { runs, align },
+        }
+    }
+
     /// A left-aligned heading at `level`.
     pub fn heading(level: u8, runs: Vec<Run<I>>) -> Self {
         Block::Heading {

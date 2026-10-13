@@ -278,17 +278,12 @@ impl<'a> SlideParser<'a> {
                 Bullet::Numbered => Some(ListKind::Numbered),
                 Bullet::Inherit => bullets_by_default.then_some(ListKind::Bullet),
             };
-            self.builder.push(match kind {
-                Some(kind) => Block::ListItem {
-                    kind,
-                    level: paragraph.props.level,
-                    runs: paragraph.runs,
-                },
-                None => Block::Paragraph {
-                    runs: paragraph.runs,
-                    align: paragraph.props.align,
-                },
-            });
+            self.builder.push(Block::list_item_or_paragraph(
+                kind,
+                paragraph.props.level,
+                paragraph.props.align,
+                paragraph.runs,
+            ));
         }
     }
 }
@@ -333,18 +328,16 @@ impl XmlHandler for SlideParser<'_> {
                 }
             }
             // A text field (slide number, date) holds text just like a run.
+            // A run's link is its own, so one never carries over from the last.
             "r" | "fld" if !is_empty => {
-                self.builder.style = RunStyle::default();
-                self.builder.link = None;
+                self.builder.start_run();
+                self.builder.end_link();
             }
             "rPr" if in_run(open) => {
-                self.builder.style.bold = is_on(attr(e, "b"));
-                self.builder.style.italic = is_on(attr(e, "i"));
+                self.builder.set_bold(is_on(attr(e, "b")));
+                self.builder.set_italic(is_on(attr(e, "i")));
             }
-            "hlinkClick" if in_run(open) => {
-                self.builder.link =
-                    attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
-            }
+            "hlinkClick" if in_run(open) => self.builder.start_link(self.targets.link(e)),
             "br" => self.builder.text("\n"),
             "tbl" if !is_empty => {
                 self.builder.start_table(MergedCells::Listed);
@@ -379,8 +372,8 @@ impl XmlHandler for SlideParser<'_> {
         match name {
             "r" | "fld" => {
                 // Line breaks sit between runs, so they mustn't inherit the last run's formatting.
-                self.builder.style = RunStyle::default();
-                self.builder.link = None;
+                self.builder.end_run();
+                self.builder.end_link();
             }
             "p" => self.finish_paragraph(),
             "sp" => self.finish_shape(),

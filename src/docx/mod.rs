@@ -29,7 +29,7 @@ use quick_xml::events::BytesStart;
 
 use crate::document::builder::{BlockBuilder, Paragraph, image_run};
 use crate::document::table_builder::{Merged, MergedCells};
-use crate::document::{Align, Block, Field, ImagePart, RunStyle};
+use crate::document::{Align, Block, Field, ImagePart};
 use crate::drawingml::PictureReader;
 use crate::error::Result;
 use crate::opc::{self, Archive, Open, Targets, XmlHandler, attr};
@@ -303,12 +303,11 @@ impl XmlHandler for Parser<'_> {
             }
             "hyperlink" if !is_empty => {
                 // External links have an `r:id`; links to bookmarks inside the document don't.
-                self.builder.link =
-                    attr(e, "id").and_then(|id| self.targets.links.get(&id).cloned());
+                self.builder.start_link(self.targets.link(e));
             }
-            "r" if !is_empty => self.builder.style = RunStyle::default(),
-            "b" if in_run => self.builder.style.bold = is_on(e),
-            "i" if in_run => self.builder.style.italic = is_on(e),
+            "r" if !is_empty => self.builder.start_run(),
+            "b" if in_run => self.builder.set_bold(is_on(e)),
+            "i" if in_run => self.builder.set_italic(is_on(e)),
             // Older documents use VML: `<v:imagedata r:id="rId5" o:title="..."/>`.
             "imagedata" if in_run => {
                 if let Some(part) = attr(e, "id").and_then(|id| self.targets.images.get(&id)) {
@@ -380,7 +379,7 @@ impl XmlHandler for Parser<'_> {
 
     fn end(&mut self, name: &str) {
         match name {
-            "hyperlink" => self.builder.link = None,
+            "hyperlink" => self.builder.end_link(),
             "fldSimple" => self.in_page_field = false,
             "p" => {
                 if let Some(paragraph) = self.builder.end_paragraph() {
@@ -459,14 +458,7 @@ impl<'p> Parser<'p> {
             .as_deref()
             .or_else(|| style.and_then(|s| s.num_id.as_deref()));
         let kind = num_id.and_then(|id| self.package.numbering.kind(id, props.list_level));
-        match kind {
-            Some(kind) => Block::ListItem {
-                kind,
-                level: props.list_level,
-                runs,
-            },
-            None => Block::Paragraph { runs, align },
-        }
+        Block::list_item_or_paragraph(kind, props.list_level, align, runs)
     }
 }
 

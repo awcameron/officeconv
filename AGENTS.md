@@ -27,7 +27,7 @@ modules:
   part in the package; `images::resolve` then saves, embeds or drops them for the output
   ([ADR 0005](docs/adr/0005-image-types.md)).
 - `src/document/`, `src/writers.rs`, `src/pdf/`: the outputs. `src/workbook.rs` writes a
-  workbook's sheets and their pictures.
+  workbook's sheets and their pictures, and `src/document_output.rs` a document or deck.
 - `src/markdown.rs`: Markdown escaping and tables, shared by the spreadsheet and document
   Markdown writers.
 - `tests/cli/`: end-to-end tests that run the binary.

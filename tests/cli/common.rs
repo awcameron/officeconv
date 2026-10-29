@@ -103,10 +103,11 @@ pub fn edit_package(
         let mut entry = archive.by_index(i).unwrap();
         let mut contents = Vec::new();
         std::io::Read::read_to_end(&mut entry, &mut contents).unwrap();
-        if entry.name() == part {
+        let entry_name = entry.name().unwrap().into_owned();
+        if entry_name == part {
             contents = edit(String::from_utf8(contents).unwrap()).into_bytes();
         }
-        parts.push((entry.name().to_string(), contents));
+        parts.push((entry_name, contents));
     }
     sample_package(name, &parts)
 }

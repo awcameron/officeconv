@@ -135,7 +135,7 @@ impl<R: Read + Seek> Archive<R> {
     pub fn check_part_sizes(&mut self) -> Result<()> {
         for i in 0..self.zip.len() {
             let entry = self.zip.by_index(i)?;
-            let name = entry.name().to_string();
+            let name = entry.name()?.into_owned();
             read_limited(entry, &name, self.limits, &mut self.read, &mut io::sink())?;
         }
         Ok(())

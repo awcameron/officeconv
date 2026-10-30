@@ -249,3 +249,29 @@ Releases build with exactly the Rust version in `rust-version` in `Cargo.toml`, 
 `stable` is that day, so the same commit always builds the same way. CI's `msrv` job runs the
 tests with that version too, so a dependency that needs a newer Rust fails there. To move to a
 newer Rust, change `rust-version` in a PR; the README's "Rust 1.92 or later" changes with it.
+
+### Signing the macOS binaries
+
+The build job signs each macOS binary with a Developer ID certificate and the hardened runtime,
+before it's archived, then has Apple notarize it, failing if Apple doesn't accept it. It needs
+an Apple Developer Program membership and these repository secrets (Settings → Secrets and
+variables → Actions):
+
+| Secret                       | What it holds                                                        |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE_P12`      | The Developer ID Application certificate and its key, base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | The password the `.p12` was exported with                            |
+| `APPLE_API_KEY_P8`           | An App Store Connect API key's `.p8` file, as text                   |
+| `APPLE_API_KEY_ID`           | That key's ID                                                        |
+| `APPLE_API_ISSUER_ID`        | The issuer ID shown above the keys in App Store Connect              |
+
+Export the certificate and its key from Keychain Access as a `.p12`, then encode it with
+`base64 -i certificate.p12`. The API key comes from App Store Connect → Users and Access →
+Integrations → Team Keys, with the Developer role. It isn't tied to anyone's Apple ID, and it
+can be revoked on its own.
+
+Without any of the secrets, as on a Dependabot PR, the binaries are built unsigned and the log
+says so; a release built that way gets a warning. With only some of them, the build fails. A
+Developer ID certificate lasts five years: before it expires, make a new one in the Apple
+Developer account and replace the two certificate secrets. Binaries signed with the old one keep
+running, since their signatures are timestamped.

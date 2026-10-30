@@ -6,7 +6,7 @@ on your `PATH`, or build it with Cargo. This page covers the rest.
 - [Which Linux build](#which-linux-build)
 - [Downloading with the GitHub CLI](#downloading-with-the-github-cli)
 - [Checking where a binary came from](#checking-where-a-binary-came-from)
-- [Unsigned binaries](#unsigned-binaries)
+- [Signed binaries](#signed-binaries)
 - [An older version](#an-older-version)
 - [Building from source](#building-from-source)
 - [Uninstall](#uninstall)
@@ -42,13 +42,18 @@ gh attestation verify "officeconv-$target.tar.gz" -R awcameron/officeconv
 It prints the workflow and commit that built the file, and fails for anything else. On Windows,
 name the `.zip` instead.
 
-## Unsigned binaries
+## Signed binaries
 
-The binaries aren't code-signed by Apple or Microsoft. A browser marks a file it downloads as
-coming from the internet, and unpacking the archive in Finder or File Explorer passes the mark on
-to the binary inside. macOS then refuses to run `officeconv`, and Windows SmartScreen warns about
-it. `curl`, `gh` and `Invoke-WebRequest` downloads aren't marked, which is why the
-[README's steps](../README.md#download-a-binary) use them.
+The macOS binaries are signed with a Developer ID and notarized by Apple, so macOS runs them
+however they were downloaded. To see the signature, run
+`codesign -dv --verbose=2 ~/.local/bin/officeconv`: it names `Developer ID Application` as the
+authority. The first time a notarized binary runs, macOS checks it with Apple online.
+
+The Windows binaries, and the macOS ones up to v0.6.0, aren't signed. A browser marks a file it
+downloads as coming from the internet, and unpacking the archive in Finder or File Explorer passes
+the mark on to the binary inside. macOS then refuses to run an unsigned `officeconv`, and Windows
+SmartScreen warns about it. `curl`, `gh` and `Invoke-WebRequest` downloads aren't marked, which is
+why the [README's steps](../README.md#download-a-binary) use them.
 
 To remove the mark, give the path to the unpacked binary. On macOS:
 

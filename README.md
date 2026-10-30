@@ -98,15 +98,15 @@ On Linux without `shasum`, use `sha256sum -c "officeconv-$target.sha256"` instea
 `~/.local/bin` isn't on your `PATH` (macOS doesn't add it), add
 `export PATH="$HOME/.local/bin:$PATH"` to your shell's startup file.
 
-Downloaded the archive in a browser instead? macOS then won't run `officeconv`, saying it can't
-check it for malware, because the binary isn't signed by Apple. Remove the mark the browser
-left, giving the path where you put `officeconv`:
+The macOS binaries are signed and notarized by Apple, so a download from a browser runs too.
+Releases up to v0.6.0 aren't signed: if macOS won't run one of those, saying it can't check it
+for malware, remove the mark the browser left, giving the path where you put `officeconv`:
 
 ```sh
 xattr -d com.apple.quarantine ~/.local/bin/officeconv
 ```
 
-[Unsigned binaries](docs/install.md#unsigned-binaries) explains why.
+[Signed binaries](docs/install.md#signed-binaries) explains why.
 
 #### Windows
 

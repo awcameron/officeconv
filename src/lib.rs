@@ -4,6 +4,17 @@
 //! fuzz targets in `fuzz/` can link against it; it has no public API, and any of it may change
 //! in any release. See `docs/adr/0003-binary-only.md`.
 
+// Tests compare floats exactly where layout is deterministic, cast small known values, and
+// build fixtures with `format!` per item, where speed doesn't matter.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::float_cmp,
+        clippy::cast_possible_truncation,
+        clippy::format_collect
+    )
+)]
+
 mod cli;
 mod delimited;
 mod document;
@@ -99,7 +110,7 @@ fn run(cli: &Cli) -> Result<()> {
             &mut io::stderr().lock(),
         ),
         Plan::Document { reader, output: to } => {
-            document_output::convert(&source, reader, to, output, &mut io::stderr().lock())
+            document_output::convert(&source, reader, &to, output, &mut io::stderr().lock())
         }
     }
 }

@@ -77,9 +77,9 @@ fn resolves_entities_and_breaks() {
 #[test]
 fn skips_empty_paragraphs_and_deleted_text() {
     let blocks = parse(
-        r#"<w:p/>
+        r"<w:p/>
                <w:p><w:r><w:t>  </w:t></w:r></w:p>
-               <w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:r><w:t>kept</w:t></w:r></w:p>"#,
+               <w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del><w:r><w:t>kept</w:t></w:r></w:p>",
     );
     assert_eq!(blocks, [Block::paragraph(vec![Run::new("kept", PLAIN)])]);
 }
@@ -87,10 +87,10 @@ fn skips_empty_paragraphs_and_deleted_text() {
 #[test]
 fn ignores_fallback_copies() {
     let blocks = parse(
-        r#"<w:p><w:r><mc:AlternateContent>
+        r"<w:p><w:r><mc:AlternateContent>
                  <mc:Choice><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></mc:Choice>
                  <mc:Fallback><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></mc:Fallback>
-               </mc:AlternateContent></w:r></w:p>"#,
+               </mc:AlternateContent></w:r></w:p>",
     );
     assert_eq!(blocks, [Block::paragraph(vec![Run::new("boxed", PLAIN)])]);
 }
@@ -224,7 +224,7 @@ fn reads_tables_and_flattens_nested_ones() {
 #[test]
 fn ignores_tracked_formatting_changes() {
     let blocks = parse(
-        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>now bold</w:t></w:r></w:p>"#,
+        r"<w:p><w:r><w:rPr><w:b/><w:rPrChange><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>now bold</w:t></w:r></w:p>",
     );
     assert_eq!(blocks, [Block::paragraph(vec![Run::new("now bold", BOLD)])]);
 }
@@ -365,7 +365,7 @@ fn cell_of(text: &str) -> TableCell<ImagePart> {
 
 /// A table cell with properties `props` holding `text`, or an empty paragraph.
 fn tc(props: &str, text: &str) -> String {
-    format!(r#"<w:tc><w:tcPr>{props}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#)
+    format!(r"<w:tc><w:tcPr>{props}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
 }
 
 /// A table with `columns` grid columns and these rows of cells.

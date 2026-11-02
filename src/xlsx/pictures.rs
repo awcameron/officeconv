@@ -281,10 +281,9 @@ mod tests {
                 ("Company logo", "xl/media/logo.png"),
             ]
         );
-        assert!(
-            read_pictures(&mut archive, "xl/worksheets/missing.xml")
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            read_pictures(&mut archive, "xl/worksheets/missing.xml").unwrap(),
+            []
         );
     }
 

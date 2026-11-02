@@ -4,6 +4,7 @@
 //! relationship files: `word/_rels/document.xml.rels` lists the links, images and
 //! so on that `word/document.xml` refers to by ID (`rId5`).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, Read, Seek, Write};
 
@@ -480,9 +481,8 @@ pub fn attr(e: &BytesStart, name: &str) -> Option<String> {
         .find(|a| a.key.local_name().as_ref() == name)?;
     let value = attribute
         .normalized_value(XmlVersion::Implicit1_0)
-        .map(|v| v.into_owned())
         // A value with a broken entity is still better kept as written than dropped.
-        .unwrap_or_else(|_| attribute.value.into_owned());
+        .map_or_else(|_| attribute.value.into_owned(), Cow::into_owned);
     Some(value)
 }
 
@@ -712,7 +712,7 @@ mod tests {
             relationships.parts("drawing"),
             ["ppt/drawings/drawing1.xml", "ppt/drawings/drawing2.xml"]
         );
-        assert!(relationships.parts("chart").is_empty());
+        assert_eq!(relationships.parts("chart"), Vec::<String>::new());
     }
 
     #[test]
@@ -788,7 +788,7 @@ mod tests {
     fn walk_passes_the_open_elements_and_skips_their_contents() {
         let mut recorder = Recorder::default();
         walk(
-            r#"<w:p><w:r><w:t>a&amp;b</w:t><w:br/></w:r><mc:Fallback><w:r><w:t>old</w:t></w:r></mc:Fallback></w:p>"#,
+            r"<w:p><w:r><w:t>a&amp;b</w:t><w:br/></w:r><mc:Fallback><w:r><w:t>old</w:t></w:r></mc:Fallback></w:p>",
             &mut recorder,
         )
         .unwrap();

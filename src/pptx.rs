@@ -334,8 +334,8 @@ impl XmlHandler for SlideParser<'_> {
                 self.builder.end_link();
             }
             "rPr" if in_run(open) => {
-                self.builder.set_bold(is_on(attr(e, "b")));
-                self.builder.set_italic(is_on(attr(e, "i")));
+                self.builder.set_bold(is_on(e, "b"));
+                self.builder.set_italic(is_on(e, "i"));
             }
             "hlinkClick" if in_run(open) => self.builder.start_link(self.targets.link(e)),
             "br" => self.builder.text("\n"),
@@ -350,7 +350,7 @@ impl XmlHandler for SlideParser<'_> {
                     let span = |name| attr(e, name).and_then(|v| v.parse().ok()).unwrap_or(1);
                     table.span_columns(span("gridSpan"));
                     table.span_rows(span("rowSpan"));
-                    table.merge(match (is_on(attr(e, "hMerge")), is_on(attr(e, "vMerge"))) {
+                    table.merge(match (is_on(e, "hMerge"), is_on(e, "vMerge")) {
                         (false, false) => Merged::No,
                         (true, false) => Merged::Left,
                         (false, true) => Merged::Up,
@@ -397,8 +397,8 @@ fn in_run(open: &Open) -> bool {
 }
 
 /// DrawingML writes on/off attributes as `"1"`/`"0"` or `"true"`/`"false"`.
-fn is_on(value: Option<String>) -> bool {
-    matches!(value.as_deref(), Some("1" | "true"))
+fn is_on(e: &BytesStart, name: &str) -> bool {
+    matches!(attr(e, name).as_deref(), Some("1" | "true"))
 }
 
 #[cfg(test)]
@@ -488,7 +488,7 @@ mod tests {
                     "{}{}{}",
                     para("Revenue up"),
                     r#"<a:p><a:pPr lvl="1"/><a:r><a:t>EMEA</a:t></a:r></a:p>"#,
-                    r#"<a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>No bullet</a:t></a:r></a:p>"#,
+                    r"<a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>No bullet</a:t></a:r></a:p>",
                 )
             ),
             shape(

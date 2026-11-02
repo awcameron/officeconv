@@ -97,7 +97,7 @@ impl<I> Block<I> {
     }
 
     /// The runs of a heading, paragraph or list item, or `None` for any other block.
-    pub fn text_runs(&self) -> Option<&Vec<Run<I>>> {
+    pub fn text_runs(&self) -> Option<&[Run<I>]> {
         match self {
             Block::Heading { runs, .. }
             | Block::Paragraph { runs, .. }
@@ -334,14 +334,14 @@ pub const EMU_PER_POINT: u32 = 12_700;
 
 /// The largest display size kept, per side: 100 inches. Anything larger, like a size of zero,
 /// is a broken or hostile file rather than a real picture.
-const MAX_DISPLAY_EMU: u64 = 100 * 914_400;
+const MAX_DISPLAY_EMU: u32 = 100 * 914_400;
 
 /// A picture's display size from the `cx` and `cy` attributes DOCX and PPTX store it in, or
 /// `None` unless both are whole numbers above zero and at most 100 inches.
 pub fn display_size(cx: Option<String>, cy: Option<String>) -> Option<(u32, u32)> {
     let side = |v: Option<String>| {
-        let emu = v?.parse::<u64>().ok()?;
-        (1..=MAX_DISPLAY_EMU).contains(&emu).then_some(emu as u32)
+        let emu = v?.parse::<u32>().ok()?;
+        (1..=MAX_DISPLAY_EMU).contains(&emu).then_some(emu)
     };
     Some((side(cx)?, side(cy)?))
 }
@@ -468,7 +468,7 @@ fn resolve_blocks(
         };
         let empty = match &block {
             Block::Header(blocks) | Block::Footer(blocks) => blocks.is_empty(),
-            block => block.text_runs().is_some_and(|runs| is_blank(runs)),
+            block => block.text_runs().is_some_and(is_blank),
         };
         if !empty {
             resolved.push(block);
@@ -508,6 +508,8 @@ fn resolve_runs(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     #[test]
@@ -633,7 +635,8 @@ mod tests {
         ];
 
         let blocks = resolve_images(blocks, |part| {
-            Ok(part.ends_with(".png").then(|| "img/logo.png".to_string()))
+            Ok((Path::new(part).extension() == Some("png".as_ref()))
+                .then(|| "img/logo.png".to_string()))
         })
         .unwrap();
 

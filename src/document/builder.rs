@@ -87,7 +87,7 @@ impl<P: Default> BlockBuilder<P> {
             return;
         };
         let mut run = Run::new(text, self.style);
-        run.link = self.link.clone();
+        run.link.clone_from(&self.link);
         append_run(&mut paragraph.runs, run);
     }
 
@@ -95,7 +95,7 @@ impl<P: Default> BlockBuilder<P> {
     /// the current link.
     pub fn image(&mut self, mut run: Run<ImagePart>) {
         if run.link.is_none() {
-            run.link = self.link.clone();
+            run.link.clone_from(&self.link);
         }
         if let Some(paragraph) = self.paragraphs.last_mut() {
             append_run(&mut paragraph.runs, run);
@@ -298,7 +298,7 @@ mod tests {
         builder.text("  ");
         assert!(builder.end_paragraph().is_none());
         assert!(builder.end_paragraph().is_none());
-        assert!(builder.into_blocks().is_empty());
+        assert_eq!(builder.into_blocks(), []);
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         builder.start_table(MergedCells::Omitted);
         builder.end_table();
         builder.end_table();
-        assert!(builder.into_blocks().is_empty());
+        assert_eq!(builder.into_blocks(), []);
     }
 
     #[test]

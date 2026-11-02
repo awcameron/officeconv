@@ -1,5 +1,7 @@
 //! Rendering [`Block`]s as Markdown.
 
+use std::fmt::Write as _;
+
 use super::{Block, ListKind, Run, RunKind, RunStyle, TableCell, append_run};
 use crate::markdown::{escape_text, escape_url, write_table};
 
@@ -134,10 +136,7 @@ fn render_inline(runs: &[Run]) -> String {
         match &group[0].link {
             Some(url) => {
                 let (leading, inner, trailing) = split_edges(&inner);
-                text.push_str(&format!(
-                    "{leading}[{inner}]({}){trailing}",
-                    escape_url(url)
-                ));
+                let _ = write!(text, "{leading}[{inner}]({}){trailing}", escape_url(url));
             }
             None => text.push_str(&inner),
         }

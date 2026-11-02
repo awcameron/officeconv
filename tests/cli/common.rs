@@ -241,7 +241,7 @@ pub fn sample_docx_with_header_and_footer(paragraphs: usize) -> (TempDir, PathBu
 /// A slide (or notes) part holding `shapes`.
 pub fn slide(shapes: &str) -> String {
     let ns = pptx_ns();
-    format!(r#"<p:sld {ns}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"#)
+    format!(r"<p:sld {ns}><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>")
 }
 
 /// `ppt/presentation.xml` and its `.rels`, listing slide parts (relative to `ppt/`) in
@@ -264,7 +264,7 @@ pub fn presentation(slides_in_order: &[&str]) -> [(String, Vec<u8>); 2] {
         part(
             "ppt/presentation.xml",
             format!(
-                r#"<p:presentation {}><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>"#,
+                r"<p:presentation {}><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>",
                 pptx_ns()
             ),
         ),

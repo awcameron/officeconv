@@ -163,13 +163,13 @@ mod tests {
     /// Converts `source`, returning what it said on its log.
     fn convert_to(
         source: &Source,
-        sheets: Sheets,
+        sheets: &Sheets,
         format: TableFormat,
         images: Option<&Path>,
         output: &Path,
     ) -> String {
         let mut log = Vec::new();
-        convert(source, &sheets, format, images, Some(output), &mut log).unwrap();
+        convert(source, sheets, format, images, Some(output), &mut log).unwrap();
         String::from_utf8(log).unwrap()
     }
 
@@ -187,7 +187,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let out = dir.path().join("out");
         let source = source(&["Sales", "Q1 Notes"], &[]);
-        let log = convert_to(&source, Sheets::All, TableFormat::Csv, None, &out);
+        let log = convert_to(&source, &Sheets::All, TableFormat::Csv, None, &out);
 
         assert_eq!(files(&out), ["stdin-Q1 Notes.csv", "stdin-Sales.csv"]);
         assert_eq!(
@@ -205,7 +205,7 @@ mod tests {
 
         let json = convert_to(
             &source,
-            Sheets::All,
+            &Sheets::All,
             TableFormat::Json(JsonValues::Text),
             None,
             &out,
@@ -220,7 +220,7 @@ mod tests {
         let source = source(&["a|b", "a_b"], &[]);
         convert_to(
             &source,
-            Sheets::All,
+            &Sheets::All,
             TableFormat::Markdown,
             None,
             dir.path(),
@@ -242,7 +242,7 @@ mod tests {
         let source = source(&["Plain", "Sales"], &["Sales"]);
         let log = convert_to(
             &source,
-            Sheets::One(Some("Sales".into())),
+            &Sheets::One(Some("Sales".into())),
             TableFormat::Markdown,
             Some(&images),
             &output,
@@ -263,7 +263,7 @@ mod tests {
         let source = source(&["Sales"], &["Sales"]);
         convert_to(
             &source,
-            Sheets::All,
+            &Sheets::All,
             TableFormat::Csv,
             Some(&images),
             dir.path(),
@@ -283,7 +283,7 @@ mod tests {
         let source = source(&["Sales"], &["Sales"]);
         let log = convert_to(
             &source,
-            Sheets::One(None),
+            &Sheets::One(None),
             TableFormat::Markdown,
             None,
             &output,
@@ -305,7 +305,7 @@ mod tests {
         let source = source(&["Plain", "Sales"], &["Sales"]);
         let log = convert_to(
             &source,
-            Sheets::All,
+            &Sheets::All,
             TableFormat::Markdown,
             Some(&images),
             &out,

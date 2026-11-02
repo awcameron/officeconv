@@ -45,6 +45,14 @@ reason it can't fail:
 let page = self.pages.last_mut().expect("there is always a page");
 ```
 
+`Cargo.toml` also turns on clippy's `pedantic` lints, so they fail CI like any other warning.
+A few are allowed there, each with a comment saying why, and tests allow `float_cmp`,
+`cast_possible_truncation` and `format_collect`. Fix a pedantic warning where the fix reads
+better. Where it doesn't, mark that one place with `#[expect(clippy::..., reason = "...")]`.
+Allow a lint for the whole crate only when it's wrong across the crate, and say why next to it.
+`clippy.toml`'s `doc-valid-idents` lists the format names doc comments may use without
+backticks, such as `PowerPoint` and `DrawingML`.
+
 `officeconv` is a binary: its library has no public API, so internals can change in any release.
 See [ADR 0003](docs/adr/0003-binary-only.md).
 

@@ -232,7 +232,7 @@ fn layout_pptx() -> (TempDir, PathBuf) {
     );
     let picture = r#"<p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3" descr="Chart"><a:hlinkClick r:id="rId2"/></p:cNvPr><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm></p:spPr></p:pic>"#;
     let shapes = format!(
-        r#"{}{table}{picture}"#,
+        r"{}{table}{picture}",
         placeholder(
             "title",
             r#"<a:p><a:pPr algn="ctr"/><a:r><a:t>Results</a:t></a:r></a:p>"#

@@ -6,6 +6,13 @@
 // Tests may panic, helpers outside `#[test]` functions included: clippy.toml only lets the
 // test functions themselves.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// As in the library's unit tests: exact float comparisons where layout is deterministic, casts
+// of small known values, and fixtures built with `format!` per item.
+#![allow(
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::format_collect
+)]
 
 mod common;
 mod delimited;

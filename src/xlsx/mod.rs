@@ -246,6 +246,10 @@ fn cell_to_string(cell: &Data) -> String {
 /// Formats an Excel date/time as ISO 8601, dropping the parts that aren't used.
 fn format_datetime(dt: &ExcelDateTime) -> String {
     if dt.is_duration() {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "`as` saturates, and no real duration comes near i64's range"
+        )]
         let total_seconds = (dt.as_f64() * 86_400.0).round() as i64;
         let (h, m, s) = (
             total_seconds / 3600,

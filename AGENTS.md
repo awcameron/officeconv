@@ -6,9 +6,9 @@ to know before changing anything.
 
 ## What this is
 
-A Rust command-line tool that converts Office files: `.xlsx` to CSV, TSV, JSON or Markdown, and
-`.docx` and `.pptx` to Markdown or PDF. It's a binary only: the library half exists so the fuzz
-targets can link against it, and nothing in it is a public API
+A Rust command-line tool that converts Office files: `.xlsx`, `.csv` and `.tsv` to CSV, TSV,
+JSON or Markdown, and `.docx` and `.pptx` to Markdown or PDF. It's a binary only: the library
+half exists so the fuzz targets can link against it, and nothing in it is a public API
 ([ADR 0003](docs/adr/0003-binary-only.md)). Edition 2024, on stable Rust.
 
 [CONTRIBUTING.md](CONTRIBUTING.md#layout) lists every top-level file and directory, and
@@ -26,6 +26,8 @@ modules:
   text, image, size and link through `drawingml::PictureReader`. Readers name each image by its
   part in the package; `images::resolve` then saves, embeds or drops them for the output
   ([ADR 0005](docs/adr/0005-image-types.md)).
+- `src/delimited.rs`: the CSV and TSV reader. It reads plain text, not a package, so it has
+  its own `Limits` rather than `opc::Archive`'s, with `opc`'s part limit as its byte cap.
 - `src/document/`, `src/writers.rs`, `src/pdf/`: the outputs. `src/workbook.rs` writes a
   workbook's sheets and their pictures, and `src/document_output.rs` a document or deck.
 - `src/markdown.rs`: Markdown escaping and tables, shared by the spreadsheet and document
@@ -39,8 +41,17 @@ modules:
 ## Checks
 
 Run [`scripts/check.sh`](scripts/check.sh) before committing. It stops at the first check that
-fails and says which. Its first seven checks are the steps of CI's `check` job; the last one
+fails and says which. Its first seven checks are the steps of CI's `check` job; the eighth
 covers the private-item docs, which CI doesn't build.
+
+CI's clippy steps run the Rust in `rust-version` in `Cargo.toml`, not stable. Run the script
+with that version too, so its lints match CI's: a newer clippy can flag lints CI doesn't, and an
+older one can miss some.
+
+`Cargo.toml` also enables clippy's `pedantic` lints, and `-D warnings` makes them fail the
+checks. Fix a warning where the fix reads better; otherwise mark that one place with
+`#[expect(clippy::..., reason = "...")]`. CONTRIBUTING.md has the policy, and `Cargo.toml` says
+why each lint it allows is off.
 
 Two of the checks build without the `pdf` feature (`--no-default-features`), so code used only
 by PDF output needs `#[cfg(feature = "pdf")]`.

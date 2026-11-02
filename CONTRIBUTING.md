@@ -247,8 +247,11 @@ doesn't cancel the others.
 
 Releases build with exactly the Rust version in `rust-version` in `Cargo.toml`, not whatever
 `stable` is that day, so the same commit always builds the same way. CI's `msrv` job runs the
-tests with that version too, so a dependency that needs a newer Rust fails there. To move to a
-newer Rust, change `rust-version` in a PR; the README's "Rust 1.92 or later" changes with it.
+tests with that version too, so a dependency that needs a newer Rust fails there. CI's clippy
+steps use it as well, so CI lints with the same clippy as `scripts/check.sh` in the dev
+container, and a new Rust release's lints can't fail a PR that didn't change anything. To move
+to a newer Rust, change `rust-version` in a PR; the README's "Rust 1.92 or later" changes with
+it, and that PR fixes whatever the new clippy finds.
 
 ### Signing the macOS binaries
 

@@ -286,3 +286,7 @@ says so; a release built that way gets a warning. With only some of them, the bu
 Developer ID certificate lasts five years: before it expires, make a new one in the Apple
 Developer account and replace the two certificate secrets. Binaries signed with the old one keep
 running, since their signatures are timestamped.
+
+The secrets aren't set, so releases ship unsigned macOS binaries, and the README and
+[docs/install.md](docs/install.md#unsigned-binaries) say so. The PR that adds the secrets also
+changes those two to say the macOS binaries are signed, from that release on.

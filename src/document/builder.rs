@@ -87,7 +87,7 @@ impl<P: Default> BlockBuilder<P> {
             return;
         };
         let mut run = Run::new(text, self.style);
-        run.link = self.link.clone();
+        run.link.clone_from(&self.link);
         append_run(&mut paragraph.runs, run);
     }
 
@@ -95,7 +95,7 @@ impl<P: Default> BlockBuilder<P> {
     /// the current link.
     pub fn image(&mut self, mut run: Run<ImagePart>) {
         if run.link.is_none() {
-            run.link = self.link.clone();
+            run.link.clone_from(&self.link);
         }
         if let Some(paragraph) = self.paragraphs.last_mut() {
             append_run(&mut paragraph.runs, run);

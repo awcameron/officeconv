@@ -3,6 +3,7 @@
 //! [`crate::writers`] writes a spreadsheet's values with it, and [`crate::document::markdown`]
 //! a document's formatted runs.
 
+use std::fmt::Write as _;
 use std::io::{self, Write};
 
 /// Writes a GitHub-flavored Markdown table with padded columns. The first row is the header.
@@ -106,7 +107,7 @@ pub fn escape_url(url: &str) -> String {
         {
             let mut bytes = [0; 4];
             for byte in c.encode_utf8(&mut bytes).bytes() {
-                out.push_str(&format!("%{byte:02X}"));
+                let _ = write!(out, "%{byte:02X}");
             }
         } else {
             out.push(c);

@@ -96,6 +96,10 @@ pub fn read_table_with_limits(reader: impl Read, kind: InputKind, limits: Limits
 }
 
 /// The line, counting from 1, that byte `offset` of `bytes` is on.
+#[expect(
+    clippy::naive_bytecount,
+    reason = "it runs once, for an error message: not worth a dependency"
+)]
 fn line_at(bytes: &[u8], offset: usize) -> u64 {
     bytes[..offset].iter().filter(|&&b| b == b'\n').count() as u64 + 1
 }
@@ -106,6 +110,10 @@ fn line_at(bytes: &[u8], offset: usize) -> u64 {
 ///
 /// A quote inside an unquoted field, as in `5" screen`, is left alone: it's common, and its
 /// meaning is clear.
+#[expect(
+    clippy::match_same_arms,
+    reason = "each arm is one move of the state machine"
+)]
 fn check_quotes(text: &str, delimiter: u8) -> std::result::Result<(), (u64, &'static str)> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum State {

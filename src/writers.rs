@@ -137,6 +137,10 @@ fn serialize_float<S: Serializer>(x: f64, serializer: S) -> Result<S::Ok, S::Err
     const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0; // 2^53
 
     if x.fract() == 0.0 && x.abs() < EXACT_INTEGER_LIMIT {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a whole number below 2^53 fits an i64 exactly"
+        )]
         serializer.serialize_i64(x as i64)
     } else if x.is_finite() {
         serializer.serialize_f64(x)

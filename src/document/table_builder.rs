@@ -221,6 +221,7 @@ mod tests {
     use crate::document::RunStyle;
 
     use Merged::{Both, Left, Up};
+    use TableCell::Covered;
 
     /// Ends a cell holding `text`, spanning `cols` columns and `rows` rows.
     fn cell(table: &mut TableBuilder, text: &str, cols: usize, rows: usize) {
@@ -269,7 +270,6 @@ mod tests {
         cell(&mut slides, "C", 1, 1);
         slides.end_row();
 
-        use TableCell::Covered;
         assert_eq!(
             slides.finish(),
             [
@@ -318,7 +318,6 @@ mod tests {
         mark(&mut table, Up);
         table.end_row();
 
-        use TableCell::Covered;
         assert_eq!(
             table.finish(),
             [
@@ -338,7 +337,6 @@ mod tests {
         mark(&mut slides, Both);
         slides.end_row();
 
-        use TableCell::Covered;
         assert_eq!(
             slides.finish(),
             [vec![content("A", 2, 2), Covered], vec![Covered, Covered]]
@@ -387,7 +385,6 @@ mod tests {
         cell(&mut slides, "B", 0, 0);
         slides.end_row();
 
-        use TableCell::Covered;
         assert_eq!(
             slides.finish(),
             [

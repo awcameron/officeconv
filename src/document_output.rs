@@ -22,12 +22,12 @@ use crate::{docx, pptx};
 pub fn convert(
     source: &Source,
     reader: DocumentReader,
-    to: DocumentOutput,
+    to: &DocumentOutput,
     output: Option<&Path>,
     log: &mut impl Write,
 ) -> Result<()> {
     // The images folder is created before the input is read, as for a workbook.
-    let mut export = match &to {
+    let mut export = match to {
         DocumentOutput::Markdown { images } => {
             images::export_to(images.as_deref(), output::markdown_dir(output))?
         }
@@ -61,7 +61,7 @@ pub fn convert(
         DocumentOutput::Pdf(pages) => {
             let mut embedded = EmbeddedImages::default();
             let blocks = images::resolve(blocks, &mut archive, Images::Embed(&mut embedded))?;
-            write_pdf(pages, &blocks, &embedded, output, log)
+            write_pdf(*pages, &blocks, &embedded, output, log)
         }
     }
 }
@@ -165,7 +165,7 @@ mod tests {
     }
 
     /// Converts `source` to `output`, returning what it said on its log.
-    fn convert_to(source: &Source, to: DocumentOutput, output: &Path) -> Result<String> {
+    fn convert_to(source: &Source, to: &DocumentOutput, output: &Path) -> Result<String> {
         let mut log = Vec::new();
         convert(source, DocumentReader::Docx, to, Some(output), &mut log)?;
         Ok(String::from_utf8(log).unwrap())
@@ -188,7 +188,7 @@ mod tests {
         let to = DocumentOutput::Markdown {
             images: Some(images.clone()),
         };
-        let log = convert_to(&document(true), to, &output).unwrap();
+        let log = convert_to(&document(true), &to, &output).unwrap();
 
         assert_eq!(
             fs::read_to_string(&output).unwrap(),
@@ -206,7 +206,7 @@ mod tests {
         let to = DocumentOutput::Markdown {
             images: Some(images.clone()),
         };
-        let log = convert_to(&document(false), to, &output).unwrap();
+        let log = convert_to(&document(false), &to, &output).unwrap();
 
         assert_eq!(fs::read_to_string(&output).unwrap(), "Body\n");
         assert!(files(&images).is_empty());
@@ -218,7 +218,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let output = dir.path().join("doc.md");
         let to = DocumentOutput::Markdown { images: None };
-        let log = convert_to(&document(true), to, &output).unwrap();
+        let log = convert_to(&document(true), &to, &output).unwrap();
 
         assert_eq!(fs::read_to_string(&output).unwrap(), "Body\n");
         assert_eq!(files(dir.path()), ["doc.md"]);
@@ -231,7 +231,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let output = dir.path().join("doc.pdf");
         let to = DocumentOutput::Pdf(Pages::Document);
-        let log = convert_to(&document(true), to, &output).unwrap();
+        let log = convert_to(&document(true), &to, &output).unwrap();
 
         assert!(fs::read(&output).unwrap().starts_with(b"%PDF"));
         assert_eq!(files(dir.path()), ["doc.pdf"]);
@@ -243,7 +243,7 @@ mod tests {
     fn pdf_needs_the_pdf_feature() {
         let dir = TempDir::new().unwrap();
         let to = DocumentOutput::Pdf(Pages::Document);
-        let err = convert_to(&document(true), to, &dir.path().join("doc.pdf")).unwrap_err();
+        let err = convert_to(&document(true), &to, &dir.path().join("doc.pdf")).unwrap_err();
         assert!(matches!(err, ConvertError::PdfNotBuilt), "{err}");
     }
 }

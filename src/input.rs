@@ -105,10 +105,10 @@ impl Source {
     /// The name used for per-sheet output files: the file's stem, or `stdin`.
     pub fn stem(&self) -> String {
         match self {
-            Source::File(path) => path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "output".to_string()),
+            Source::File(path) => path.file_stem().map_or_else(
+                || "output".to_string(),
+                |s| s.to_string_lossy().into_owned(),
+            ),
             Source::Stdin(_) => "stdin".to_string(),
         }
     }

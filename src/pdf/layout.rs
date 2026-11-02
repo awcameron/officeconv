@@ -518,8 +518,8 @@ impl<'a> Layout<'a> {
                 TableBox {
                     row,
                     col,
-                    cols,
                     rows,
+                    cols,
                     content,
                 }
             })
@@ -927,7 +927,9 @@ fn widen(widths: &mut [f32], needed: f32) {
     let short = needed - widths.iter().sum::<f32>();
     if short > 0.0 {
         let share = short / widths.len() as f32;
-        widths.iter_mut().for_each(|w| *w += share);
+        for w in widths.iter_mut() {
+            *w += share;
+        }
     }
 }
 
@@ -1246,7 +1248,7 @@ mod tests {
         let (_, y_baseline) = text_at(page, "y");
         let (wide_x, wide_baseline) = text_at(page, "Wide");
         let between_columns = x - padding;
-        let between_rows = (x_baseline + y_baseline) / 2.0;
+        let between_rows = f32::midpoint(x_baseline, y_baseline);
         let line = y_baseline - x_baseline;
         // Find the border between "x" and "y" near halfway between their baselines.
         let border = page

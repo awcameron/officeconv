@@ -298,7 +298,7 @@ mod tests {
         builder.text("  ");
         assert!(builder.end_paragraph().is_none());
         assert!(builder.end_paragraph().is_none());
-        assert!(builder.into_blocks().is_empty());
+        assert_eq!(builder.into_blocks(), []);
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         builder.start_table(MergedCells::Omitted);
         builder.end_table();
         builder.end_table();
-        assert!(builder.into_blocks().is_empty());
+        assert_eq!(builder.into_blocks(), []);
     }
 
     #[test]

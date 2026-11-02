@@ -321,13 +321,13 @@ mod tests {
 
     #[test]
     fn leaves_out_an_image_not_stored_in_the_package() {
-        assert!(
+        assert_eq!(
             read(&pic(
                 r#"<p:cNvPr id="1" name="a" descr="Gone"/>"#,
                 "rId9",
                 ""
-            ))
-            .is_empty()
+            )),
+            []
         );
     }
 

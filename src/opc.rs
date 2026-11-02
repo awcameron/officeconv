@@ -712,7 +712,7 @@ mod tests {
             relationships.parts("drawing"),
             ["ppt/drawings/drawing1.xml", "ppt/drawings/drawing2.xml"]
         );
-        assert!(relationships.parts("chart").is_empty());
+        assert_eq!(relationships.parts("chart"), Vec::<String>::new());
     }
 
     #[test]

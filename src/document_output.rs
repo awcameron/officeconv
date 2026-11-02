@@ -209,7 +209,7 @@ mod tests {
         let log = convert_to(&document(false), &to, &output).unwrap();
 
         assert_eq!(fs::read_to_string(&output).unwrap(), "Body\n");
-        assert!(files(&images).is_empty());
+        assert_eq!(files(&images), Vec::<String>::new());
         assert_eq!(log, format!("saved 0 images to {}\n", images.display()));
     }
 
